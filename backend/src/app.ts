@@ -20,8 +20,23 @@ export async function buildApp() {
     contentSecurityPolicy: false
   });
 
+  const allowedOrigins = [
+    "https://dakshora.in",
+    "https://www.dakshora.in",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173"
+  ];
+
   await app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error("CORS origin not allowed: " + origin), false);
+    },
     credentials: true
   });
 
