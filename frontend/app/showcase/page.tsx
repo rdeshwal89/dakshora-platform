@@ -1,4 +1,4 @@
-import SolutionsConfigurator from "./components/SolutionsConfigurator";
+import SolutionsConfigurator from "../components/SolutionsConfigurator";
 
 export default function Home() {
   return (
