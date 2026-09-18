@@ -320,6 +320,34 @@ async function runE2ESmokeTest() {
     const unauthSuperAdminRes = await fetch(`${BASE_URL}/api/admin/dashboard`);
     assert('24. Privilege Escalation Blocked (403 without Token)', unauthSuperAdminRes.status === 403);
 
+    // 25. Configurable Responsibility Templates (18 Indian School Incharge Roles)
+    const respTypesRes = await fetch(`${BASE_URL}/api/erp/responsibilities`);
+    const respTypesData = await respTypesRes.json();
+    assert('25. Configurable Responsibility Templates Active', respTypesRes.status === 200 && respTypesData.count >= 18, `Templates: ${respTypesData.count}`);
+
+    // 26. Staff Responsibility Query for Teacher (Ajay Kumar / stf-02)
+    const staffRespRes = await fetch(`${BASE_URL}/api/erp/staff/stf-02/responsibilities`);
+    const staffRespData = await staffRespRes.json();
+    assert('26. Staff Incharge Responsibilities Active', staffRespRes.status === 200 && staffRespData.responsibilities?.length >= 3, `Assigned: ${staffRespData.responsibilities?.length}`);
+
+    // 27. Teacher Personalized "MY WORK" Dashboard
+    const teacherDashRes = await fetch(`${BASE_URL}/api/erp/dashboard?role=teacher&staffId=stf-02`);
+    const teacherDashData = await teacherDashRes.json();
+    assert('27. Teacher Personalized "MY WORK" Dashboard', teacherDashRes.status === 200 && !!teacherDashData.myWork?.todayClasses, 'Schedule & Pending Attendance Resolved');
+
+    // 28. Class Teacher Scoped Overview (Class 9-A)
+    assert('28. Class Teacher Section Scoped Oversight', !!teacherDashData.myClass && teacherDashData.myClass.section === 'A', `Class: ${teacherDashData.myClass?.grade}-${teacherDashData.myClass?.section}`);
+
+    // 29. Admin Effective Access Preview
+    const effectiveAccessRes = await fetch(`${BASE_URL}/api/erp/staff/stf-02/effective-access`);
+    const effectiveAccessData = await effectiveAccessRes.json();
+    assert('29. Admin Effective Access Preview Evaluated', effectiveAccessRes.status === 200 && effectiveAccessData.effectiveAccess?.moduleAccess?.includes('attendance'), 'Scoped Modules Resolved');
+
+    // 30. Unify Single Reliable Health Endpoint State
+    const healthCheckRes = await fetch(`${BASE_URL}/health`);
+    const healthCheckData = await healthCheckRes.json();
+    assert('30. Single Reliable Health Endpoint (Zero Secrets)', healthCheckRes.status === 200 && healthCheckData.status === 'healthy' && !JSON.stringify(healthCheckData).includes('key'), 'State: CONNECTED');
+
   } catch (err) {
     console.error('Fatal Test Exception:', err);
     assert('Fatal exception encountered', false, err.message);

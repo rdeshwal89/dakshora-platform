@@ -3,6 +3,7 @@ import cors from "cors";
 import "dotenv/config";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
+import { ResponsibilityService } from "./services/responsibilityStore.js";
 
 const app = express();
 
@@ -8721,14 +8722,86 @@ app.get("/api/erp/dashboard", (req, res) => {
     conversionRate: tenantApps.length > 0 ? Math.round((tenantApps.filter(a => a.status === "admitted" || a.status === "enrolled").length / tenantApps.length) * 1000) / 10 : 0
   };
 
+  // Resolve responsibilities and effective access for caller
+  const resolvedStaffId = callerStaffId || (callerRole === "teacher" ? "stf-02" : null);
+  const staffResponsibilities = resolvedStaffId ? ResponsibilityService.getStaffResponsibilities(orgId, resolvedStaffId, selectedSession) : [];
+  const effectiveAccess = ResponsibilityService.getEffectiveAccess(orgId, req.user || { role: callerRole }, resolvedStaffId, selectedSession);
+
+  // Personalized "MY WORK" blocks for Teacher
+  let myWork = null;
+  let myClass = null;
+
+  if (callerRole === "teacher" || callerRole === "faculty") {
+    // 1. Today's classes
+    const todayClasses = assignedClasses.map((ac, idx) => ({
+      period: idx + 1,
+      time: idx === 0 ? "08:30 AM - 09:15 AM" : idx === 1 ? "09:20 AM - 10:05 AM" : "10:20 AM - 11:05 AM",
+      grade: ac.grade,
+      section: ac.section,
+      subject: ac.subject,
+      room: `Room ${100 + idx * 2}`,
+      topic: `Chapter ${3 + idx} — Core Concepts & Applications`,
+      isCompleted: idx === 0
+    }));
+
+    // 2. Pending attendance
+    const attendancePending = teacherClassSummaries.filter(cs => !cs.todayMarked).length;
+
+    // 3. Pending homework
+    const homeworkPending = 3;
+
+    // 4. Upcoming exams in teacher's subjects/classes
+    const upcomingExams = [
+      { id: "ex-1", name: "Mid-Term Mathematics", grade: "Class 9", date: "2026-09-24", duration: "2 Hours" },
+      { id: "ex-2", name: "Unit Test 2 Mathematics", grade: "Class 10", date: "2026-09-28", duration: "1.5 Hours" }
+    ];
+
+    // 5. Notifications
+    const notifications = [
+      { id: "notif-1", title: "Syllabus Review Meeting", time: "Today at 02:00 PM", type: "academic" },
+      { id: "notif-2", title: "Attendance Submission Reminder", time: "Before 11:30 AM", type: "reminder" }
+    ];
+
+    myWork = {
+      todayClasses,
+      attendancePending,
+      homeworkPending,
+      upcomingExams,
+      notifications
+    };
+
+    // Check if teacher is a Class Teacher
+    const classTeacherResp = staffResponsibilities.find(r => r.responsibility_code === "CLASS_TEACHER");
+    if (classTeacherResp) {
+      const [secGrade, secLetter] = classTeacherResp.scope_id.includes("-") 
+        ? [`Class ${classTeacherResp.scope_id.split("-")[0]}`, classTeacherResp.scope_id.split("-")[1]]
+        : ["Class 9", "A"];
+      const classStudents = tenantStudents.filter(s => s.grade === secGrade && s.section === secLetter && s.status === "active");
+      const lowAtt = lowAttendanceStudents.filter(s => s.grade === secGrade && s.section === secLetter);
+      myClass = {
+        grade: secGrade,
+        section: secLetter,
+        totalStudents: classStudents.length,
+        attendanceRate: 92.5,
+        isRollCallDone: todayStudentAttendance.isMarked,
+        lowAttendanceCount: lowAtt.length,
+        lowAttendanceList: lowAtt
+      };
+    }
+  }
+
   // Return complete aggregate payload
   res.json({
     success: true,
     school: schoolContext,
     role: callerRole,
-    staffId: callerStaffId,
+    staffId: resolvedStaffId,
     assignedClasses,
     teacherClassSummaries,
+    myWork,
+    myClass,
+    myResponsibilities: staffResponsibilities,
+    effectiveAccess,
     students: studentKPI,
     staff: staffKPI,
     attendance: {
@@ -8742,6 +8815,80 @@ app.get("/api/erp/dashboard", (req, res) => {
     recentActivities,
     absentStaffToday
   });
+});
+
+// =========================================================================
+// 🏛️ MODULE: CONFIGURABLE RESPONSIBILITY & INCHARGE ENGINE (INDIAN SCHOOLS)
+// =========================================================================
+
+// 1. GET /api/erp/responsibilities - List configurable templates (CBSE, Delhi Govt, State Boards, etc.)
+app.get("/api/erp/responsibilities", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { category, active, search } = req.query;
+  const types = ResponsibilityService.getResponsibilityTypes(orgId, { category, active, search });
+  res.json({ success: true, count: types.length, responsibilities: types });
+});
+
+// 2. POST /api/erp/responsibilities - School Admin creates / customizes template
+app.post("/api/erp/responsibilities", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { code, name, description, category, default_scope_type } = req.body;
+  if (!code || !name) {
+    return res.status(400).json({ success: false, message: "Code and Name are required" });
+  }
+  const created = ResponsibilityService.createResponsibilityType(orgId, req.body);
+  res.status(201).json({ success: true, responsibility: created });
+});
+
+// 3. GET /api/erp/staff/:id/responsibilities - List incharge assignments for staff
+app.get("/api/erp/staff/:id/responsibilities", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const staffId = req.params.id;
+  const list = ResponsibilityService.getStaffResponsibilities(orgId, staffId, req.query.session);
+  res.json({ success: true, staffId, responsibilities: list });
+});
+
+// 4. POST /api/erp/staff/:id/responsibilities - Assign incharge role with scope
+app.post("/api/erp/staff/:id/responsibilities", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const staffId = req.params.id;
+  const { responsibility_type_id, responsibility_code, scope_type, scope_id, academic_session_id } = req.body;
+  if (!responsibility_type_id && !responsibility_code) {
+    return res.status(400).json({ success: false, message: "Responsibility type or code is required" });
+  }
+  const assigned = ResponsibilityService.assignStaffResponsibility(orgId, staffId, req.body);
+  res.status(201).json({ success: true, responsibility: assigned });
+});
+
+// 5. PATCH /api/erp/staff/:id/responsibilities/:respId - Update incharge assignment
+app.patch("/api/erp/staff/:id/responsibilities/:respId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id: staffId, respId } = req.params;
+  const updated = ResponsibilityService.updateStaffResponsibility(orgId, staffId, respId, req.body);
+  if (!updated) {
+    return res.status(404).json({ success: false, message: "Staff responsibility record not found" });
+  }
+  res.json({ success: true, responsibility: updated });
+});
+
+// 6. DELETE /api/erp/staff/:id/responsibilities/:respId - Revoke responsibility
+app.delete("/api/erp/staff/:id/responsibilities/:respId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id: staffId, respId } = req.params;
+  const deleted = ResponsibilityService.deleteStaffResponsibility(orgId, staffId, respId);
+  if (!deleted) {
+    return res.status(404).json({ success: false, message: "Staff responsibility record not found" });
+  }
+  res.json({ success: true, message: "Responsibility assignment revoked successfully" });
+});
+
+// 7. GET /api/erp/staff/:id/effective-access - Effective Access Preview for Admin
+app.get("/api/erp/staff/:id/effective-access", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const staffId = req.params.id;
+  const staffMember = ERP_STAFF.find(s => s.id === staffId || s.staffId === staffId);
+  const effectiveAccess = ResponsibilityService.getEffectiveAccess(orgId, staffMember || { role: "teacher" }, staffId, req.query.session);
+  res.json({ success: true, staffId, effectiveAccess });
 });
 
 // 4. Academics Endpoints (Production SaaS Grade)

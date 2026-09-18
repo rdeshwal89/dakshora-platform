@@ -39,14 +39,30 @@ export async function buildApp() {
         allowedOrigins.includes(origin) || 
         origin.endsWith(".vercel.app") ||
         origin.endsWith(".dakshora.co.in") ||
-        origin.endsWith(".dakshora.in")
+        origin.endsWith(".dakshora.in") ||
+        origin === "https://dakshora.co.in" ||
+        origin === "https://dakshora.in" ||
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
       ) {
         cb(null, true);
         return;
       }
       cb(new Error("CORS origin not allowed: " + origin), false);
     },
-    credentials: true
+    credentials: true,
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+      "x-role",
+      "x-staff-id",
+      "x-organization-id",
+      "x-org-id",
+      "x-platform-role"
+    ],
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
   });
 
   await app.register(rateLimit, {
