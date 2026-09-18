@@ -350,8 +350,7 @@ function requirePermission(permissionName) {
     const hasPermission =
       req.user.isSuperAdmin ||
       userPerms.includes("*") ||
-      userPerms.includes(permissionName) ||
-      SUPER_ADMIN_PERMISSIONS.includes(permissionName);
+      userPerms.includes(permissionName);
 
     if (hasPermission) {
       return next();
@@ -371,7 +370,17 @@ app.get("/api/me", requireAuth, (req, res) => {
     success: true,
     message: "Authenticated via requireAuth() ✅",
     pipeline: "User → Supabase Auth → JWT → Fastify → requireAuth()",
-    user: req.user
+    user: req.user,
+    role: {
+      id: req.user.role,
+      name: req.user.role,
+      permissions: req.user.permissions || []
+    },
+    organization: {
+      id: req.user.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+      name: "Dakshora Platform",
+      slug: "dakshora"
+    }
   });
 });
 
@@ -642,8 +651,17 @@ app.get("/api/auth/providers", (req, res) => {
   });
 });
 
-// Create SuperAdmin: POST /api/auth/create-superadmin
-app.post("/api/auth/create-superadmin", async (req, res) => {
+// Create SuperAdmin: POST /api/auth/create-superadmin (Protected: SuperAdmin Only)
+app.post("/api/auth/create-superadmin", requireAuth, (req, res, next) => {
+  if (!req.user?.isSuperAdmin && req.user?.role !== "superadmin") {
+    return res.status(403).json({
+      success: false,
+      code: "FORBIDDEN",
+      message: "Security violation: Only verified Platform SuperAdmins can provision SuperAdmin accounts."
+    });
+  }
+  next();
+}, async (req, res) => {
   try {
     if (!supabase) return res.status(500).json({ success: false, message: "Supabase not initialized" });
     const { email, password, name } = req.body;
@@ -18228,11 +18246,14 @@ function evaluateOnboardingChecklist(orgId) {
 // Security Guard: Admin only
 function checkOnboardingAdminRole(req, res) {
   const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
-  if (role !== "admin") {
+  const isSuper = req.user?.isSuperAdmin || role === "superadmin";
+  const isSchoolAdmin = role === "admin" || role === "school-admin";
+
+  if (!isSuper && !isSchoolAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN",
-      message: "Access Denied: Only School Administrators can access or configure onboarding."
+      message: "Access Denied: Only School Administrators and Platform SuperAdmins can access or configure onboarding."
     });
     return false;
   }
@@ -18800,7 +18821,7 @@ app.post("/api/erp/onboarding/invite-admin", async (req, res) => {
     return res.status(400).json({ success: false, message: "Invitee full name is required." });
   }
 
-  const allowedRoles = ["admin", "teacher", "account", "reception", "principal"];
+  const allowedRoles = ["admin", "school-admin", "teacher", "account", "reception", "principal"];
   if (!allowedRoles.includes(role.toLowerCase())) {
     return res.status(400).json({ success: false, message: `Role must be one of: ${allowedRoles.join(', ')}` });
   }
@@ -19094,21 +19115,72 @@ let PLATFORM_SETTINGS = {
   updated_at: new Date().toISOString()
 };
 
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(base64, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 // Security Guard: Enforce SuperAdmin / Platform Administrator Role
 function checkPlatformAdminRole(req, res) {
-  const role = (req.headers["x-platform-role"] || req.headers["x-role"] || req.user?.role || "").toLowerCase();
-  const email = (req.headers["x-user-email"] || req.user?.email || "").toLowerCase();
-  const isSuperAdmin = role === "superadmin" || req.user?.is_superadmin === true || email === "admin@dakshora.ai" || email === "superadmin@dakshora.ai";
-
-  if (!isSuperAdmin) {
-    res.status(403).json({
-      success: false,
-      code: "FORBIDDEN",
-      message: "Access Denied: DAKSHORA Platform Control Center requires SuperAdmin / Platform Administrator privileges. School Administrators cannot access platform-level operations."
-    });
-    return false;
+  // 1. If already verified by requireAuth:
+  if (req.user?.isSuperAdmin === true || req.user?.role === "superadmin") {
+    return true;
   }
-  return true;
+
+  // 2. Decode and check Bearer token if present
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    const payload = decodeJwtPayload(token);
+    if (payload) {
+      const isSuper =
+        payload.role === "superadmin" ||
+        payload.app_metadata?.role === "superadmin" ||
+        payload.user_metadata?.role === "superadmin" ||
+        payload.user_metadata?.is_superadmin === true ||
+        payload.email === "admin@dakshora.ai";
+      if (isSuper) {
+        req.user = req.user || {
+          id: payload.sub || payload.id,
+          email: payload.email,
+          role: "superadmin",
+          isSuperAdmin: true,
+          permissions: ["*"]
+        };
+        return true;
+      }
+    }
+  }
+
+  // 3. In test/development mode, permit test harness with explicit superadmin header
+  if (process.env.NODE_ENV !== "production") {
+    const role = (req.headers["x-platform-role"] || req.headers["x-role"] || "").toLowerCase();
+    const email = (req.headers["x-user-email"] || "").toLowerCase();
+    if (role === "superadmin" || email === "admin@dakshora.ai" || email === "superadmin@dakshora.ai") {
+      req.user = req.user || {
+        id: "dev-master-superadmin",
+        email: email || "admin@dakshora.ai",
+        role: "superadmin",
+        isSuperAdmin: true,
+        permissions: ["*"]
+      };
+      return true;
+    }
+  }
+
+  res.status(403).json({
+    success: false,
+    code: "FORBIDDEN",
+    message: "Access Denied: DAKSHORA Platform Control Center requires SuperAdmin / Platform Administrator privileges. School Administrators cannot access platform-level operations."
+  });
+  return false;
 }
 
 

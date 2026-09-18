@@ -10,6 +10,11 @@ export function requirePermission(permissionName: string) {
       });
     }
 
+    // Platform SuperAdmin has universal bypass for all permissions
+    if (request.user.isSuperAdmin || request.user.role === "superadmin") {
+      return;
+    }
+
     const { data: membership, error: membershipError } =
       await supabase
         .from("organization_members")
@@ -71,8 +76,8 @@ export function requirePermission(permissionName: string) {
         error: "Permission denied",
         required_permission: permissionName
       });
-    };
-    
+    }
+
     return;
   };
 }

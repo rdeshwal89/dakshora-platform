@@ -8,6 +8,7 @@ import { organizationRoutes } from "./modules/organizations/routes.js";
 import { supabase } from "./lib/supabase.js";
 import { requireAuth } from "./middleware/auth.js";
 import { authRoutes } from "./modules/auth/routes.js";
+import { bootstrapSuperAdmin } from "./services/bootstrapSuperAdmin.js";
 // @ts-ignore
 import erpApp from "./erpApp.js";
 
@@ -94,6 +95,33 @@ export async function buildApp() {
     "/api/me",
     { preHandler: requireAuth },
     async (request, reply) => {
+      // Platform SuperAdmin handling: platform-level user does not require single-tenant restriction
+      if (request.user.isSuperAdmin || request.user.role === "superadmin") {
+        const { data: defaultOrg } = await supabase
+          .from("organizations")
+          .select("*")
+          .eq("slug", "dakshora")
+          .limit(1)
+          .maybeSingle();
+
+        return {
+          success: true,
+          user: request.user,
+          organization: defaultOrg || {
+            id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+            name: "Dakshora Platform",
+            slug: "dakshora",
+            plan: "enterprise",
+            status: "active"
+          },
+          role: {
+            id: "superadmin",
+            name: "super_admin",
+            permissions: ["*"]
+          }
+        };
+      }
+
       // Find user's organization membership
       const { data: membership, error: membershipError } =
         await supabase
@@ -176,5 +204,9 @@ export async function buildApp() {
       };
     }
   );
+
+  // Securely bootstrap Super Admin if environment credentials configured
+  await bootstrapSuperAdmin();
+
   return app;
 }

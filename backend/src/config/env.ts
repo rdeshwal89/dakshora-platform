@@ -2,7 +2,7 @@ import "dotenv/config";
 import { z } from "zod";
 
 const envSchema = z.object({
-  PORT: z.coerce.number().default(4000),
+  PORT: z.coerce.number().default(5000),
 
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -10,7 +10,10 @@ const envSchema = z.object({
 
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1)
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+
+  DAKSHORA_SUPER_ADMIN_EMAIL: z.string().email().optional(),
+  DAKSHORA_SUPER_ADMIN_PASSWORD: z.string().min(8).optional()
 });
 
 export const env = envSchema.parse(process.env);

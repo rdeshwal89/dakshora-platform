@@ -7,6 +7,13 @@ declare module "fastify" {
       id: string;
       email?: string;
       phone?: string;
+      name?: string;
+      role?: string;
+      isSuperAdmin?: boolean;
+      organizationId?: string;
+      permissions?: string[];
+      user_metadata?: Record<string, unknown>;
+      app_metadata?: Record<string, unknown>;
     };
   }
 }
@@ -38,9 +45,33 @@ export async function requireAuth(
     });
   }
 
+  const isSuperAdmin =
+    user.app_metadata?.role === "superadmin" ||
+    user.user_metadata?.role === "superadmin" ||
+    user.user_metadata?.is_superadmin === true ||
+    user.email === "admin@dakshora.ai";
+
+  const role = isSuperAdmin
+    ? "superadmin"
+    : (user.app_metadata?.role as string) ||
+      (user.user_metadata?.role as string) ||
+      "school-admin";
+
+  const organizationId =
+    (user.app_metadata?.organization_id as string) ||
+    (user.user_metadata?.organizationId as string) ||
+    (user.user_metadata?.organization_id as string);
+
   request.user = {
     id: user.id,
     email: user.email,
-    phone: user.phone
+    phone: user.phone,
+    name: (user.user_metadata?.name as string) || user.email,
+    role,
+    isSuperAdmin,
+    organizationId,
+    permissions: isSuperAdmin ? ["*"] : [],
+    user_metadata: user.user_metadata as Record<string, unknown>,
+    app_metadata: user.app_metadata as Record<string, unknown>
   };
 }
