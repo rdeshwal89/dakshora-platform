@@ -21,6 +21,8 @@ export async function buildApp() {
   });
 
   const allowedOrigins = [
+    "https://dakshora.co.in",
+    "https://www.dakshora.co.in",
     "https://dakshora.in",
     "https://www.dakshora.in",
     "http://localhost:3000",
@@ -31,7 +33,13 @@ export async function buildApp() {
 
   await app.register(cors, {
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+      if (
+        !origin || 
+        allowedOrigins.includes(origin) || 
+        origin.endsWith(".vercel.app") ||
+        origin.endsWith(".dakshora.co.in") ||
+        origin.endsWith(".dakshora.in")
+      ) {
         cb(null, true);
         return;
       }

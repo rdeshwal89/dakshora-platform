@@ -221,7 +221,7 @@ conversation, not a search result.
               `Bearer ${apiKey}`,
 
             "HTTP-Referer":
-              "https://www.dakshora.in",
+              "https://www.dakshora.co.in",
 
             "X-Title":
               "DAKSHORA AI"

@@ -13,7 +13,7 @@
              ┌────────────────┴────────────────┐
              ▼                                 ▼
      Next.js Frontend                  Fastify Backend
-       (dakshora.in)                 (api.dakshora.in)
+     (www.dakshora.co.in)            (api.dakshora.co.in)
              │                                 │
              └────────────────┬────────────────┘
                               ▼
@@ -30,7 +30,7 @@
      - Interactive School ERP Portal Hub (17 Modules)
      - AI Assistant API Gateway
      - Mobile-Responsive Design (Tailwind CSS v4)
-   - **Domain:** `https://dakshora.in`
+   - **Domain:** `https://www.dakshora.co.in` (and `https://dakshora.co.in`)
 
 2. **Backend (`backend/`)**
    - **Framework:** Fastify 5.0 + TypeScript (ESM)
@@ -41,7 +41,7 @@
      - Health & Diagnostics (`/health`, `/health/supabase`)
      - Complete School ERP Modules (Staff, Students, Attendance, Academics, Exams, Fees, Admissions, Communication, Transport, Library, HR & Payroll, Reports, AI)
      - 458/458 passing integration tests
-   - **Domain:** `https://api.dakshora.in`
+   - **Domain:** `https://api.dakshora.co.in` (and `https://api.dakshora.in`)
 
 3. **Database (`backend/scripts/`)**
    - **Provider:** Supabase Postgres
@@ -86,11 +86,11 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 1. Import repository to Vercel.
 2. Set Root Directory to `frontend`.
 3. Configure Environment Variables:
-   - `NEXT_PUBLIC_API_URL`: `https://api.dakshora.in`
+   - `NEXT_PUBLIC_API_URL`: `https://api.dakshora.co.in` (or `https://api.dakshora.in`)
    - `NEXT_PUBLIC_SUPABASE_URL`: `https://<project-ref>.supabase.co`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: `<anon-key>`
    - `OPENROUTER_API_KEY`: `<openrouter-key>`
-4. Deploy and attach domain `dakshora.in`.
+4. Deploy and attach domain `www.dakshora.co.in` and `dakshora.co.in`.
 
 ### Backend Deployment (Node.js VPS / Render / Railway)
 1. Deploy `backend` directory.
@@ -102,7 +102,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
    - `SUPABASE_URL`: `https://<project-ref>.supabase.co`
    - `SUPABASE_ANON_KEY`: `<anon-key>`
    - `SUPABASE_SERVICE_ROLE_KEY`: `<service-role-key>`
-5. Attach domain `api.dakshora.in`.
+5. Attach domain `api.dakshora.co.in` (or `api.dakshora.in`).
 
 ---
 

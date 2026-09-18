@@ -1,4 +1,4 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   try {
@@ -98,7 +98,7 @@ You are DAKSHORA AI.
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": "https://www.dakshora.in",
+          "HTTP-Referer": "https://www.dakshora.co.in",
           "X-Title": "DAKSHORA AI",
         },
         body: JSON.stringify({

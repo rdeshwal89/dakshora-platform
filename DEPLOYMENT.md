@@ -1,8 +1,8 @@
 # 🚀 DAKSHORA 2.0 — Comprehensive Production Deployment & Go-Live Runbook
 
 > **Target Domains:**  
-> - **Frontend (Next.js):** `https://dakshora.in` & `https://www.dakshora.in`  
-> - **Backend API Gateway (Fastify):** `https://api.dakshora.in`  
+> - **Frontend (Next.js):** `https://www.dakshora.co.in` & `https://dakshora.co.in`  
+> - **Backend API Gateway (Fastify):** `https://api.dakshora.co.in` (or `https://api.dakshora.in`)  
 > - **Database / Auth:** Supabase Cloud (`https://<your-project-ref>.supabase.co`) with Multi-Tenant RLS
 
 ---
@@ -11,13 +11,13 @@
 
 ```text
                                   DNS & SSL
-                                 (dakshora.in)
+                              (dakshora.co.in)
                                        │
                       ┌────────────────┴────────────────┐
                       ▼                                 ▼
              Next.js Frontend                  Fastify Backend
            (Vercel Edge Network)            (Container / Node VPS)
-             https://dakshora.in             https://api.dakshora.in
+           https://www.dakshora.co.in        https://api.dakshora.co.in
                       │                                 │
                       │  Public Web / ERP Portal Hub    │  REST & RPC APIs
                       │  AI Route (/api/dakshora-ai)   │  Auth & Scope Engine
@@ -121,14 +121,16 @@ docker-compose up -d --build
 ---
 
 ## 6. DNS Configuration Table
-
-In your domain registrar (GoDaddy, Namecheap, Cloudflare, etc.) for `dakshora.in`:
+ 
+In your domain registrar (GoDaddy, Hostinger, BigRock, Namecheap, Cloudflare, etc.) for **`dakshora.co.in`**:
 
 | Type | Host / Name | Value / Destination | Target Service |
 | :--- | :--- | :--- | :--- |
-| **A** | `@` | `76.76.21.21` | Vercel Apex (`dakshora.in`) |
-| **CNAME** | `www` | `cname.vercel-dns.com` | Vercel Subdomain (`www.dakshora.in`) |
-| **CNAME** | `api` | `<your-backend-host>.onrender.com` | Fastify API Gateway (`api.dakshora.in`) |
+| **CNAME** | `www` | `cname.vercel-dns.com` | Vercel Frontend (`www.dakshora.co.in`) |
+| **A** | `@` | `76.76.21.21` | Vercel Apex (`dakshora.co.in`) |
+| **CNAME** | `api` | `<your-backend-host>.onrender.com` | Fastify API Gateway (`api.dakshora.co.in`) |
+
+*(If also maintaining `dakshora.in`, add corresponding records for `dakshora.in` pointing to the same Vercel and backend targets).*
 
 *Note: Allow 5-30 minutes for global DNS propagation and automatic SSL certificate issuance.*
 
