@@ -8795,6 +8795,82 @@ app.get("/api/erp/dashboard", (req, res) => {
     }
   }
 
+  // 11. AI Executive Insights (strictly computed from real data)
+  const aiInsights = [
+    stdAttendanceRate >= 85
+      ? {
+          id: "ai-att-1",
+          type: "positive",
+          category: "Attendance",
+          headline: "Optimal Student Attendance",
+          detail: `Overall campus presence is healthy at ${stdAttendanceRate}% (${stdPresent} present out of ${stdRecordedTotal || 1} recorded).`,
+          metric: `${stdAttendanceRate}%`
+        }
+      : {
+          id: "ai-att-1",
+          type: "warning",
+          category: "Attendance Alert",
+          headline: "Student Attendance Below Standard",
+          detail: `${stdAbsent} students recorded absent today across active sections. Guardian notifications recommended.`,
+          metric: `${stdAttendanceRate}%`
+        },
+    lowAttendanceStudents.length > 0
+      ? {
+          id: "ai-risk-1",
+          type: "warning",
+          category: "At-Risk Students",
+          headline: `${lowAttendanceStudents.length} Student(s) Under 75% Cutoff`,
+          detail: `${lowAttendanceStudents[0].name} (${lowAttendanceStudents[0].grade}-${lowAttendanceStudents[0].section}) has ${lowAttendanceStudents[0].absentDays} absences. Immediate intervention advised.`,
+          metric: `${lowAttendanceStudents.length} Flagged`
+        }
+      : {
+          id: "ai-risk-1",
+          type: "positive",
+          category: "Academic Compliance",
+          headline: "Zero Attendance Deficits",
+          detail: "All enrolled students currently meet the CBSE 75% minimum attendance rule.",
+          metric: "100% Compliant"
+        },
+    absentStaffToday.length === 0
+      ? {
+          id: "ai-staff-1",
+          type: "positive",
+          category: "Faculty Coverage",
+          headline: "100% Faculty Coverage Today",
+          detail: `All ${tenantStaff.length} teachers and staff members are present on duty without substitutions needed.`,
+          metric: "100% On Duty"
+        }
+      : {
+          id: "ai-staff-1",
+          type: "info",
+          category: "Faculty Leave",
+          headline: `${absentStaffToday.length} Staff on Leave Today`,
+          detail: `Substitute arrangements required for ${absentStaffToday.map(s => s.name).slice(0, 2).join(', ')}.`,
+          metric: `${absentStaffToday.length} Absent`
+        },
+    {
+      id: "ai-crm-1",
+      type: "info",
+      category: "Admissions CRM",
+      headline: `${admissionsKPI.newCount} New Admission Inquiries`,
+      detail: `Current conversion velocity is ${admissionsKPI.conversionRate}% across ${admissionsKPI.totalApplications} total student applications.`,
+      metric: `${admissionsKPI.conversionRate}% Conv.`
+    }
+  ];
+
+  const academicOverview = {
+    totalClasses: gradeMap.size,
+    totalSections: Array.from(gradeMap.values()).reduce((acc, g) => acc + Object.keys(g.sectionBreakdown || {}).length, 0),
+    totalSubjects: 18,
+    activeSessions: 1
+  };
+
+  const pendingTasks = {
+    unmarkedAttendanceClasses: Math.max(0, gradeMap.size - (todayStudentAttendance.isMarked ? 1 : 0)),
+    pendingAdmissions: admissionsKPI.newCount,
+    staffOnLeave: absentStaffToday.length
+  };
+
   // Return complete aggregate payload
   res.json({
     success: true,
@@ -8818,7 +8894,10 @@ app.get("/api/erp/dashboard", (req, res) => {
     attendanceTrend,
     lowAttendanceStudents,
     recentActivities,
-    absentStaffToday
+    absentStaffToday,
+    aiInsights,
+    academicOverview,
+    pendingTasks
   });
 });
 
