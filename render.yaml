@@ -1,14 +1,26 @@
-﻿services:
+services:
   - type: web
     name: dakshora-api
     runtime: node
-    rootDir: backend
+    plan: free
+    region: singapore
     buildCommand: npm install && npm run build
     startCommand: npm start
+    rootDir: backend
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 5000
-      - key: NODE_VERSION
-        value: 22
+      - key: FASTIFY_ADDRESS
+        value: 0.0.0.0
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPERADMIN_EMAIL
+        sync: false
+      - key: SUPERADMIN_PASSWORD
+        sync: false
