@@ -4,6 +4,11 @@ import "dotenv/config";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { ResponsibilityService } from "./services/responsibilityStore.js";
+import WebSocket from "ws";
+
+if (typeof globalThis.WebSocket === "undefined") {
+  globalThis.WebSocket = WebSocket;
+}
 
 const app = express();
 
