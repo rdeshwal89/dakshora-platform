@@ -1,0 +1,43 @@
+{
+  "name": "DAKSHORA - School Digital Solution Platform",
+  "short_name": "DAKSHORA",
+  "description": "One Digital Platform for the Complete School Ecosystem. NEP 2020 Holistic Progress Card, AI Teacher Co-Pilot, 30-sec Attendance, and Admissions CRM.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0B0F19",
+  "theme_color": "#06B6D4",
+  "lang": "en-IN",
+  "categories": ["education", "productivity", "management"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "School Portal Login",
+      "short_name": "Portal",
+      "description": "Log into Dakshora School ERP",
+      "url": "/portal",
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Admissions & CRM",
+      "short_name": "Admissions",
+      "description": "Access School Admissions Desk",
+      "url": "/portal",
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
+    }
+  ]
+}

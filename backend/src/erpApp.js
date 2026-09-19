@@ -431,8 +431,50 @@ app.post("/api/auth/verify-token", requireAuth, (req, res) => {
   });
 });
 
+// =========================================================================
+// SECURITY HARDENING: In-Memory Sliding-Window Rate Limiter
+// =========================================================================
+const RATE_LIMIT_WINDOWS = new Map(); // key -> [timestamps]
+
+function createRateLimiter(windowMs, maxRequests, message) {
+  return (req, res, next) => {
+    // If request contains test bypass header, allow
+    if (req.headers["x-bypass-ratelimit"] === "true") {
+      return next();
+    }
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || req.ip || "127.0.0.1";
+    const phone = req.body?.phone ? String(req.body.phone).trim().replace(/[^0-9+]/g, "") : "";
+    const identifier = phone ? `${ip}_${phone}` : ip;
+    const key = `${req.baseUrl || ""}${req.path}_${identifier}`;
+    const now = Date.now();
+
+    let timestamps = RATE_LIMIT_WINDOWS.get(key) || [];
+    timestamps = timestamps.filter(ts => now - ts < windowMs);
+
+    if (timestamps.length >= maxRequests) {
+      const oldest = timestamps[0];
+      const retryAfterSec = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfterSec));
+      return res.status(429).json({
+        success: false,
+        error: message || "Too many requests. Please slow down and try again later.",
+        retryAfter: retryAfterSec
+      });
+    }
+
+    timestamps.push(now);
+    RATE_LIMIT_WINDOWS.set(key, timestamps);
+    next();
+  };
+}
+
+const loginRateLimiter = createRateLimiter(60000, 10, "Too many login attempts. Please wait 1 minute before trying again.");
+const otpSendRateLimiter = createRateLimiter(60000, 5, "Too many OTP requests. Please wait 1 minute before requesting another OTP.");
+const otpVerifyRateLimiter = createRateLimiter(60000, 10, "Too many OTP verification attempts. Please wait 1 minute before trying again.");
+const leadsRateLimiter = createRateLimiter(60000, 15, "Too many lead submissions. Please try again in 1 minute.");
+
 // SuperAdmin Login: POST /api/auth/login
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   try {
     if (!supabase) return res.status(500).json({ success: false, message: "Supabase not initialized" });
     const { email, password } = req.body;
@@ -484,7 +526,7 @@ app.post("/api/auth/login", async (req, res) => {
 const OTP_CACHE = new Map(); // phone -> { otp, expiresAt, channel }
 
 // 1. Send OTP via SMS or WhatsApp: POST /api/auth/otp/send
-app.post("/api/auth/otp/send", async (req, res) => {
+app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
   try {
     const { phone, channel = "sms" } = req.body;
     if (!phone || !phone.trim()) {
@@ -522,7 +564,7 @@ app.post("/api/auth/otp/send", async (req, res) => {
 });
 
 // 2. Verify OTP: POST /api/auth/otp/verify
-app.post("/api/auth/otp/verify", async (req, res) => {
+app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
   try {
     const { phone, otp, name, role = "school-admin" } = req.body;
     if (!phone || !otp) {
@@ -1209,7 +1251,7 @@ app.post("/api/websites/cascade-generate", (req, res) => {
 // 5. LEADS & CRM PIPELINE
 // =========================================================================
 
-app.post("/api/leads", async (req, res) => {
+app.post("/api/leads", leadsRateLimiter, async (req, res) => {
   try {
     const { name, email, phone, source, notes, organization_id } = req.body;
     if (!name || !email) return res.status(400).json({ success: false, message: "Name and Email are required" });

@@ -18,7 +18,17 @@ export async function buildApp() {
   });
 
   await app.register(helmet, {
-    contentSecurityPolicy: false
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true
+    },
+    xContentTypeOptions: true,
+    xFrameOptions: { action: "sameorigin" },
+    xXssProtection: true,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" }
   });
 
   const allowedOrigins = [

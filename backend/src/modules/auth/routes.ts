@@ -2,7 +2,17 @@ import { FastifyInstance } from "fastify";
 import { supabase } from "../../lib/supabase.js";
 
 export async function authRoutes(app: FastifyInstance) {
-  app.post("/api/auth/login", async (request, reply) => {
+  app.post(
+    "/api/auth/login",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute"
+        }
+      }
+    },
+    async (request, reply) => {
     const body = request.body as {
       email?: string;
       password?: string;
