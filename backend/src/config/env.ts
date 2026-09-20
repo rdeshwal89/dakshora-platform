@@ -13,7 +13,15 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
   DAKSHORA_SUPER_ADMIN_EMAIL: z.string().email().optional(),
-  DAKSHORA_SUPER_ADMIN_PASSWORD: z.string().min(8).optional()
+  DAKSHORA_SUPER_ADMIN_PASSWORD: z.string().min(8).optional(),
+  SUPERADMIN_EMAIL: z.string().email().optional(),
+  SUPERADMIN_PASSWORD: z.string().min(8).optional()
 });
 
-export const env = envSchema.parse(process.env);
+const parsed = envSchema.parse(process.env);
+
+export const env = {
+  ...parsed,
+  DAKSHORA_SUPER_ADMIN_EMAIL: parsed.DAKSHORA_SUPER_ADMIN_EMAIL || parsed.SUPERADMIN_EMAIL,
+  DAKSHORA_SUPER_ADMIN_PASSWORD: parsed.DAKSHORA_SUPER_ADMIN_PASSWORD || parsed.SUPERADMIN_PASSWORD
+};

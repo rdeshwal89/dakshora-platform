@@ -47,14 +47,35 @@ export async function requireAuth(
 
   const isSuperAdmin = user.app_metadata?.role === "superadmin";
 
-  const role = isSuperAdmin
+  let role = isSuperAdmin
     ? "superadmin"
-    : (user.app_metadata?.role as string) || "school-admin";
+    : (user.app_metadata?.role as string);
 
-  const organizationId =
-    (user.app_metadata?.organization_id as string) ||
-    (user.user_metadata?.organizationId as string) ||
-    (user.user_metadata?.organization_id as string);
+  let organizationId = user.app_metadata?.organization_id as string | undefined;
+
+  // If not superadmin and missing from app_metadata, securely resolve from organization_members
+  if (!isSuperAdmin && (!organizationId || !role)) {
+    try {
+      const { data: membership } = await supabase
+        .from("organization_members")
+        .select("organization_id, roles(name)")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (membership) {
+        organizationId = organizationId || membership.organization_id;
+        if (!role && membership.roles) {
+          const roleData = membership.roles as any;
+          role = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+        }
+      }
+    } catch {
+      // Fallback silently if DB query fails
+    }
+  }
+
+  role = role || "school-admin";
 
   request.user = {
     id: user.id,

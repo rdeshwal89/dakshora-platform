@@ -66,11 +66,8 @@ export async function buildApp() {
       "Content-Type",
       "Accept",
       "Authorization",
-      "x-role",
-      "x-staff-id",
       "x-organization-id",
-      "x-org-id",
-      "x-platform-role"
+      "x-org-id"
     ],
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
   });

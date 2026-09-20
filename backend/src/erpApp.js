@@ -307,8 +307,32 @@ async function requireAuth(req, res, next) {
 
     // STRICT: Only trust app_metadata for superadmin role (server-managed claim)
     const isSuperAdmin = user.app_metadata?.role === "superadmin";
-    const role = isSuperAdmin ? "superadmin" : (user.app_metadata?.role || "school-admin");
-    const organizationId = user.app_metadata?.organization_id || user.user_metadata?.organizationId || user.user_metadata?.organization_id || null;
+    let role = isSuperAdmin ? "superadmin" : (user.app_metadata?.role || null);
+    let organizationId = user.app_metadata?.organization_id || null;
+
+    if (!isSuperAdmin && (!organizationId || !role) && supabase) {
+      try {
+        const { data: membership } = await supabase
+          .from("organization_members")
+          .select("organization_id, roles(name)")
+          .eq("user_id", user.id)
+          .limit(1)
+          .maybeSingle();
+
+        if (membership) {
+          organizationId = organizationId || membership.organization_id;
+          if (!role && membership.roles) {
+            const roleData = membership.roles;
+            role = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+          }
+        }
+      } catch (dbErr) {
+        // Fallback gracefully
+      }
+    }
+
+    role = role || "school-admin";
+    organizationId = organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
 
     req.user = {
       id: user.id,
@@ -317,7 +341,7 @@ async function requireAuth(req, res, next) {
       role,
       isSuperAdmin,
       permissions: isSuperAdmin ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
-      organizationId: organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      organizationId
     };
 
     next();
@@ -498,10 +522,6 @@ const RATE_LIMIT_WINDOWS = new Map(); // key -> [timestamps]
 
 function createRateLimiter(windowMs, maxRequests, message) {
   return (req, res, next) => {
-    // If request contains test bypass header, allow
-    if (req.headers["x-bypass-ratelimit"] === "true") {
-      return next();
-    }
     const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || req.ip || "127.0.0.1";
     const phone = req.body?.phone ? String(req.body.phone).trim().replace(/[^0-9+]/g, "") : "";
     const identifier = phone ? `${ip}_${phone}` : ip;
@@ -1071,7 +1091,7 @@ const TEMPLATES = [
 
 app.get("/api/templates", (req, res) => res.json({ success: true, templates: TEMPLATES }));
 
-app.get("/api/websites", async (req, res) => {
+app.get("/api/websites", requireAuth, async (req, res) => {
   try {
     if (!supabase) return res.json({ success: true, websites: IN_MEMORY_WEBSITES });
     const { data, error } = await supabase.from("websites").select("*").order("created_at", { ascending: false });
@@ -1094,7 +1114,7 @@ app.get("/api/websites", async (req, res) => {
   }
 });
 
-app.post("/api/websites", async (req, res) => {
+app.post("/api/websites", requireAuth, async (req, res) => {
   try {
     const { name, domain, template, organization_id } = req.body;
     if (!name || !name.trim()) {
@@ -1367,7 +1387,7 @@ const handleLeadCapture = async (req, res) => {
 app.post("/api/leads", leadsRateLimiter, handleLeadCapture);
 app.post("/api/erp/admissions/leads/capture", leadsRateLimiter, handleLeadCapture);
 
-app.get("/api/leads", async (req, res) => {
+app.get("/api/leads", requireAuth, async (req, res) => {
   try {
     if (!supabase) return res.json({ success: true, leads: IN_MEMORY_LEADS });
     const { data, error } = await supabase.from("leads").select("*").order("created_at", { ascending: false });
@@ -1389,7 +1409,7 @@ app.get("/api/leads", async (req, res) => {
   }
 });
 
-app.patch("/api/leads/:id", async (req, res) => {
+app.patch("/api/leads/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
@@ -1418,7 +1438,7 @@ app.patch("/api/leads/:id", async (req, res) => {
 // 6. MEDIA ASSETS SERVICE (Supabase Storage)
 // =========================================================================
 
-app.get("/api/media", async (req, res) => {
+app.get("/api/media", requireAuth, async (req, res) => {
   try {
     if (!supabase) return res.json({ success: true, media: [] });
     const { data, error } = await supabase.from("media").select("*").order("created_at", { ascending: false });
@@ -2123,7 +2143,7 @@ app.post("/api/billing/change-plan", async (req, res) => {
 
   await recordAuditLog(
     "billing.plan_changed",
-    req.headers["x-user-email"] || req.user?.email || "billing@dpsheritage.edu.in",
+    req.user?.email || "billing@dpsheritage.edu.in",
     "subscription",
     sub.id,
     req
@@ -2150,7 +2170,7 @@ app.post("/api/billing/cancel", async (req, res) => {
 
   await recordAuditLog(
     "billing.subscription_cancelled",
-    req.headers["x-user-email"] || req.user?.email || "admin@dpsheritage.edu.in",
+    req.user?.email || "admin@dpsheritage.edu.in",
     "subscription",
     sub.id,
     req
@@ -2203,7 +2223,7 @@ app.post("/api/billing/renew", async (req, res) => {
 
   await recordAuditLog(
     "billing.subscription_renewed",
-    req.headers["x-user-email"] || "admin@dpsheritage.edu.in",
+    req.user?.email || "admin@dpsheritage.edu.in",
     "subscription",
     sub.id,
     req
@@ -2257,7 +2277,7 @@ app.post("/api/billing/verify-payment", async (req, res) => {
 
   await recordAuditLog(
     "billing.payment_verified",
-    req.headers["x-user-email"] || "admin@dpsheritage.edu.in",
+    req.user?.email || "admin@dpsheritage.edu.in",
     "payment",
     paymentId,
     req
@@ -2302,7 +2322,7 @@ app.post("/api/billing/overrides", async (req, res) => {
     override_type,
     value,
     reason: reason || "Enterprise Custom Contract",
-    created_by: req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    created_by: req.user?.email || "superadmin@dakshora.ai",
     created_at: new Date().toISOString()
   };
 
@@ -2314,7 +2334,7 @@ app.post("/api/billing/overrides", async (req, res) => {
 
   await recordAuditLog(
     "billing.override_created",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "entitlement_override",
     overrideObj.id,
     req
@@ -2337,7 +2357,7 @@ app.delete("/api/billing/overrides/:id", async (req, res) => {
   const removed = SAAS_OVERRIDES.splice(idx, 1)[0];
   await recordAuditLog(
     "billing.override_deleted",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "entitlement_override",
     removed.id,
     req
@@ -6698,6 +6718,22 @@ let ERP_PAYROLL = [
   }
 ];
 
+// =========================================================================
+// 🛡️ GLOBAL ERP PROTECTION GATEWAY (Guards all 300+ /api/erp endpoints)
+// =========================================================================
+const PUBLIC_ERP_ENDPOINTS = [
+  "/api/erp/admissions/leads/capture",
+  "/api/erp/solutions/comparison"
+];
+
+app.use("/api/erp", (req, res, next) => {
+  const isPublic = PUBLIC_ERP_ENDPOINTS.some(p => req.path === p || req.originalUrl?.includes(p));
+  if (isPublic) {
+    return next();
+  }
+  return requireAuth(req, res, next);
+});
+
 // Helper to resolve tenant organization ID (Hardened against IDOR)
 function resolveTenantOrgId(req) {
   // If authenticated as SuperAdmin, they may scope to a specific tenant
@@ -8110,8 +8146,8 @@ app.post("/api/erp/attendance/student/bulk", async (req, res) => {
   }
 
   // Teacher assignment authorization verification
-  const callerRole = (req.headers["x-role"] || req.user?.role || req.body.role || "").toLowerCase();
-  const callerStaffId = req.headers["x-staff-id"] || req.user?.staffId || req.body.staffId;
+  const callerRole = (req.user?.role || "").toLowerCase();
+  const callerStaffId = req.user?.staffId || req.body.staffId;
 
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned = ERP_TEACHER_ASSIGNMENTS.some(a =>
@@ -8554,8 +8590,8 @@ app.get("/api/erp/dashboard", (req, res) => {
   const selectedDate = req.query.date || new Date().toISOString().split("T")[0];
   const selectedSession = req.query.session || "2026-27";
   const trendRange = parseInt(req.query.range || "7", 10) === 30 ? 30 : 7;
-  const callerRole = req.headers["x-role"] || req.query.role || "admin";
-  const callerStaffId = req.headers["x-staff-id"] || req.query.staffId || null;
+  const callerRole = req.user?.role || req.query.role || "school-admin";
+  const callerStaffId = req.user?.staffId || req.query.staffId || null;
 
   // 1. Resolve Organization & School Context
   const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId) || {
@@ -9653,8 +9689,8 @@ app.delete("/api/erp/academics/section-subjects/:id", async (req, res) => {
 app.get("/api/erp/academics/homework", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { grade, section, subject, status, session, teacherId } = req.query;
-  const callerRole = (req.headers["x-role"] || req.user?.role || "").toLowerCase();
-  const callerStaffId = req.headers["x-staff-id"] || req.user?.staffId || teacherId;
+  const callerRole = (req.user?.role || "").toLowerCase();
+  const callerStaffId = req.user?.staffId || teacherId;
 
   let homeworkList = ERP_HOMEWORK.filter(h => !h.organization_id || h.organization_id === orgId);
 
@@ -9727,8 +9763,8 @@ app.post("/api/erp/academics/homework", async (req, res) => {
   }
 
   // Teacher RBAC authorization check
-  const callerRole = (req.headers["x-role"] || req.user?.role || "").toLowerCase();
-  const callerStaffId = req.headers["x-staff-id"] || req.user?.staffId || teacherId;
+  const callerRole = (req.user?.role || "").toLowerCase();
+  const callerStaffId = req.user?.staffId || teacherId;
 
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned = 
@@ -10346,8 +10382,8 @@ app.get("/api/erp/marks", (req, res) => {
   }
 
   // Teacher RBAC Authorization
-  const callerRole = (req.headers["x-role"] || req.user?.role || "").toLowerCase();
-  const callerStaffId = req.headers["x-staff-id"] || req.user?.staffId;
+  const callerRole = (req.user?.role || "").toLowerCase();
+  const callerStaffId = req.user?.staffId;
 
   if (callerRole === "teacher" && callerStaffId && examSubject) {
     const isAssigned =
@@ -10445,8 +10481,8 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
   const maxMarks = Number(examSubject.maxMarks) || 100;
 
   // Teacher RBAC Authorization (Evaluated before locked check)
-  const callerRole = (req.headers["x-role"] || req.user?.role || "").toLowerCase();
-  const callerStaffId = req.headers["x-staff-id"] || req.user?.staffId;
+  const callerRole = (req.user?.role || "").toLowerCase();
+  const callerStaffId = req.user?.staffId;
 
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned =
@@ -11784,12 +11820,12 @@ app.post("/api/erp/admissions", (req, res) => {
     eventType: "application_created",
     title: "Application Form Registered",
     description: `Application ${newAdm.applicationNo} registered for ${newAdm.appliedGrade}.`,
-    actorName: req.headers["x-user-name"] || "Admissions Desk",
+    actorName: req.user?.name || "Admissions Desk",
     createdAt: new Date().toISOString(),
     organization_id: orgId
   });
 
-  recordAuditLog("erp.admission_created", req.headers["x-user-email"] || "admissions@dpsheritage.edu.in", "admission", newAdm.id, req);
+  recordAuditLog("erp.admission_created", req.user?.email || "admissions@dpsheritage.edu.in", "admission", newAdm.id, req);
 
   ERP_ADMISSIONS.unshift(newAdm);
   res.json({
@@ -11826,7 +11862,7 @@ app.patch("/api/erp/admissions/:id", (req, res) => {
     eventType: "status_changed",
     title: "Application Profile Updated",
     description: "Applicant information updated by admissions staff.",
-    actorName: req.headers["x-user-name"] || "Admissions Desk",
+    actorName: req.user?.name || "Admissions Desk",
     createdAt: new Date().toISOString(),
     organization_id: orgId
   });
@@ -11863,12 +11899,12 @@ const handleAdmissionStatusChange = (req, res) => {
     eventType: status === "rejected" ? "rejected" : (status === "approved" ? "approved" : "status_changed"),
     title: `Status Changed to ${status.toUpperCase().replace("_", " ")}`,
     description: reason ? `Reason: ${reason}` : `Application transitioned from ${prevStatus} to ${status}.`,
-    actorName: req.headers["x-user-name"] || "Admissions Officer",
+    actorName: req.user?.name || "Admissions Officer",
     createdAt: new Date().toISOString(),
     organization_id: orgId
   });
 
-  recordAuditLog("erp.admission_status_changed", req.headers["x-user-email"] || "admissions@dpsheritage.edu.in", "admission", adm.id, req);
+  recordAuditLog("erp.admission_status_changed", req.user?.email || "admissions@dpsheritage.edu.in", "admission", adm.id, req);
 
   res.json({ success: true, message: `Application status updated to ${status} ✅`, admission: adm });
 };
@@ -12170,7 +12206,7 @@ const handleLeadConversion = (req, res) => {
     eventType: "inquiry_captured",
     title: "Converted from CRM Lead",
     description: `Lead #${lead.id} successfully converted into formal admission application ${appNo}.`,
-    actorName: req.headers["x-user-name"] || "Admissions Officer",
+    actorName: req.user?.name || "Admissions Officer",
     createdAt: new Date().toISOString(),
     organization_id: orgId
   });
@@ -12178,7 +12214,7 @@ const handleLeadConversion = (req, res) => {
   lead.status = "converted";
   lead.notes = (lead.notes ? lead.notes + " | " : "") + `Converted to Application ${appNo}`;
 
-  recordAuditLog("erp.lead_converted", req.headers["x-user-email"] || "admissions@dpsheritage.edu.in", "lead", lead.id, req);
+  recordAuditLog("erp.lead_converted", req.user?.email || "admissions@dpsheritage.edu.in", "lead", lead.id, req);
 
   ERP_ADMISSIONS.unshift(newAdm);
   res.json({
@@ -12197,7 +12233,7 @@ app.post("/api/erp/admissions/leads/:id/convert", handleLeadConversion);
 const handleConfirmAdmission = (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const callerRole = req.headers["x-role"] || req.query.role || "admin";
+  const callerRole = req.user?.role || req.query.role || "school-admin";
 
   // RBAC check: Student and Teacher cannot confirm admissions
   if (callerRole === "student" || callerRole === "parent") {
@@ -12381,15 +12417,15 @@ const handleConfirmAdmission = (req, res) => {
     eventType: "admitted",
     title: "Admission Confirmed & Student Enrolled",
     description: `Formally enrolled into ${assignedGrade}-${assignedSection} with Admission No ${newStudent.admissionNo}. Fee Demand ${feeDemand ? feeDemand.invoiceNo : 'N/A'} generated.`,
-    actorName: req.headers["x-user-name"] || "Principal Dr. Vandana Sen",
+    actorName: req.user?.name || "Principal Office",
     createdAt: new Date().toISOString(),
     organization_id: orgId
   });
 
-  recordAuditLog("erp.admission_confirmed", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "admission", adm.id, req);
-  recordAuditLog("erp.student_enrolled", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "student", newStudent.id, req);
+  recordAuditLog("erp.admission_confirmed", req.user?.email || "principal@dpsheritage.edu.in", "admission", adm.id, req);
+  recordAuditLog("erp.student_enrolled", req.user?.email || "principal@dpsheritage.edu.in", "student", newStudent.id, req);
   if (feeDemand) {
-    recordAuditLog("erp.fee_demand_created", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "fee_demand", feeDemand.id, req);
+    recordAuditLog("erp.fee_demand_created", req.user?.email || "principal@dpsheritage.edu.in", "fee_demand", feeDemand.id, req);
   }
 
   res.json({
@@ -12539,8 +12575,8 @@ app.post("/api/erp/communication/notices", (req, res) => {
     status: publishAt && new Date(publishAt) > new Date() ? 'scheduled' : status,
     publishAt: publishAt || nowStr,
     expiresAt: expiresAt || null,
-    postedBy: req.headers["x-user-name"] || `Authorized by ${(req.headers["x-role"] || 'ADMIN').toUpperCase()}`,
-    publishedBy: req.headers["x-user-name"] || "Principal Office",
+    postedBy: req.user?.name || `Authorized by ${(req.user?.role || "admin").toUpperCase()}`,
+    publishedBy: req.user?.name || "Principal Office",
     postedAt: "Just now",
     smsBroadcastSent: Boolean(smsBroadcast),
     organization_id: orgId,
@@ -12568,7 +12604,7 @@ app.post("/api/erp/communication/notices", (req, res) => {
     });
   }
 
-  recordAuditLog("erp.notice_created", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "notice", noticeId, req);
+  recordAuditLog("erp.notice_created", req.user?.email || "principal@dpsheritage.edu.in", "notice", noticeId, req);
 
   res.json({
     success: true,
@@ -12595,7 +12631,7 @@ app.patch("/api/erp/communication/notices/:id", (req, res) => {
 
   const updates = req.body;
   Object.assign(notice, updates, { updatedAt: new Date().toISOString() });
-  recordAuditLog("erp.notice_updated", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+  recordAuditLog("erp.notice_updated", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
 
   res.json({ success: true, message: "Notice updated successfully", notice });
 });
@@ -12627,7 +12663,7 @@ app.post("/api/erp/communication/notices/:id/publish", (req, res) => {
     organization_id: orgId
   });
 
-  recordAuditLog("erp.notice_published", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+  recordAuditLog("erp.notice_published", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
 
   res.json({ success: true, message: "Circular published to campus! 📢", notice });
 });
@@ -12641,7 +12677,7 @@ app.post("/api/erp/communication/notices/:id/archive", (req, res) => {
 
   notice.status = 'archived';
   notice.updatedAt = new Date().toISOString();
-  recordAuditLog("erp.notice_archived", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+  recordAuditLog("erp.notice_archived", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
 
   res.json({ success: true, message: "Notice archived", notice });
 });
@@ -12705,7 +12741,7 @@ app.post("/api/erp/communication/messages", (req, res) => {
     return res.status(400).json({ success: false, message: "Message body is required" });
   }
 
-  const actor = req.headers["x-user-name"] || "Principal Office";
+  const actor = req.user?.name || "Principal Office";
   const result = dispatchCommunicationCampaign({
     title,
     templateId,
@@ -12723,7 +12759,7 @@ app.post("/api/erp/communication/messages", (req, res) => {
 
   recordAuditLog(
     scheduledAt ? "erp.message_scheduled" : "erp.message_sent",
-    req.headers["x-user-email"] || "principal@dpsheritage.edu.in",
+    req.user?.email || "principal@dpsheritage.edu.in",
     "message",
     result.message.id,
     req
@@ -12791,7 +12827,7 @@ app.post("/api/erp/communication/messages/:id/send", (req, res) => {
     });
   }
 
-  recordAuditLog("erp.message_sent", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "message", message.id, req);
+  recordAuditLog("erp.message_sent", req.user?.email || "principal@dpsheritage.edu.in", "message", message.id, req);
 
   res.json({ success: true, message: "Message dispatched immediately!", messageRecord: message });
 });
@@ -12805,7 +12841,7 @@ app.post("/api/erp/communication/messages/:id/cancel", (req, res) => {
 
   message.status = 'cancelled';
   message.updatedAt = new Date().toISOString();
-  recordAuditLog("erp.message_cancelled", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "message", message.id, req);
+  recordAuditLog("erp.message_cancelled", req.user?.email || "principal@dpsheritage.edu.in", "message", message.id, req);
 
   res.json({ success: true, message: "Scheduled message cancelled", messageRecord: message });
 });
@@ -12849,14 +12885,14 @@ app.post("/api/erp/communication/templates", (req, res) => {
     body: body.trim(),
     variables: Array.isArray(variables) ? variables : [],
     status: 'active',
-    createdBy: req.headers["x-user-name"] || "Principal Office",
+    createdBy: req.user?.name || "Principal Office",
     organization_id: orgId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
 
   ERP_MESSAGE_TEMPLATES.push(newTpl);
-  recordAuditLog("erp.template_created", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "template", newTpl.id, req);
+  recordAuditLog("erp.template_created", req.user?.email || "principal@dpsheritage.edu.in", "template", newTpl.id, req);
 
   res.json({ success: true, message: "Template created successfully", template: newTpl });
 });
@@ -12973,7 +13009,7 @@ app.get("/api/erp/communication/delivery-logs", (req, res) => {
 // 8h. In-App Notifications Endpoints
 app.get("/api/erp/communication/notifications", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = req.headers["x-role"] || req.query.role || "admin";
+  const role = req.user?.role || req.query.role || "school-admin";
   const { status, type, limit } = req.query;
 
   let notifications = ERP_NOTIFICATIONS.filter(n => {
@@ -13014,7 +13050,7 @@ app.patch("/api/erp/communication/notifications/:id/read", (req, res) => {
 
 app.post("/api/erp/communication/notifications/read-all", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = req.headers["x-role"] || "admin";
+  const role = req.user?.role || "school-admin";
   let count = 0;
 
   ERP_NOTIFICATIONS.forEach(n => {
@@ -13044,14 +13080,14 @@ app.patch("/api/erp/communication/settings", (req, res) => {
     ERP_COMMUNICATION_SETTINGS[orgId] = { organization_id: orgId };
   }
   Object.assign(ERP_COMMUNICATION_SETTINGS[orgId], req.body, { updatedAt: new Date().toISOString() });
-  recordAuditLog("erp.communication_settings_updated", req.headers["x-user-email"] || "principal@dpsheritage.edu.in", "settings", orgId, req);
+  recordAuditLog("erp.communication_settings_updated", req.user?.email || "principal@dpsheritage.edu.in", "settings", orgId, req);
 
   res.json({ success: true, message: "Communication settings updated", settings: ERP_COMMUNICATION_SETTINGS[orgId] });
 });
 
 app.get("/api/erp/communication/preferences", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const userId = req.headers["x-user-id"] || req.headers["x-role"] || "admin";
+  const userId = req.user?.id || req.user?.role || "admin";
   let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (!p.organization_id || p.organization_id === orgId) && p.userId === userId);
   if (!pref) {
     pref = {
@@ -13070,7 +13106,7 @@ app.get("/api/erp/communication/preferences", (req, res) => {
 
 app.patch("/api/erp/communication/preferences", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const userId = req.headers["x-user-id"] || req.headers["x-role"] || "admin";
+  const userId = req.user?.id || req.user?.role || "admin";
   let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (!p.organization_id || p.organization_id === orgId) && p.userId === userId);
   if (!pref) {
     pref = { organization_id: orgId, userId };
@@ -15679,7 +15715,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
 // 1. AI Gateway Status: GET /api/erp/ai/status
 app.get("/api/erp/ai/status", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = req.headers["x-role"] || "admin";
+  const role = req.user?.role || "school-admin";
 
   res.json({
     success: true,
@@ -15704,7 +15740,7 @@ app.get("/api/erp/ai/status", (req, res) => {
 // 2. Primary Conversational Endpoint: POST /api/erp/ai/chat
 app.post("/api/erp/ai/chat", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.body?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
   const session = req.body?.session || "2026-27";
   const { message, conversationId, stream = false } = req.body;
 
@@ -15750,7 +15786,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
     rawLower.includes("drop table") ||
     rawLower.includes("select * from")
   ) {
-    recordAuditLog("erp.ai.injection_attempt", req.headers["x-user-email"] || "operator", "security_guard", orgId, req);
+    recordAuditLog("erp.ai.injection_attempt", req.user?.email || "operator", "security_guard", orgId, req);
     return res.json({
       success: true,
       intent: "security_alert",
@@ -15826,7 +15862,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
 
   // Strict Payroll Guard for non-admins and non-accountants
   if (intent === "payroll_query" && role !== "admin" && role !== "account") {
-    recordAuditLog("erp.ai.sensitive_access_denied", req.headers["x-user-email"] || "operator", "payroll", orgId, req);
+    recordAuditLog("erp.ai.sensitive_access_denied", req.user?.email || "operator", "payroll", orgId, req);
     return res.json({
       success: true,
       intent,
@@ -15847,7 +15883,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
 
   // If permission denied by tool layer
   if (toolResult.permissionDenied) {
-    recordAuditLog("erp.ai.permission_denied", req.headers["x-user-email"] || "operator", targetTool, orgId, req);
+    recordAuditLog("erp.ai.permission_denied", req.user?.email || "operator", targetTool, orgId, req);
     return res.json({
       success: true,
       intent,
@@ -15864,9 +15900,9 @@ app.post("/api/erp/ai/chat", async (req, res) => {
   }
 
   // Audit Logging for AI execution
-  recordAuditLog("erp.ai.query", req.headers["x-user-email"] || "operator", "ai_tool", targetTool, req);
+  recordAuditLog("erp.ai.query", req.user?.email || "operator", "ai_tool", targetTool, req);
   if (intent === "fee_query" || intent === "payroll_query") {
-    recordAuditLog("erp.ai.sensitive_access", req.headers["x-user-email"] || "operator", "financial_ledger", orgId, req);
+    recordAuditLog("erp.ai.sensitive_access", req.user?.email || "operator", "financial_ledger", orgId, req);
   }
 
   // Synthesize Grounded Natural Language Response & Structured Artifacts
@@ -16119,7 +16155,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
     conv = {
       id: convId,
       organization_id: orgId,
-      user_id: req.headers["x-user-id"] || "usr-current",
+      user_id: req.user?.id || "usr-current",
       school_id: "sch-01",
       campus_id: "cmp-01",
       academic_session: session,
@@ -16190,7 +16226,7 @@ app.post("/api/erp/ai/conversations", (req, res) => {
   const newConv = {
     id: `conv-${Date.now()}`,
     organization_id: orgId,
-    user_id: req.headers["x-user-id"] || "usr-current",
+    user_id: req.user?.id || "usr-current",
     school_id: "sch-01",
     campus_id: "cmp-01",
     academic_session: session,
@@ -16386,12 +16422,12 @@ app.post("/api/erp/ai/knowledge-base", (req, res) => {
     tags: Array.isArray(tags) ? tags : ["general", "policy"],
     summary: summary || "School private institutional document for grounded AI retrieval.",
     content: content || summary || "Full document text indexed into vector embeddings.",
-    uploaded_by: req.headers["x-user-name"] || "Administrator",
+    uploaded_by: req.user?.name || "Administrator",
     updated_at: new Date().toISOString()
   };
 
   IN_MEMORY_KNOWLEDGE_BASE.unshift(newDoc);
-  recordAuditLog("knowledge_base.document_indexed", req.headers["x-user-email"] || "admin", "kb_document", newDoc.id, req);
+  recordAuditLog("knowledge_base.document_indexed", req.user?.email || "admin", "kb_document", newDoc.id, req);
 
   res.json({
     success: true,
@@ -16408,7 +16444,7 @@ app.delete("/api/erp/ai/knowledge-base/:id", (req, res) => {
     return res.status(404).json({ success: false, message: "Document not found." });
   }
   const removed = IN_MEMORY_KNOWLEDGE_BASE.splice(idx, 1)[0];
-  recordAuditLog("knowledge_base.document_deleted", req.headers["x-user-email"] || "admin", "kb_document", removed.id, req);
+  recordAuditLog("knowledge_base.document_deleted", req.user?.email || "admin", "kb_document", removed.id, req);
   res.json({ success: true, message: "Document removed from RAG index.", removed });
 });
 
@@ -16660,7 +16696,7 @@ app.post("/api/erp/robotics/projects", (req, res) => {
   };
 
   IN_MEMORY_ROBOTICS_PROJECTS.unshift(newPrj);
-  recordAuditLog("robotics.project_submitted", req.headers["x-user-email"] || "student", "robotics_project", newPrj.id, req);
+  recordAuditLog("robotics.project_submitted", req.user?.email || "student", "robotics_project", newPrj.id, req);
 
   res.json({ success: true, message: "Project submitted to innovation portfolio! 🚀", project: newPrj });
 });
@@ -16809,7 +16845,7 @@ let IN_MEMORY_TEACHING_JOURNAL = [
 app.get("/api/erp/teaching-journal", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { staffId, grade, section, date, subject } = req.query;
-  const role = req.headers["x-role"] || "admin";
+  const role = req.user?.role || "school-admin";
 
   let list = IN_MEMORY_TEACHING_JOURNAL.filter(j => !j.organization_id || j.organization_id === orgId);
   if (role === "teacher" && staffId) {
@@ -16858,7 +16894,7 @@ app.post("/api/erp/teaching-journal", (req, res) => {
   const newEntry = {
     id: `tj-${Date.now()}`,
     organization_id: orgId,
-    staff_id: staff_id || req.headers["x-staff-id"] || "stf-02",
+    staff_id: staff_id || req.user?.staffId || "stf-02",
     staff_name: staff_name || "Rajeev Malhotra",
     date: date || new Date().toISOString().split("T")[0],
     grade,
@@ -16878,7 +16914,7 @@ app.post("/api/erp/teaching-journal", (req, res) => {
   };
 
   IN_MEMORY_TEACHING_JOURNAL.unshift(newEntry);
-  recordAuditLog("erp.teaching_journal_created", req.headers["x-user-email"] || "teacher", "teaching_journal", newEntry.id, req);
+  recordAuditLog("erp.teaching_journal_created", req.user?.email || "teacher", "teaching_journal", newEntry.id, req);
 
   res.json({
     success: true,
@@ -17075,7 +17111,7 @@ app.post("/api/erp/ai-teacher/generate", (req, res) => {
 // 14a. GET /api/erp/settings/master - Retrieve Unified 20-Section Master Configuration
 app.get("/api/erp/settings/master", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
 
   // Sync settings with sub-modules state
   ERP_MASTER_SETTINGS.school_profile = {
@@ -17133,7 +17169,7 @@ app.get("/api/erp/settings/master", (req, res) => {
 // 14b. PATCH /api/erp/settings/section/:section - Update a specific settings section
 app.patch("/api/erp/settings/section/:section", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
   const { section } = req.params;
 
   // Authorization: Only admin can edit critical sections
@@ -17199,7 +17235,7 @@ app.patch("/api/erp/settings/section/:section", async (req, res) => {
 
   await recordAuditLog(
     "erp.settings_changed",
-    req.user?.email || (req.headers["x-role"] ? `${req.headers["x-role"]}@dpsheritage.edu.in` : "admin@dpsheritage.edu.in"),
+    req.user?.email || "admin@dpsheritage.edu.in",
     "settings",
     section,
     req
@@ -17222,7 +17258,7 @@ app.get("/api/erp/campuses", (req, res) => {
 
 app.post("/api/erp/campuses", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
   if (role !== "admin") {
     return res.status(403).json({ success: false, message: "Only Administrators can create new campuses." });
   }
@@ -17271,7 +17307,7 @@ app.post("/api/erp/campuses", async (req, res) => {
 
 app.patch("/api/erp/campuses/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
   if (role !== "admin") {
     return res.status(403).json({ success: false, message: "Only Administrators can modify campuses." });
   }
@@ -17319,7 +17355,7 @@ app.get("/api/erp/taxonomies", (req, res) => {
 // 14e. Permission-Aware Multi-Domain Global Search: GET /api/erp/search?q={query}
 app.get("/api/erp/search", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
+  const role = (req.user?.role || "school-admin").toLowerCase();
   const q = (req.query.q || "").trim().toLowerCase();
 
   if (!q) {
@@ -19297,7 +19333,7 @@ function getOrCreateOnboarding(orgId, req) {
       started_at: new Date().toISOString(),
       completed_at: null,
       activated_at: null,
-      created_by: req?.user?.email || req?.headers?.["x-user-email"] || "admin@dakshora.com",
+      created_by: req.user?.email || "admin@dakshora.com",
       updated_at: new Date().toISOString()
     };
   }
@@ -19411,11 +19447,19 @@ function evaluateOnboardingChecklist(orgId) {
 // 🚀 SCHOOL ERP SAAS ONBOARDING & CONFIGURATION WIZARD ENDPOINTS (16 STEPS)
 // =========================================================================
 
-// Security Guard: Admin only
+// Security Guard: Admin only (Strictly Authenticated)
 function checkOnboardingAdminRole(req, res) {
-  const role = (req.headers["x-role"] || req.user?.role || "admin").toLowerCase();
-  const isSuper = req.user?.isSuperAdmin || role === "superadmin";
-  const isSchoolAdmin = role === "admin" || role === "school-admin";
+  if (!req.user) {
+    res.status(401).json({
+      success: false,
+      code: "AUTH_REQUIRED",
+      message: "Authentication required: Please sign in with an authorized administrator account."
+    });
+    return false;
+  }
+  const role = (req.user.role || "").toLowerCase();
+  const isSuper = req.user.isSuperAdmin || role === "superadmin";
+  const isSchoolAdmin = role === "admin" || role === "school-admin" || role === "principal";
 
   if (!isSuper && !isSchoolAdmin) {
     res.status(403).json({
@@ -19866,7 +19910,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
 
     await recordAuditLog(
       "erp.onboarding_step_completed",
-      req.user?.email || req.headers["x-role"] || "admin",
+      req.user?.email || "admin",
       "onboarding",
       `Step ${step}`,
       req
@@ -19901,7 +19945,7 @@ app.post("/api/erp/onboarding/save-draft", async (req, res) => {
 
   await recordAuditLog(
     "erp.onboarding_draft_saved",
-    req.user?.email || req.headers["x-role"] || "admin",
+    req.user?.email || "admin",
     "onboarding",
     onboarding.id,
     req
@@ -19962,7 +20006,7 @@ app.post("/api/erp/onboarding/activate", async (req, res) => {
 
   await recordAuditLog(
     "erp.school_activated",
-    req.user?.email || req.headers["x-role"] || "admin",
+    req.user?.email || "admin",
     "school",
     onboarding.school_id || orgId,
     req
@@ -20003,7 +20047,7 @@ app.post("/api/erp/onboarding/invite-admin", async (req, res) => {
     role: role.toLowerCase(),
     token,
     status: "pending",
-    invited_by: req.user?.email || req.headers["x-role"] || "admin@dakshora.com",
+    invited_by: req.user?.email || "admin@dakshora.com",
     expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     created_at: new Date().toISOString()
   };
@@ -20012,7 +20056,7 @@ app.post("/api/erp/onboarding/invite-admin", async (req, res) => {
 
   await recordAuditLog(
     "erp.admin_invited",
-    req.user?.email || req.headers["x-role"] || "admin",
+    req.user?.email || "admin",
     "invitation",
     newInvite.id,
     req
@@ -20489,7 +20533,7 @@ app.patch("/api/admin/organizations/:id/status", async (req, res) => {
 
   await recordAuditLog(
     "ORGANIZATION_STATUS_CHANGED",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "organization",
     `Changed from ${oldStatus} to ${org.status}`,
     req
@@ -20601,7 +20645,7 @@ app.patch("/api/admin/users/:id/role", async (req, res) => {
 
   await recordAuditLog(
     "USER_ROLE_CHANGED",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "user",
     `User ${req.params.id} role updated to ${role}`,
     req
@@ -20661,7 +20705,7 @@ app.patch("/api/admin/subscriptions/:id", async (req, res) => {
 
   await recordAuditLog(
     "SUBSCRIPTION_CHANGED",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "subscription",
     `Subscription ${sub.id} updated (Plan: ${sub.plan_id}, Status: ${sub.status})`,
     req
@@ -20776,7 +20820,7 @@ app.post("/api/admin/support/tickets", async (req, res) => {
     priority: priority.toLowerCase(),
     status: "open",
     assigned_to: null,
-    created_by: req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    created_by: req.user?.email || "superadmin@dakshora.ai",
     resolution_notes: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
@@ -20806,7 +20850,7 @@ app.patch("/api/admin/support/tickets/:id", async (req, res) => {
   if (resolution_notes !== undefined) ticket.resolution_notes = resolution_notes;
   ticket.updated_at = new Date().toISOString();
 
-  await recordAuditLog("SUPPORT_TICKET_UPDATED", req.headers["x-user-email"] || "superadmin@dakshora.ai", "support", ticket.id, req);
+  await recordAuditLog("SUPPORT_TICKET_UPDATED", req.user?.email || "superadmin@dakshora.ai", "support", ticket.id, req);
 
   res.json({
     success: true,
@@ -20841,7 +20885,7 @@ app.post("/api/admin/support/session/start", async (req, res) => {
   const newSession = {
     id: `sess-${Date.now().toString().slice(-4)}`,
     admin_user_id: "usr-superadmin",
-    admin_email: req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    admin_email: req.user?.email || "superadmin@dakshora.ai",
     target_organization_id: org.id,
     target_school_name: org.name,
     reason: reason.trim(),
@@ -20883,7 +20927,7 @@ app.post("/api/admin/support/session/end", async (req, res) => {
 
   await recordAuditLog(
     "SUPPORT_SESSION_ENDED",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "support_session",
     "Platform administrator exited support mode",
     req
@@ -20948,7 +20992,7 @@ app.patch("/api/admin/settings", async (req, res) => {
     PLATFORM_SETTINGS.feature_flags = { ...PLATFORM_SETTINGS.feature_flags, ...feature_flags };
   }
   PLATFORM_SETTINGS.updated_at = new Date().toISOString();
-  PLATFORM_SETTINGS.updated_by = req.headers["x-user-email"] || "superadmin@dakshora.ai";
+  PLATFORM_SETTINGS.updated_by = req.user?.email || "superadmin@dakshora.ai";
 
   await recordAuditLog(
     "PLATFORM_SETTING_CHANGED",
@@ -20989,7 +21033,7 @@ app.post("/api/admin/communication/broadcast", async (req, res) => {
 
   await recordAuditLog(
     "PLATFORM_BROADCAST_SENT",
-    req.headers["x-user-email"] || "superadmin@dakshora.ai",
+    req.user?.email || "superadmin@dakshora.ai",
     "broadcast",
     `Broadcast '${title}' dispatched to ${audience}`,
     req
@@ -21620,8 +21664,8 @@ ensureAjayKumarSeed();
 // Centralized Authorization Service
 class AuthorizationService {
   static resolveCallerStaff(req, orgId) {
-    const rawStaffId = req.headers["x-staff-id"] || req.user?.staffId || req.query?.staff_id;
-    const userEmail = (req.headers["x-user-email"] || req.user?.email || "").toLowerCase();
+    const rawStaffId = req.user?.staffId || req.query?.staff_id;
+    const userEmail = (req.user?.email || "").toLowerCase();
 
     if (rawStaffId) {
       const sf = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === rawStaffId);
@@ -21635,7 +21679,7 @@ class AuthorizationService {
   }
 
   static isSchoolAdmin(req) {
-    const role = (req.headers["x-role"] || req.user?.role || "").toLowerCase();
+    const role = (req.user?.role || "").toLowerCase();
     const isSuper = role === "superadmin" || req.user?.isSuperAdmin === true;
     const isAdm = role === "admin" || role === "school-admin" || role === "principal";
     return isSuper || isAdm;
@@ -21923,7 +21967,7 @@ app.post("/api/erp/responsibilities", async (req, res) => {
     ERP_RESPONSIBILITY_PERMISSIONS[cleanCode] = permissions;
   }
 
-  await recordAuditLog("RESPONSIBILITY_TYPE_CREATED", req.headers["x-user-email"] || "admin", "responsibility_type", newType.id, req);
+  await recordAuditLog("RESPONSIBILITY_TYPE_CREATED", req.user?.email || "admin", "responsibility_type", newType.id, req);
 
   res.status(201).json({
     success: true,
@@ -21952,7 +21996,7 @@ app.patch("/api/erp/responsibilities/:id", async (req, res) => {
   if (is_active !== undefined) target.is_active = !!is_active;
   target.updated_at = new Date().toISOString();
 
-  await recordAuditLog("RESPONSIBILITY_TYPE_UPDATED", req.headers["x-user-email"] || "admin", "responsibility_type", target.id, req);
+  await recordAuditLog("RESPONSIBILITY_TYPE_UPDATED", req.user?.email || "admin", "responsibility_type", target.id, req);
 
   res.json({
     success: true,
@@ -21995,7 +22039,7 @@ app.patch("/api/erp/responsibilities/:id/permissions", async (req, res) => {
   }
 
   ERP_RESPONSIBILITY_PERMISSIONS[target.code] = permissions;
-  await recordAuditLog("RESPONSIBILITY_PERMISSIONS_UPDATED", req.headers["x-user-email"] || "admin", "responsibility_type", target.id, req);
+  await recordAuditLog("RESPONSIBILITY_PERMISSIONS_UPDATED", req.user?.email || "admin", "responsibility_type", target.id, req);
 
   res.json({
     success: true,
@@ -22130,7 +22174,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
     end_date: end_date || null,
     status: "active",
     notes: notes ? notes.trim() : null,
-    created_by: req.headers["x-user-email"] || "admin@school.edu",
+    created_by: req.user?.email || "admin@school.edu",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -22186,7 +22230,7 @@ app.patch("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
 
   assignment.updated_at = new Date().toISOString();
 
-  await recordAuditLog("RESPONSIBILITY_UPDATED", req.headers["x-user-email"] || "admin", "staff_responsibility", assignment.id, req);
+  await recordAuditLog("RESPONSIBILITY_UPDATED", req.user?.email || "admin", "staff_responsibility", assignment.id, req);
 
   res.json({
     success: true,
@@ -22212,7 +22256,7 @@ app.delete("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
   }
 
   const removed = ERP_STAFF_RESPONSIBILITIES.splice(idx, 1)[0];
-  await recordAuditLog("RESPONSIBILITY_REMOVED", req.headers["x-user-email"] || "admin", "staff_responsibility", removed.id, req);
+  await recordAuditLog("RESPONSIBILITY_REMOVED", req.user?.email || "admin", "staff_responsibility", removed.id, req);
 
   res.json({
     success: true,
