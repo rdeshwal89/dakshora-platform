@@ -505,7 +505,7 @@ as $$
     from public.organization_members om
     where om.organization_id = target_org
       and om.user_id = auth.uid()
-  );
+  ) or public.is_platform_superadmin();
 $$;
 
 revoke all on function public.is_org_member(uuid) from public;
