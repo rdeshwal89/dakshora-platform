@@ -553,6 +553,7 @@ const otpSendRateLimiter = createRateLimiter(60000, 5, "Too many OTP requests. P
 const otpVerifyRateLimiter = createRateLimiter(60000, 10, "Too many OTP verification attempts. Please wait 1 minute before trying again.");
 const leadsRateLimiter = createRateLimiter(60000, 15, "Too many lead submissions. Please try again in 1 minute.");
 
+
 // SuperAdmin Login: POST /api/auth/login
 app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   try {
@@ -566,6 +567,27 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       return res.status(401).json({ success: false, message: "Invalid email or password", error: error.message });
+    }
+
+    // Check if user has Two-Factor Authentication (TOTP) enabled
+    try {
+      const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        global: { headers: { Authorization: `Bearer ${data.session.access_token}` } }
+      });
+      const { data: factorsData } = await userClient.auth.mfa.listFactors();
+      const verifiedTotp = factorsData?.totp?.find(f => f.status === 'verified');
+      if (verifiedTotp) {
+        return res.json({
+          success: true,
+          mfaRequired: true,
+          factorId: verifiedTotp.id,
+          tempToken: data.session.access_token,
+          message: "Two-Factor Authentication (TOTP) code required."
+        });
+      }
+    } catch (mfaCheckErr) {
+      console.warn("MFA factor check warning:", mfaCheckErr.message);
     }
 
     const isSuperAdmin = data.user.app_metadata?.role === "superadmin";
@@ -598,6 +620,165 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
     res.status(500).json({ success: false, message: "Login failed", error: error.message });
   }
 });
+
+// =========================================================================
+// TWO-FACTOR AUTHENTICATION (TOTP / MFA)
+// =========================================================================
+
+// 1. Enroll TOTP factor: POST /api/auth/mfa/enroll (Protected)
+app.post("/api/auth/mfa/enroll", requireAuth, async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader.split(" ")[1];
+    const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
+    const { data, error } = await userClient.auth.mfa.enroll({
+      factorType: "totp",
+      issuer: "DAKSHORA 2.0",
+      friendlyName: req.user?.email || "User"
+    });
+
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    recordAuditLog("user.mfa_enrolled", req.user?.email, "user", req.user?.id, req);
+
+    res.json({
+      success: true,
+      factorId: data.id,
+      secret: data.totp?.secret,
+      qrCode: data.totp?.qr_code,
+      uri: data.totp?.uri
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "MFA enrollment failed", error: err.message });
+  }
+});
+
+// 2. Verify TOTP Challenge: POST /api/auth/mfa/verify
+app.post("/api/auth/mfa/verify", async (req, res) => {
+  try {
+    const token = req.body.tempToken || (req.headers.authorization ? req.headers.authorization.split(" ")[1] : null);
+    const { factorId, code } = req.body;
+
+    if (!token) {
+      return res.status(401).json({ success: false, message: "Authentication token required for MFA verification" });
+    }
+    if (!factorId || !code) {
+      return res.status(400).json({ success: false, message: "Factor ID and 6-digit code are required" });
+    }
+
+    const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
+    const { data, error } = await userClient.auth.mfa.challengeAndVerify({
+      factorId,
+      code: String(code).trim()
+    });
+
+    if (error) {
+      return res.status(400).json({ success: false, message: "Invalid or expired 2FA code", error: error.message });
+    }
+
+    const accessToken = data.access_token || data.session?.access_token;
+    const isSuperAdmin = data.user.app_metadata?.role === "superadmin";
+    const permissions = isSuperAdmin 
+      ? ["*"] 
+      : ["websites.view", "websites.edit", "leads.view", "leads.create", "cms.view", "cms.edit", "media.upload", "billing.view"];
+
+    recordAuditLog("user.mfa_verified", data.user.email, "user", data.user.id, req);
+
+    res.json({
+      success: true,
+      message: `Two-factor authentication verified! Welcome back, ${data.user.user_metadata?.name || data.user.email}! 🚀`,
+      token: accessToken,
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: data.expires_in || 3600,
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        name: data.user.user_metadata?.name || "User",
+        role: isSuperAdmin ? "superadmin" : "school-admin",
+        isSuperAdmin,
+        permissions,
+        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "MFA verification failed", error: err.message });
+  }
+});
+
+// 3. Get MFA Status: GET /api/auth/mfa/status (Protected)
+app.get("/api/auth/mfa/status", requireAuth, async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(" ")[1];
+    const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
+    const { data, error } = await userClient.auth.mfa.listFactors();
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    const verifiedFactors = data.totp?.filter(f => f.status === "verified") || [];
+    res.json({
+      success: true,
+      mfaEnabled: verifiedFactors.length > 0,
+      factors: data.totp || []
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to fetch MFA status", error: err.message });
+  }
+});
+
+// 4. Disable / Unenroll TOTP: POST /api/auth/mfa/unenroll (Protected)
+app.post("/api/auth/mfa/unenroll", requireAuth, async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(" ")[1];
+    const { factorId } = req.body;
+
+    const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
+    let targetFactorId = factorId;
+    if (!targetFactorId) {
+      const { data: factorsData } = await userClient.auth.mfa.listFactors();
+      const factor = factorsData?.totp?.find(f => f.status === "verified") || factorsData?.totp?.[0];
+      targetFactorId = factor?.id;
+    }
+
+    if (!targetFactorId) {
+      return res.status(400).json({ success: false, message: "No MFA factor found to unenroll" });
+    }
+
+    const { error } = await userClient.auth.mfa.unenroll({ factorId: targetFactorId });
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    recordAuditLog("user.mfa_unenrolled", req.user?.email, "user", req.user?.id, req);
+
+    res.json({
+      success: true,
+      message: "Two-Factor Authentication successfully disabled."
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to disable MFA", error: err.message });
+  }
+});
+
 
 // =========================================================================
 // MULTI-CHANNEL AUTHENTICATION: Phone OTP, WhatsApp OTP, Google & Apple
