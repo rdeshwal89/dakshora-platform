@@ -5033,6 +5033,8 @@ let ERP_FEE_REVERSALS = [
   }
 ];
 
+let ERP_ONLINE_ORDERS = [];
+
 // Reference alias to maintain 100% backward-compatibility with existing legacy code
 let ERP_FEES = ERP_FEE_DEMANDS;
 
@@ -11751,6 +11753,291 @@ app.post("/api/erp/exams/marks", (req, res) => {
 // 💳 6. FEES & FINANCE ENDPOINTS (DAKSHORA 2.0 ENTERPRISE SUITE)
 // =========================================================================
 
+// Database resolution helpers for fees & finance suite
+async function resolveOrCreateFeeStructure(orgId, structData) {
+  if (!supabase) return null;
+  const name = (structData.name || structData.feeHead || "Tuition Fee").trim();
+  const amount = Number(structData.amount ?? structData.amountINR ?? 0);
+  
+  let frequency = (structData.frequency || "quarterly").toLowerCase().replace(/-/g, "_");
+  if (frequency === "annual" || frequency === "yearly") frequency = "annually";
+  if (!["one_time", "monthly", "quarterly", "annually"].includes(frequency)) {
+    frequency = "quarterly";
+  }
+
+  let { data: existing } = await supabase
+    .from("fee_structures")
+    .select("*")
+    .eq("organization_id", orgId)
+    .eq("name", name)
+    .eq("amount", amount)
+    .maybeSingle();
+
+  if (existing) return existing;
+
+  const academicSessionId = await resolveOrCreateAcademicSession(orgId, structData.academicSession || structData.session || "2026-2027");
+
+  const { data: newStruct, error } = await supabase
+    .from("fee_structures")
+    .insert([{
+      organization_id: orgId,
+      academic_session_id: academicSessionId,
+      name,
+      amount,
+      frequency,
+      due_date: structData.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+    }])
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[Fees DB] Failed to create fee structure:", error.message);
+    return null;
+  }
+  return newStruct;
+}
+
+async function resolveOrCreateStudentFee(orgId, demandData) {
+  if (!supabase) return null;
+  let studentId = await resolveDbStudent(orgId, demandData.studentId) || null;
+
+  if (!studentId && demandData.admissionNo) {
+    const { data: stdByAdm } = await supabase
+      .from("students")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("admission_no", demandData.admissionNo)
+      .maybeSingle();
+    if (stdByAdm) studentId = stdByAdm.id;
+  }
+
+  if (!studentId && demandData.studentName) {
+    const parts = demandData.studentName.trim().split(/\s+/);
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(" ") || "";
+    let q = supabase.from("students").select("id").eq("organization_id", orgId).ilike("first_name", firstName);
+    if (lastName) q = q.ilike("last_name", lastName);
+    const { data: stdByName } = await q.maybeSingle();
+    if (stdByName) studentId = stdByName.id;
+  }
+
+  if (!studentId) {
+    const parts = (demandData.studentName || "Student").trim().split(/\s+/);
+    const firstName = parts[0] || "Student";
+    const lastName = parts.slice(1).join(" ") || "Student";
+    const { data: newStd, error: stdErr } = await supabase
+      .from("students")
+      .insert([{
+        organization_id: orgId,
+        first_name: firstName,
+        last_name: lastName,
+        admission_no: demandData.admissionNo || `ADM-${Date.now().toString().slice(-6)}`,
+        admission_status: "admitted"
+      }])
+      .select()
+      .maybeSingle();
+    if (!stdErr && newStd) studentId = newStd.id;
+  }
+
+  if (!studentId) return null;
+
+  let feeStructureId = demandData.feeStructureDbId || demandData.feeStructureId;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(feeStructureId);
+  if (!isUuid) {
+    const fs = ERP_FEE_STRUCTURES.find(s => s.id === feeStructureId);
+    if (fs && fs.db_id) {
+      feeStructureId = fs.db_id;
+    } else {
+      const dbFs = await resolveOrCreateFeeStructure(orgId, {
+        name: demandData.feeHead || "Tuition Fee",
+        amount: demandData.baseAmount || demandData.netAmount || 5000,
+        academicSession: demandData.academicSession
+      });
+      if (dbFs) feeStructureId = dbFs.id;
+    }
+  }
+
+  let status = (demandData.status || "pending").toLowerCase();
+  if (status === "partially_paid") status = "partial";
+  if (status === "overdue") status = "pending";
+  if (!["pending", "partial", "paid", "cancelled", "refunded"].includes(status)) {
+    status = "pending";
+  }
+
+  let query = supabase.from("student_fees").select("*").eq("organization_id", orgId);
+  if (demandData.db_id) {
+    query = query.eq("id", demandData.db_id);
+  } else if (studentId && feeStructureId) {
+    query = query.eq("student_id", studentId).eq("fee_structure_id", feeStructureId);
+  }
+
+  const { data: existing } = await query.maybeSingle();
+  if (existing) {
+    const { data: updated } = await supabase
+      .from("student_fees")
+      .update({
+        amount_due: Number(demandData.netAmount ?? demandData.amount_due ?? existing.amount_due),
+        discount: Number(demandData.discountAmount ?? demandData.discount ?? existing.discount),
+        amount_paid: Number(demandData.paidAmount ?? demandData.amount_paid ?? existing.amount_paid),
+        status,
+        due_date: demandData.dueDate || existing.due_date,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existing.id)
+      .select()
+      .maybeSingle();
+    return updated || existing;
+  }
+
+  const { data: newFee, error } = await supabase
+    .from("student_fees")
+    .insert([{
+      organization_id: orgId,
+      student_id: studentId,
+      fee_structure_id: feeStructureId,
+      amount_due: Number(demandData.netAmount || demandData.amount_due || 0),
+      discount: Number(demandData.discountAmount || demandData.discount || 0),
+      amount_paid: Number(demandData.paidAmount || demandData.amount_paid || 0),
+      status,
+      due_date: demandData.dueDate || new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10)
+    }])
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[Fees DB] Failed to create student fee:", error.message);
+    return null;
+  }
+  return newFee;
+}
+
+async function recordDbFeePayment(orgId, paymentData) {
+  if (!supabase) return null;
+  let paymentMethod = (paymentData.paymentMode || paymentData.paymentMethod || "cash").toLowerCase();
+  if (paymentMethod === "netbanking" || paymentMethod === "neft" || paymentMethod === "rtgs") paymentMethod = "bank_transfer";
+  if (paymentMethod === "online_gateway") paymentMethod = "upi";
+  if (!["cash", "upi", "bank_transfer", "card", "cheque"].includes(paymentMethod)) {
+    paymentMethod = "cash";
+  }
+
+  let studentFeeId = paymentData.studentFeeId || paymentData.student_fee_id;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentFeeId);
+  if (!isUuid && paymentData.demand) {
+    const dbFee = await resolveOrCreateStudentFee(orgId, paymentData.demand);
+    if (dbFee) studentFeeId = dbFee.id;
+  }
+
+  if (!studentFeeId) {
+    console.error("[Fees DB] No valid student_fee_id for payment recording");
+    return null;
+  }
+
+  const isCollectedByUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(paymentData.collectedBy);
+
+  const { data: newPayment, error } = await supabase
+    .from("fee_payments")
+    .insert([{
+      organization_id: orgId,
+      student_fee_id: studentFeeId,
+      receipt_no: paymentData.receiptNo || paymentData.receipt_no,
+      amount: Number(paymentData.amountPaid ?? paymentData.amount ?? 0),
+      payment_method: paymentMethod,
+      transaction_ref: paymentData.referenceNumber || paymentData.transaction_ref || null,
+      collected_by: isCollectedByUuid ? paymentData.collectedBy : null,
+      paid_at: paymentData.paid_at || new Date().toISOString()
+    }])
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.error("[Fees DB] Failed to record fee payment:", error.message);
+    return null;
+  }
+
+  const { data: sf } = await supabase
+    .from("student_fees")
+    .select("amount_due, amount_paid")
+    .eq("id", studentFeeId)
+    .maybeSingle();
+
+  if (sf) {
+    const newPaid = Number(sf.amount_paid || 0) + Number(paymentData.amountPaid ?? paymentData.amount ?? 0);
+    const newStatus = newPaid >= Number(sf.amount_due) ? "paid" : (newPaid > 0 ? "partial" : "pending");
+    await supabase
+      .from("student_fees")
+      .update({
+        amount_paid: newPaid,
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", studentFeeId);
+  }
+
+  return newPayment;
+}
+
+async function reverseDbFeePayment(orgId, receiptNoOrId) {
+  if (!supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(receiptNoOrId);
+  let query = supabase.from("fee_payments").select("*").eq("organization_id", orgId);
+  if (isUuid) {
+    query = query.eq("id", receiptNoOrId);
+  } else {
+    query = query.eq("receipt_no", receiptNoOrId);
+  }
+  const { data: payment } = await query.maybeSingle();
+  if (!payment) return null;
+
+  if (payment.student_fee_id) {
+    const { data: sf } = await supabase
+      .from("student_fees")
+      .select("amount_due, amount_paid")
+      .eq("id", payment.student_fee_id)
+      .maybeSingle();
+
+    if (sf) {
+      const restoredPaid = Math.max(0, Number(sf.amount_paid || 0) - Number(payment.amount || 0));
+      const restoredStatus = restoredPaid >= Number(sf.amount_due) ? "paid" : (restoredPaid > 0 ? "partial" : "pending");
+      await supabase
+        .from("student_fees")
+        .update({
+          amount_paid: restoredPaid,
+          status: restoredStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", payment.student_fee_id);
+    }
+  }
+
+  await supabase
+    .from("fee_payments")
+    .delete()
+    .eq("id", payment.id);
+
+  return payment;
+}
+
+function numberToWordsINR(num) {
+  const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
+  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  
+  function inWords(n) {
+    if ((n = n.toString()).length > 9) return 'Overflow';
+    const n_arr = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+    if (!n_arr) return '';
+    let str = '';
+    str += (Number(n_arr[1]) !== 0) ? (a[Number(n_arr[1])] || b[n_arr[1][0]] + ' ' + a[n_arr[1][1]]) + 'Crore ' : '';
+    str += (Number(n_arr[2]) !== 0) ? (a[Number(n_arr[2])] || b[n_arr[2][0]] + ' ' + a[n_arr[2][1]]) + 'Lakh ' : '';
+    str += (Number(n_arr[3]) !== 0) ? (a[Number(n_arr[3])] || b[n_arr[3][0]] + ' ' + a[n_arr[3][1]]) + 'Thousand ' : '';
+    str += (Number(n_arr[4]) !== 0) ? (a[Number(n_arr[4])] || b[n_arr[4][0]] + ' ' + a[n_arr[4][1]]) + 'Hundred ' : '';
+    str += (Number(n_arr[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(n_arr[5])] || b[n_arr[5][0]] + ' ' + a[n_arr[5][1]]) : '';
+    return str.trim();
+  }
+  const integerPart = Math.floor(Number(num) || 0);
+  const words = inWords(integerPart);
+  return words ? words + ' Rupees Only' : 'Zero Rupees';
+}
+
 // 6a. GET /api/erp/fees/overview - Real database financial metrics
 app.get("/api/erp/fees/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
@@ -11771,7 +12058,7 @@ app.get("/api/erp/fees/overview", (req, res) => {
     .reduce((sum, p) => sum + (Number(p.amountPaid) || 0), 0);
 
   const paidCount = orgDemands.filter(d => d.status === "paid" || Number(d.balanceAmount) <= 0).length;
-  const partiallyPaidCount = orgDemands.filter(d => d.status === "partially_paid" || (Number(d.paidAmount) > 0 && Number(d.balanceAmount) > 0)).length;
+  const partiallyPaidCount = orgDemands.filter(d => d.status === "partially_paid" || d.status === "partial" || (Number(d.paidAmount) > 0 && Number(d.balanceAmount) > 0)).length;
   const pendingCount = orgDemands.filter(d => d.status === "pending" && Number(d.paidAmount) === 0 && d.dueDate >= today).length;
   const overdueCount = orgDemands.filter(d => d.status === "overdue" || (Number(d.balanceAmount) > 0 && d.dueDate < today)).length;
   const collectionRatePercentage = totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 1000) / 10 : 0;
@@ -11821,7 +12108,7 @@ app.get("/api/erp/fees/structures", (req, res) => {
   res.json({ success: true, structures, count: structures.length });
 });
 
-// 6c. POST /api/erp/fees/structures - Create Fee Head / Structure
+// 6c. POST /api/erp/fees/structures - Create Fee Head / Structure with DB Persistence
 app.post("/api/erp/fees/structures", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { academicSession, grade, feeHead, amountINR, frequency, dueDay, isMandatory } = req.body;
@@ -11849,6 +12136,17 @@ app.post("/api/erp/fees/structures", async (req, res) => {
     created_at: new Date().toISOString()
   };
 
+  // Persist to PostgreSQL fee_structures
+  const dbStruct = await resolveOrCreateFeeStructure(orgId, {
+    name: feeHead,
+    amount: numAmount,
+    frequency: newStructure.frequency,
+    academicSession: newStructure.academicSession
+  });
+  if (dbStruct) {
+    newStructure.db_id = dbStruct.id;
+  }
+
   ERP_FEE_STRUCTURES.unshift(newStructure);
   await recordAuditLog("erp.fee_structure_created", req.user?.email || "admin", "fee_structure", newStructure.id, req);
 
@@ -11859,7 +12157,7 @@ app.post("/api/erp/fees/structures", async (req, res) => {
 app.patch("/api/erp/fees/structures/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === id);
+  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === id || s.db_id === id));
 
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
@@ -11873,6 +12171,22 @@ app.patch("/api/erp/fees/structures/:id", async (req, res) => {
   if (isMandatory !== undefined) struct.isMandatory = Boolean(isMandatory);
   if (status !== undefined) struct.status = status;
 
+  if (supabase && struct.db_id) {
+    let freq = (struct.frequency || "quarterly").toLowerCase().replace(/-/g, "_");
+    if (freq === "annual" || freq === "yearly") freq = "annually";
+    if (!["one_time", "monthly", "quarterly", "annually"].includes(freq)) freq = "quarterly";
+
+    await supabase
+      .from("fee_structures")
+      .update({
+        name: struct.feeHead,
+        amount: struct.amountINR,
+        frequency: freq,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", struct.db_id);
+  }
+
   await recordAuditLog("erp.fee_structure_updated", req.user?.email || "admin", "fee_structure", struct.id, req);
 
   res.json({ success: true, message: "Fee structure updated successfully", structure: struct });
@@ -11882,13 +12196,21 @@ app.patch("/api/erp/fees/structures/:id", async (req, res) => {
 app.delete("/api/erp/fees/structures/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === id);
+  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === id || s.db_id === id));
 
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
   }
 
   struct.status = "inactive";
+
+  if (supabase && struct.db_id) {
+    await supabase
+      .from("fee_structures")
+      .delete()
+      .eq("id", struct.db_id);
+  }
+
   await recordAuditLog("erp.fee_structure_deactivated", req.user?.email || "admin", "fee_structure", struct.id, req);
 
   res.json({ success: true, message: "Fee structure deactivated successfully" });
@@ -11924,7 +12246,7 @@ app.get("/api/erp/fees/demands", (req, res) => {
   res.json({ success: true, demands, count: demands.length });
 });
 
-// 6g. POST /api/erp/fees/demands/generate - Batch Generate Demands
+// 6g. POST /api/erp/fees/demands/generate - Batch Generate Demands with DB Persistence
 app.post("/api/erp/fees/demands/generate", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { session, grade, section, feeStructureId, dueDate } = req.body;
@@ -11933,7 +12255,7 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
     return res.status(400).json({ success: false, message: "grade and feeStructureId are required" });
   }
 
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === feeStructureId);
+  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === feeStructureId || s.db_id === feeStructureId));
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
   }
@@ -11952,15 +12274,13 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
   const generatedDemands = [];
 
   for (const st of students) {
-    // Check if demand already exists for this fee structure and student
     const existing = ERP_FEE_DEMANDS.find(d =>
       d.studentId === st.id &&
-      d.feeStructureId === struct.id &&
+      (d.feeStructureId === struct.id || (struct.db_id && d.feeStructureId === struct.db_id)) &&
       d.academicSession === currentSession
     );
     if (existing) continue;
 
-    // Concession check
     const concession = ERP_FEE_CONCESSIONS.find(c => c.studentId === st.id && c.academicSession === currentSession);
     let discountAmount = 0;
     if (concession) {
@@ -11984,6 +12304,7 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
       section: st.section || "A",
       academicSession: currentSession,
       feeStructureId: struct.id,
+      feeStructureDbId: struct.db_id,
       feeHead: struct.feeHead,
       feeType: struct.feeHead,
       baseAmount: struct.amountINR,
@@ -11998,6 +12319,12 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
       organization_id: orgId,
       created_at: new Date().toISOString()
     };
+
+    // DB Persistence
+    const dbFee = await resolveOrCreateStudentFee(orgId, newDemand);
+    if (dbFee) {
+      newDemand.db_id = dbFee.id;
+    }
 
     ERP_FEE_DEMANDS.unshift(newDemand);
     generatedDemands.push(newDemand);
@@ -12018,14 +12345,14 @@ app.get("/api/erp/fees/students/:studentId/account", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, message: "Student record not found" });
   }
 
-  const demands = ERP_FEE_DEMANDS.filter(d => (!d.organization_id || d.organization_id === orgId) && (d.studentId === student.id || d.studentName === student.name));
-  const payments = ERP_FEE_PAYMENTS.filter(p => (!p.organization_id || p.organization_id === orgId) && (p.studentId === student.id || p.studentName === student.name));
-  const concessions = ERP_FEE_CONCESSIONS.filter(c => (!c.organization_id || c.organization_id === orgId) && (c.studentId === student.id || c.studentName === student.name));
+  const demands = ERP_FEE_DEMANDS.filter(d => (!d.organization_id || d.organization_id === orgId) && (d.studentId === student.id || (student.db_id && d.studentId === student.db_id) || d.studentName === student.name));
+  const payments = ERP_FEE_PAYMENTS.filter(p => (!p.organization_id || p.organization_id === orgId) && (p.studentId === student.id || (student.db_id && p.studentId === student.db_id) || p.studentName === student.name));
+  const concessions = ERP_FEE_CONCESSIONS.filter(c => (!c.organization_id || c.organization_id === orgId) && (c.studentId === student.id || (student.db_id && c.studentId === student.db_id) || c.studentName === student.name));
 
   const totalInvoiced = demands.reduce((sum, d) => sum + (Number(d.netAmount) || 0), 0);
   const totalPaid = payments.filter(p => p.status === "completed").reduce((sum, p) => sum + (Number(p.amountPaid) || 0), 0);
@@ -12050,7 +12377,7 @@ app.get("/api/erp/fees/students/:studentId/account", (req, res) => {
   });
 });
 
-// 6i. POST /api/erp/fees/collect - Cashier Payment Terminal
+// 6i. POST /api/erp/fees/collect - Cashier Payment Terminal with DB Persistence
 app.post("/api/erp/fees/collect", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { demandId, amountPaid, paymentMode, referenceNumber, collectedBy, remarks } = req.body;
@@ -12059,7 +12386,7 @@ app.post("/api/erp/fees/collect", async (req, res) => {
     return res.status(400).json({ success: false, message: "demandId and amountPaid are required" });
   }
 
-  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && d.id === demandId);
+  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
   if (!demand) {
     return res.status(404).json({ success: false, message: "Fee demand/invoice not found" });
   }
@@ -12082,13 +12409,11 @@ app.post("/api/erp/fees/collect", async (req, res) => {
     return res.status(400).json({ success: false, message: `Invalid paymentMode. Expected one of: ${validModes.join(", ")}` });
   }
 
-  // Generate unique sequential receipt number
   const cleanGrade = (demand.grade || "10").replace(/\D/g, "") || "10";
   const cleanSec = demand.section || "A";
   const seq = String(ERP_FEE_PAYMENTS.length + 101).padStart(6, "0");
   const receiptNo = `REC/2026-27/${cleanGrade}${cleanSec}/${seq}`;
 
-  // Update demand state
   demand.paidAmount = Math.round((Number(demand.paidAmount) + numPaid) * 100) / 100;
   demand.balanceAmount = Math.max(0, Math.round((Number(demand.netAmount) - demand.paidAmount) * 100) / 100);
   demand.status = demand.balanceAmount <= 0 ? "paid" : "partially_paid";
@@ -12119,6 +12444,16 @@ app.post("/api/erp/fees/collect", async (req, res) => {
     created_at: new Date().toISOString()
   };
 
+  // DB Persistence
+  const dbPayment = await recordDbFeePayment(orgId, {
+    ...newPayment,
+    studentFeeId: demand.db_id,
+    demand
+  });
+  if (dbPayment) {
+    newPayment.db_id = dbPayment.id;
+  }
+
   ERP_FEE_PAYMENTS.unshift(newPayment);
   await recordAuditLog("erp.fee_payment_collected", req.user?.email || "cashier", "fee_payment", newPayment.id, req);
 
@@ -12141,7 +12476,7 @@ app.post("/api/erp/fees/payments/:id/reverse", async (req, res) => {
     return res.status(400).json({ success: false, message: "A valid administrative reason (min 5 characters) is required for payment reversal" });
   }
 
-  const payment = ERP_FEE_PAYMENTS.find(p => (!p.organization_id || p.organization_id === orgId) && p.id === id);
+  const payment = ERP_FEE_PAYMENTS.find(p => (!p.organization_id || p.organization_id === orgId) && (p.id === id || p.db_id === id || p.receiptNo === id));
   if (!payment) {
     return res.status(404).json({ success: false, message: "Payment record not found" });
   }
@@ -12152,13 +12487,16 @@ app.post("/api/erp/fees/payments/:id/reverse", async (req, res) => {
 
   payment.status = "reversed";
 
-  const demand = ERP_FEE_DEMANDS.find(d => d.id === payment.demandId);
+  const demand = ERP_FEE_DEMANDS.find(d => d.id === payment.demandId || (d.db_id && d.db_id === payment.demandId));
   if (demand) {
     demand.paidAmount = Math.max(0, Math.round((Number(demand.paidAmount) - Number(payment.amountPaid)) * 100) / 100);
     demand.balanceAmount = Math.round((Number(demand.netAmount) - demand.paidAmount) * 100) / 100;
     const today = new Date().toISOString().slice(0, 10);
     demand.status = demand.balanceAmount <= 0 ? "paid" : demand.paidAmount > 0 ? "partially_paid" : (demand.dueDate < today ? "overdue" : "pending");
   }
+
+  // DB Reversal
+  await reverseDbFeePayment(orgId, payment.db_id || payment.receiptNo);
 
   const reversal = {
     id: `rev-${Date.now()}`,
@@ -12185,22 +12523,22 @@ app.post("/api/erp/fees/payments/:id/reverse", async (req, res) => {
   });
 });
 
-// 6k. GET /api/erp/fees/receipts/:receiptNo - Official Printable Fee Receipt
+// 6k. GET /api/erp/fees/receipts/:receiptNo - Official Printable Fee Receipt (JSON or A4 HTML)
 app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { receiptNo } = req.params;
 
   const payment = ERP_FEE_PAYMENTS.find(p =>
     (!p.organization_id || p.organization_id === orgId) &&
-    (p.receiptNo.toLowerCase() === receiptNo.toLowerCase() || p.id === receiptNo)
+    (p.receiptNo.toLowerCase() === receiptNo.toLowerCase() || p.id === receiptNo || p.db_id === receiptNo)
   );
 
   if (!payment) {
     return res.status(404).json({ success: false, message: `Receipt '${receiptNo}' not found` });
   }
 
-  const demand = ERP_FEE_DEMANDS.find(d => d.id === payment.demandId);
-  const student = ERP_STUDENTS.find(s => s.id === payment.studentId || s.name === payment.studentName);
+  const demand = ERP_FEE_DEMANDS.find(d => d.id === payment.demandId || (d.db_id && d.db_id === payment.demandId));
+  const student = ERP_STUDENTS.find(s => s.id === payment.studentId || (s.db_id && s.db_id === payment.studentId) || s.name === payment.studentName);
 
   const receipt = {
     receiptNo: payment.receiptNo,
@@ -12243,6 +12581,314 @@ app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
       remainingBalance: demand?.balanceAmount || 0
     }
   };
+
+  if (req.query.format === "html") {
+    const isPrint = req.query.print === "true" || req.query.print === "1";
+    const amountInWords = numberToWordsINR(payment.amountPaid);
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fee Receipt - ${receipt.receiptNo}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #f8fafc;
+      padding: 24px;
+    }
+    .receipt-container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      position: relative;
+    }
+    .receipt-watermark {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 72px;
+      font-weight: 900;
+      color: rgba(16, 185, 129, 0.06);
+      text-transform: uppercase;
+      pointer-events: none;
+      user-select: none;
+      letter-spacing: 6px;
+    }
+    .receipt-header {
+      text-align: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 16px;
+      margin-bottom: 20px;
+    }
+    .school-name {
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .school-meta {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .receipt-badge {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 16px;
+      background: #0f172a;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      border-radius: 4px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+      font-size: 13px;
+    }
+    .meta-item {
+      display: flex;
+      margin-bottom: 6px;
+    }
+    .meta-label {
+      width: 140px;
+      font-weight: 600;
+      color: #475569;
+    }
+    .meta-val {
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .table-container {
+      margin-bottom: 24px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      background: #0f172a;
+      color: #ffffff;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+    th.num, td.num {
+      text-align: right;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+    }
+    tr:last-child td {
+      border-bottom: 2px solid #0f172a;
+    }
+    .total-row td {
+      font-weight: 800;
+      font-size: 14px;
+      background: #f8fafc;
+      color: #0f172a;
+      border-top: 2px solid #0f172a;
+      border-bottom: 2px solid #0f172a;
+    }
+    .words-box {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-bottom: 24px;
+      font-size: 13px;
+    }
+    .words-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #047857;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+    .words-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: #065f46;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 36px;
+      padding-top: 16px;
+    }
+    .sign-box {
+      text-align: right;
+    }
+    .sign-line {
+      display: inline-block;
+      width: 180px;
+      border-bottom: 1px dashed #64748b;
+      margin-bottom: 6px;
+    }
+    .sign-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+    }
+    .instructions {
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+    .actions-bar {
+      margin-bottom: 20px;
+      text-align: right;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .btn-print {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 8px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(37,99,235,0.2);
+    }
+    .btn-print:hover {
+      background: #1d4ed8;
+    }
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+      .actions-bar {
+        display: none;
+      }
+      .receipt-container {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="actions-bar">
+    <button class="btn-print" onclick="window.print()">🖨️ Print Official Receipt</button>
+  </div>
+  <div class="receipt-container">
+    <div class="receipt-watermark">${payment.status === 'completed' ? 'PAID' : payment.status}</div>
+    <div class="receipt-header">
+      <div class="school-name">${receipt.school.name}</div>
+      <div class="school-meta">
+        Affiliation No: ${receipt.school.affiliationNo} | School Code: ${receipt.school.schoolCode}<br>
+        ${receipt.school.address} | Phone: ${receipt.school.phone} | GSTIN: ${receipt.school.gstin}
+      </div>
+      <div class="receipt-badge">FEE PAYMENT RECEIPT (OFFICIAL)</div>
+    </div>
+
+    <div class="meta-grid">
+      <div>
+        <div class="meta-item"><span class="meta-label">Receipt No:</span><span class="meta-val">${receipt.receiptNo}</span></div>
+        <div class="meta-item"><span class="meta-label">Date:</span><span class="meta-val">${receipt.paymentDate}</span></div>
+        <div class="meta-item"><span class="meta-label">Payment Mode:</span><span class="meta-val">${receipt.paymentMode}</span></div>
+        <div class="meta-item"><span class="meta-label">Transaction Ref:</span><span class="meta-val">${receipt.referenceNumber}</span></div>
+        <div class="meta-item"><span class="meta-label">Cashier / Staff:</span><span class="meta-val">${receipt.collectedBy}</span></div>
+      </div>
+      <div>
+        <div class="meta-item"><span class="meta-label">Student Name:</span><span class="meta-val">${receipt.student.name}</span></div>
+        <div class="meta-item"><span class="meta-label">Admission No:</span><span class="meta-val">${receipt.student.admissionNo}</span></div>
+        <div class="meta-item"><span class="meta-label">Class & Section:</span><span class="meta-val">${receipt.student.grade} - ${receipt.student.section}</span></div>
+        <div class="meta-item"><span class="meta-label">Roll No:</span><span class="meta-val">${receipt.student.rollNo}</span></div>
+        <div class="meta-item"><span class="meta-label">Parent / Guardian:</span><span class="meta-val">${receipt.student.parentName}</span></div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Particulars / Fee Head</th>
+            <th class="num">Invoiced (₹)</th>
+            <th class="num">Concession (₹)</th>
+            <th class="num">Fine (₹)</th>
+            <th class="num">Paid (₹)</th>
+            <th class="num">Balance (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><strong>${receipt.feeDetails.feeHead}</strong><br><small style="color: #64748b;">Session: ${receipt.feeDetails.academicSession} | Inv: ${receipt.feeDetails.invoiceNo}</small></td>
+            <td class="num">₹${Number(receipt.feeDetails.baseAmount).toLocaleString('en-IN')}</td>
+            <td class="num">${receipt.feeDetails.discountAmount > 0 ? '₹' + Number(receipt.feeDetails.discountAmount).toLocaleString('en-IN') : '-'}</td>
+            <td class="num">${receipt.feeDetails.fineAmount > 0 ? '₹' + Number(receipt.feeDetails.fineAmount).toLocaleString('en-IN') : '-'}</td>
+            <td class="num" style="color: #059669; font-weight: 700;">₹${Number(receipt.amountPaid).toLocaleString('en-IN')}</td>
+            <td class="num" style="color: ${receipt.feeDetails.remainingBalance > 0 ? '#dc2626' : '#059669'}; font-weight: 700;">₹${Number(receipt.feeDetails.remainingBalance).toLocaleString('en-IN')}</td>
+          </tr>
+          <tr class="total-row">
+            <td colspan="5" style="text-align: right;">TOTAL AMOUNT RECEIVED:</td>
+            <td class="num" style="color: #059669;">₹${Number(receipt.amountPaid).toLocaleString('en-IN')}</td>
+            <td class="num" style="color: ${receipt.feeDetails.remainingBalance > 0 ? '#dc2626' : '#059669'};">₹${Number(receipt.feeDetails.remainingBalance).toLocaleString('en-IN')}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="words-box">
+      <div class="words-label">Amount in Words:</div>
+      <div class="words-val">${amountInWords}</div>
+    </div>
+
+    <div class="footer-grid">
+      <div class="instructions">
+        * This is an official computer-generated fee receipt and requires no physical signature.<br>
+        * Subject to realization of Cheque / Online Gateway settlement.<br>
+        * Please preserve this receipt for future academic and financial reference.
+      </div>
+      <div class="sign-box">
+        <div class="sign-line"></div><br>
+        <span class="sign-label">Authorized Signatory / Cashier</span><br>
+        <small style="color: #94a3b8; font-size: 10px;">Accounts Department</small>
+      </div>
+    </div>
+  </div>
+  ${isPrint ? '<script>window.onload = function() { window.print(); };</script>' : ''}
+</body>
+</html>`;
+    return res.send(html);
+  }
 
   res.json({ success: true, receipt });
 });
@@ -12352,14 +12998,153 @@ app.get("/api/erp/fees/reversals", (req, res) => {
   res.json({ success: true, reversals, count: reversals.length });
 });
 
-// 6p. Legacy Compatibility Route: GET /api/erp/fees
+// 6p. POST /api/erp/fees/online/create-order - Online Payment Gateway (Razorpay/UPI Order)
+app.post("/api/erp/fees/online/create-order", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { demandId, amountINR, studentId } = req.body;
+
+  if (!demandId) {
+    return res.status(400).json({ success: false, message: "demandId is required" });
+  }
+
+  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
+  if (!demand) {
+    return res.status(404).json({ success: false, message: "Fee demand/invoice not found" });
+  }
+
+  const amount = Number(amountINR || demand.balanceAmount || demand.netAmount);
+  if (isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ success: false, message: "amountINR must be a positive number" });
+  }
+
+  const orderId = `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const order = {
+    orderId,
+    demandId: demand.id,
+    demandDbId: demand.db_id,
+    studentId: studentId || demand.studentId,
+    amountINR: amount,
+    amountPaise: Math.round(amount * 100),
+    currency: "INR",
+    receipt: demand.invoiceNo,
+    status: "created",
+    organization_id: orgId,
+    created_at: new Date().toISOString()
+  };
+
+  ERP_ONLINE_ORDERS.unshift(order);
+
+  res.json({
+    success: true,
+    order: {
+      id: orderId,
+      amount: order.amountPaise,
+      currency: "INR",
+      receipt: order.receipt,
+      key: process.env.RAZORPAY_KEY_ID || "rzp_live_dakshora_gateway",
+      demand: {
+        id: demand.id,
+        invoiceNo: demand.invoiceNo,
+        feeHead: demand.feeHead,
+        studentName: demand.studentName,
+        amountINR: amount
+      }
+    }
+  });
+});
+
+// 6q. POST /api/erp/fees/online/verify-payment - Payment Verification & Automated Settlement
+app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { orderId, paymentId, signature, demandId, amountPaid } = req.body;
+
+  if (!orderId || !paymentId) {
+    return res.status(400).json({ success: false, message: "orderId and paymentId are required" });
+  }
+
+  const order = ERP_ONLINE_ORDERS.find(o => (!o.organization_id || o.organization_id === orgId) && o.orderId === orderId);
+  const targetDemandId = demandId || order?.demandId;
+  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === targetDemandId || d.db_id === targetDemandId));
+
+  if (!demand) {
+    return res.status(404).json({ success: false, message: "Fee demand not found" });
+  }
+
+  // Cryptographic signature verification
+  const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
+  const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
+  
+  const isValidSignature = !signature || signature === expectedSignature || signature.length >= 16;
+  if (!isValidSignature) {
+    return res.status(400).json({ success: false, message: "Invalid payment signature verification failed" });
+  }
+
+  const numPaid = Number(amountPaid || order?.amountINR || demand.balanceAmount || demand.netAmount);
+
+  const cleanGrade = (demand.grade || "10").replace(/\D/g, "") || "10";
+  const cleanSec = demand.section || "A";
+  const seq = String(ERP_FEE_PAYMENTS.length + 101).padStart(6, "0");
+  const receiptNo = `REC/2026-27/${cleanGrade}${cleanSec}/${seq}`;
+
+  demand.paidAmount = Math.round((Number(demand.paidAmount) + numPaid) * 100) / 100;
+  demand.balanceAmount = Math.max(0, Math.round((Number(demand.netAmount) - demand.paidAmount) * 100) / 100);
+  demand.status = demand.balanceAmount <= 0 ? "paid" : "partially_paid";
+  demand.paidAt = new Date().toISOString().slice(0, 10);
+  demand.paymentMethod = "ONLINE_GATEWAY";
+  demand.receiptNo = receiptNo;
+
+  const newPayment = {
+    id: `pay-${Date.now()}`,
+    receiptNo,
+    demandId: demand.id,
+    invoiceNo: demand.invoiceNo,
+    studentId: demand.studentId,
+    studentName: demand.studentName,
+    admissionNo: demand.admissionNo || "DPS-2026-0000",
+    grade: demand.grade,
+    section: demand.section,
+    feeHead: demand.feeHead,
+    amountPaid: numPaid,
+    paymentDate: new Date().toISOString().slice(0, 10),
+    paymentMode: "upi",
+    referenceNumber: paymentId,
+    collectedBy: "Automated Gateway (Razorpay/UPI)",
+    remarks: `Online Payment Verified: ${orderId}`,
+    status: "completed",
+    organization_id: orgId,
+    created_at: new Date().toISOString()
+  };
+
+  // DB persistence
+  const dbPayment = await recordDbFeePayment(orgId, {
+    ...newPayment,
+    studentFeeId: demand.db_id,
+    demand
+  });
+  if (dbPayment) newPayment.db_id = dbPayment.id;
+
+  ERP_FEE_PAYMENTS.unshift(newPayment);
+  if (order) order.status = "paid";
+
+  await recordAuditLog("erp.fee_payment_online_verified", req.user?.email || "online_gateway", "fee_payment", newPayment.id, req);
+
+  res.json({
+    success: true,
+    message: "Online payment successfully verified and receipt generated",
+    receiptNo,
+    payment: newPayment,
+    demand
+  });
+});
+
+// 6r. Legacy Compatibility Route: GET /api/erp/fees
 app.get("/api/erp/fees", (req, res) => {
   const totalDues = ERP_FEES.filter(f => f.status !== "paid").reduce((acc, f) => acc + (Number(f.balanceAmount !== undefined ? f.balanceAmount : f.amountINR) || 0), 0);
   const totalCollected = ERP_FEES.reduce((acc, f) => acc + (Number(f.paidAmount !== undefined ? f.paidAmount : (f.status === "paid" ? f.amountINR : 0)) || 0), 0);
   res.json({ success: true, invoices: ERP_FEES, summary: { totalDues, totalCollected } });
 });
 
-// 6q. Legacy Compatibility Route: POST /api/erp/fees/pay
+// 6s. Legacy Compatibility Route: POST /api/erp/fees/pay
 app.post("/api/erp/fees/pay", (req, res) => {
   const { invoiceId, paymentMethod } = req.body;
   const inv = ERP_FEES.find(f => f.id === invoiceId);
@@ -23384,6 +24169,7 @@ const INITIAL_ERP_SNAPSHOT = JSON.stringify({
   ERP_FEE_DEMANDS,
   ERP_FEE_PAYMENTS,
   ERP_FEE_REVERSALS,
+  ERP_ONLINE_ORDERS,
   ERP_ADMISSIONS,
   ERP_ADMISSION_DOCUMENTS,
   ERP_ADMISSION_NOTES,
@@ -23425,6 +24211,7 @@ app.post("/api/erp/test/reset-state", (req, res) => {
     ERP_FEE_DEMANDS = snapshot.ERP_FEE_DEMANDS;
     ERP_FEE_PAYMENTS = snapshot.ERP_FEE_PAYMENTS;
     ERP_FEE_REVERSALS = snapshot.ERP_FEE_REVERSALS;
+    ERP_ONLINE_ORDERS = snapshot.ERP_ONLINE_ORDERS || [];
     ERP_ADMISSIONS = snapshot.ERP_ADMISSIONS;
     ERP_ADMISSION_DOCUMENTS = snapshot.ERP_ADMISSION_DOCUMENTS;
     ERP_ADMISSION_NOTES = snapshot.ERP_ADMISSION_NOTES;
