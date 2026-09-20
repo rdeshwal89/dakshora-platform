@@ -12,7 +12,42 @@ if (typeof globalThis.WebSocket === "undefined") {
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = [
+  "https://dakshora.co.in",
+  "https://www.dakshora.co.in",
+  "https://dakshora.in",
+  "https://www.dakshora.in",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173"
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith(".vercel.app") ||
+      origin.endsWith(".dakshora.co.in") ||
+      origin.endsWith(".dakshora.in") ||
+      /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS origin not allowed: " + origin));
+    }
+  },
+  credentials: true,
+  allowedHeaders: [
+    "Origin",
+    "X-Requested-With",
+    "Content-Type",
+    "Accept",
+    "Authorization"
+  ],
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
+}));
 app.use(express.json());
 
 // Supabase client initialization
@@ -233,7 +268,7 @@ app.get("/api/supabase-test", async (req, res) => {
 // 2. AUTH & JWT MIDDLEWARE (User -> Supabase Auth -> JWT -> Fastify -> requireAuth)
 // =========================================================================
 
-// requireAuth middleware validates incoming Bearer JWT from Supabase Auth
+// requireAuth middleware validates incoming Bearer JWT from Supabase Auth cryptographically
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || req.headers.Authorization;
 
@@ -250,14 +285,11 @@ async function requireAuth(req, res, next) {
 
   try {
     if (!supabase) {
-      req.user = {
-        id: "dev-master-user",
-        email: "admin@dakshora.ai",
-        role: "superadmin",
-        isSuperAdmin: true,
-        permissions: ["*"]
-      };
-      return next();
+      return res.status(500).json({
+        success: false,
+        code: "AUTH_UNAVAILABLE",
+        message: "Supabase authentication service is not initialized"
+      });
     }
 
     // Cryptographically verify token with Supabase Auth
@@ -273,8 +305,10 @@ async function requireAuth(req, res, next) {
       });
     }
 
-    const isSuperAdmin = user.app_metadata?.role === "superadmin" || user.user_metadata?.role === "superadmin";
-    const role = isSuperAdmin ? "superadmin" : (user.app_metadata?.role || user.user_metadata?.role || "school-admin");
+    // STRICT: Only trust app_metadata for superadmin role (server-managed claim)
+    const isSuperAdmin = user.app_metadata?.role === "superadmin";
+    const role = isSuperAdmin ? "superadmin" : (user.app_metadata?.role || "school-admin");
+    const organizationId = user.app_metadata?.organization_id || user.user_metadata?.organizationId || user.user_metadata?.organization_id || null;
 
     req.user = {
       id: user.id,
@@ -283,7 +317,7 @@ async function requireAuth(req, res, next) {
       role,
       isSuperAdmin,
       permissions: isSuperAdmin ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
-      organizationId: user.user_metadata?.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      organizationId: organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
     };
 
     next();
@@ -295,6 +329,32 @@ async function requireAuth(req, res, next) {
       error: err.message
     });
   }
+}
+
+// SuperAdmin Authorization Middleware
+async function requireSuperAdmin(req, res, next) {
+  if (!req.user) {
+    return requireAuth(req, res, () => {
+      if (!req.user?.isSuperAdmin && req.user?.role !== "superadmin") {
+        return res.status(403).json({
+          success: false,
+          code: "FORBIDDEN_SUPERADMIN",
+          message: "Access Denied: Platform SuperAdmin privilege required."
+        });
+      }
+      next();
+    });
+  }
+
+  if (!req.user.isSuperAdmin && req.user.role !== "superadmin") {
+    return res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_SUPERADMIN",
+      message: "Access Denied: Platform SuperAdmin privilege required."
+    });
+  }
+
+  next();
 }
 
 // Role-based authorization middleware
@@ -488,7 +548,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid email or password", error: error.message });
     }
 
-    const isSuperAdmin = data.user.app_metadata?.role === "superadmin" || data.user.user_metadata?.role === "superadmin";
+    const isSuperAdmin = data.user.app_metadata?.role === "superadmin";
 
     // User -> Org -> Role -> Permissions resolution
     const permissions = isSuperAdmin 
@@ -555,7 +615,6 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
       message: `6-Digit OTP sent successfully via ${channel === "whatsapp" ? "💬 WhatsApp" : "📱 SMS"} to ${cleanPhone}!`,
       channel: channel === "whatsapp" ? "WhatsApp" : "SMS",
       phone: cleanPhone,
-      devOtp: generatedOtp, // Provided for instant seamless UI testing
       expiresInSeconds: 300
     });
   } catch (error) {
@@ -574,8 +633,7 @@ app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
     const cleanPhone = phone.trim().replace(/[^0-9+]/g, "");
     const cached = OTP_CACHE.get(cleanPhone);
 
-    // Fallback master OTP for testing: '123456' or exact generated OTP
-    const isValid = (cached && cached.otp === otp.trim() && Date.now() <= cached.expiresAt) || otp.trim() === "123456" || (cached && cached.otp === otp.trim());
+    const isValid = cached && cached.otp === otp.trim() && Date.now() <= cached.expiresAt;
 
     if (!isValid) {
       return res.status(401).json({ success: false, message: "Invalid or expired OTP. Please try again." });
@@ -756,9 +814,12 @@ app.post("/api/auth/create-superadmin", requireAuth, (req, res, next) => {
   }
 });
 
-// Create Client / School User: POST /api/auth/create-client-user
-app.post("/api/auth/create-client-user", async (req, res) => {
+// Create Client / School User: POST /api/auth/create-client-user (Protected: SuperAdmin or authorized staff)
+app.post("/api/auth/create-client-user", requireAuth, async (req, res) => {
   try {
+    if (!req.user?.isSuperAdmin && req.user?.role !== "superadmin") {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Only SuperAdmins can create school client accounts" });
+    }
     if (!supabase) return res.status(500).json({ success: false, message: "Supabase not initialized" });
     const { email, password, name, role = "school-admin", organization_name } = req.body;
 
@@ -814,8 +875,8 @@ app.post("/api/auth/create-client-user", async (req, res) => {
   }
 });
 
-// List Auth Users: GET /api/auth/users
-app.get("/api/auth/users", async (req, res) => {
+// List Auth Users: GET /api/auth/users (Protected: SuperAdmin Only)
+app.get("/api/auth/users", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     if (!supabase) return res.json({ success: true, users: [] });
     const { data, error } = await supabase.auth.admin.listUsers();
@@ -836,8 +897,8 @@ app.get("/api/auth/users", async (req, res) => {
   }
 });
 
-// Delete Auth User: DELETE /api/auth/users/:id
-app.delete("/api/auth/users/:id", async (req, res) => {
+// Delete Auth User: DELETE /api/auth/users/:id (Protected: SuperAdmin Only)
+app.delete("/api/auth/users/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     if (!supabase) return res.status(500).json({ success: false, message: "Supabase not initialized" });
     const { id } = req.params;
@@ -867,25 +928,36 @@ app.get("/api/auth/permissions", (req, res) => {
 });
 
 // =========================================================================
-// 3. ORGANIZATIONS (MULTI-TENANCY)
+// 3. ORGANIZATIONS (MULTI-TENANCY - Protected)
 // =========================================================================
 
-app.get("/api/organizations", async (req, res) => {
+app.get("/api/organizations", requireAuth, async (req, res) => {
   try {
-    if (!supabase) return res.json({ success: true, organizations: IN_MEMORY_ORGANIZATIONS });
-    const { data, error } = await supabase.from("organizations").select("*").order("created_at", { ascending: false });
+    if (!supabase) {
+      if (req.user?.isSuperAdmin) return res.json({ success: true, organizations: IN_MEMORY_ORGANIZATIONS });
+      const org = IN_MEMORY_ORGANIZATIONS.filter(o => o.id === req.user?.organizationId);
+      return res.json({ success: true, organizations: org });
+    }
+
+    let query = supabase.from("organizations").select("*").order("created_at", { ascending: false });
+    if (!req.user?.isSuperAdmin) {
+      query = query.eq("id", req.user?.organizationId);
+    }
+    const { data, error } = await query;
 
     if (error || !data || data.length === 0) {
-      return res.json({ success: true, organizations: IN_MEMORY_ORGANIZATIONS });
+      if (req.user?.isSuperAdmin) return res.json({ success: true, organizations: IN_MEMORY_ORGANIZATIONS });
+      const org = IN_MEMORY_ORGANIZATIONS.filter(o => o.id === req.user?.organizationId);
+      return res.json({ success: true, organizations: org });
     }
 
     res.json({ success: true, organizations: data });
   } catch (error) {
-    res.json({ success: true, organizations: IN_MEMORY_ORGANIZATIONS });
+    res.status(500).json({ success: false, message: "Failed to fetch organizations", error: error.message });
   }
 });
 
-app.post("/api/organizations", async (req, res) => {
+app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const { name, slug, plan } = req.body;
     if (!name || !slug) return res.status(400).json({ success: false, message: "Name and Slug are required" });
@@ -6626,12 +6698,16 @@ let ERP_PAYROLL = [
   }
 ];
 
-// Helper to resolve tenant organization ID
+// Helper to resolve tenant organization ID (Hardened against IDOR)
 function resolveTenantOrgId(req) {
+  // If authenticated as SuperAdmin, they may scope to a specific tenant
+  if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
+    if (req.headers["x-organization-id"]) return req.headers["x-organization-id"];
+    if (req.headers["x-org-id"]) return req.headers["x-org-id"];
+    if (req.query?.organization_id) return req.query.organization_id;
+  }
+  // For standard users, STRICTLY use their authenticated organization ID
   if (req.user?.organizationId) return req.user.organizationId;
-  if (req.headers["x-organization-id"]) return req.headers["x-organization-id"];
-  if (req.headers["x-org-id"]) return req.headers["x-org-id"];
-  if (req.query?.organization_id) return req.query.organization_id;
   return "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
 }
 
@@ -20207,64 +20283,10 @@ let PLATFORM_SETTINGS = {
   updated_at: new Date().toISOString()
 };
 
-function decodeJwtPayload(token) {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = Buffer.from(base64, "base64").toString("utf8");
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
 // Security Guard: Enforce SuperAdmin / Platform Administrator Role
 function checkPlatformAdminRole(req, res) {
-  // 1. If already verified by requireAuth:
   if (req.user?.isSuperAdmin === true || req.user?.role === "superadmin") {
     return true;
-  }
-
-  // 2. Decode and check Bearer token if present
-  const authHeader = req.headers.authorization || req.headers.Authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
-    const payload = decodeJwtPayload(token);
-    if (payload) {
-      const isSuper =
-        payload.role === "superadmin" ||
-        payload.app_metadata?.role === "superadmin" ||
-        payload.user_metadata?.role === "superadmin" ||
-        payload.user_metadata?.is_superadmin === true ||
-        payload.email === "admin@dakshora.ai";
-      if (isSuper) {
-        req.user = req.user || {
-          id: payload.sub || payload.id,
-          email: payload.email,
-          role: "superadmin",
-          isSuperAdmin: true,
-          permissions: ["*"]
-        };
-        return true;
-      }
-    }
-  }
-
-  // 3. In test/development mode, permit test harness with explicit superadmin header
-  if (process.env.NODE_ENV !== "production") {
-    const role = (req.headers["x-platform-role"] || req.headers["x-role"] || "").toLowerCase();
-    const email = (req.headers["x-user-email"] || "").toLowerCase();
-    if (role === "superadmin" || email === "admin@dakshora.ai" || email === "superadmin@dakshora.ai") {
-      req.user = req.user || {
-        id: "dev-master-superadmin",
-        email: email || "admin@dakshora.ai",
-        role: "superadmin",
-        isSuperAdmin: true,
-        permissions: ["*"]
-      };
-      return true;
-    }
   }
 
   res.status(403).json({
@@ -20275,10 +20297,13 @@ function checkPlatformAdminRole(req, res) {
   return false;
 }
 
-
 // =========================================================================
 // 🚀 DAKSHORA PLATFORM CONTROL CENTER ENDPOINTS (SUPER ADMIN / SAAS OPS)
 // =========================================================================
+
+// Cryptographically secure all platform control center administrative endpoints
+app.use("/api/admin", requireAuth, requireSuperAdmin);
+app.use("/api/superadmin", requireAuth, requireSuperAdmin);
 
 // 1. GET /api/admin/dashboard - Real-time Platform-wide KPIs & SaaS Metrics
 app.get("/api/admin/dashboard", (req, res) => {

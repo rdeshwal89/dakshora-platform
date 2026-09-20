@@ -45,17 +45,11 @@ export async function requireAuth(
     });
   }
 
-  const isSuperAdmin =
-    user.app_metadata?.role === "superadmin" ||
-    user.user_metadata?.role === "superadmin" ||
-    user.user_metadata?.is_superadmin === true ||
-    user.email === "admin@dakshora.ai";
+  const isSuperAdmin = user.app_metadata?.role === "superadmin";
 
   const role = isSuperAdmin
     ? "superadmin"
-    : (user.app_metadata?.role as string) ||
-      (user.user_metadata?.role as string) ||
-      "school-admin";
+    : (user.app_metadata?.role as string) || "school-admin";
 
   const organizationId =
     (user.app_metadata?.organization_id as string) ||
