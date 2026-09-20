@@ -7107,6 +7107,49 @@ app.post("/api/erp/students", async (req, res) => {
   ERP_STUDENTS.unshift(newStd);
   await recordAuditLog("erp.student_enrolled", req.user?.email || "admin", "student", newStd.id, req);
 
+  // Persist to Supabase PostgreSQL students table
+  if (supabase) {
+    try {
+      const dbGender = (newStd.gender || "").toLowerCase().includes("female")
+        ? "female"
+        : (newStd.gender || "").toLowerCase().includes("male")
+        ? "male"
+        : "other";
+
+      const { data: dbStudent, error: dbErr } = await supabase
+        .from("students")
+        .insert([{
+          organization_id: orgId,
+          admission_no: newStd.admissionNo,
+          pen_no: newStd.penNo,
+          first_name: newStd.firstName || "Student",
+          middle_name: newStd.middleName || null,
+          last_name: newStd.lastName || null,
+          gender: dbGender,
+          date_of_birth: newStd.dob || "2012-01-01",
+          blood_group: newStd.bloodGroup || "B+",
+          phone: newStd.phone || null,
+          email: newStd.email || null,
+          address: newStd.address || null,
+          city: newStd.city || null,
+          state: newStd.state || null,
+          pincode: newStd.pinCode || null,
+          admission_date: newStd.admissionDate || new Date().toISOString().split("T")[0],
+          admission_status: "admitted"
+        }])
+        .select()
+        .maybeSingle();
+
+      if (dbErr) {
+        console.warn("[DB] Student persistence note:", dbErr.message);
+      } else if (dbStudent) {
+        newStd.db_id = dbStudent.id;
+      }
+    } catch (e) {
+      console.warn("[DB] Student insert exception:", e.message);
+    }
+  }
+
   res.status(201).json({
     success: true,
     message: `Student '${newStd.name}' registered successfully with Admission No ${newStd.admissionNo}`,
@@ -7756,6 +7799,43 @@ app.post("/api/erp/staff", async (req, res) => {
 
   ERP_STAFF.unshift(newStaff);
   await recordAuditLog("erp.staff_enrolled", req.user?.email || "admin", "staff", newStaff.id, req);
+
+  // Persist to Supabase PostgreSQL staff table
+  if (supabase) {
+    try {
+      const dbGender = (newStaff.gender || "").toLowerCase().includes("female")
+        ? "female"
+        : (newStaff.gender || "").toLowerCase().includes("male")
+        ? "male"
+        : "other";
+
+      const { data: dbStaff, error: dbErr } = await supabase
+        .from("staff")
+        .insert([{
+          organization_id: orgId,
+          employee_code: newStaff.empId,
+          first_name: newStaff.firstName || "Faculty",
+          last_name: newStaff.lastName || null,
+          gender: dbGender,
+          phone: newStaff.phone || null,
+          email: newStaff.email || null,
+          designation: newStaff.designation || "Teacher",
+          department: newStaff.department || "Academics",
+          joining_date: newStaff.joiningDate || new Date().toISOString().split("T")[0],
+          is_active: newStaff.isActive !== false
+        }])
+        .select()
+        .maybeSingle();
+
+      if (dbErr) {
+        console.warn("[DB] Staff persistence note:", dbErr.message);
+      } else if (dbStaff) {
+        newStaff.db_id = dbStaff.id;
+      }
+    } catch (e) {
+      console.warn("[DB] Staff insert exception:", e.message);
+    }
+  }
 
   res.status(201).json({
     success: true,
@@ -20011,6 +20091,43 @@ app.post("/api/erp/onboarding/activate", async (req, res) => {
     onboarding.school_id || orgId,
     req
   );
+
+  // Persist School and Academic Session directly to Supabase PostgreSQL
+  if (supabase) {
+    try {
+      const draft = onboarding.draft_data || {};
+      const schoolName = draft.schoolName || ERP_SETTINGS.schoolName || "Delhi Public Heritage School";
+      const schoolCode = (draft.schoolCode || ERP_SETTINGS.schoolCode || `SCH-${Date.now()}`).toUpperCase();
+
+      await supabase.from("schools").upsert([{
+        organization_id: orgId,
+        school_code: schoolCode,
+        name: schoolName,
+        short_name: draft.shortName || "DPHS",
+        board: draft.board || "CBSE",
+        affiliation_no: draft.affiliationNo || "CBSE-AFF-2130894",
+        address: draft.address || "Sector 45, Institutional Area",
+        city: draft.city || "Gurugram",
+        state: draft.state || "Haryana",
+        pincode: draft.pin || "122003",
+        phone: draft.phone || "+91 124 456 7890",
+        email: draft.email || "info@dpsheritage.edu.in",
+        status: "active"
+      }], { onConflict: "organization_id" });
+
+      await supabase.from("academic_sessions").upsert([{
+        organization_id: orgId,
+        name: draft.academicYear || "2026-2027",
+        start_date: "2026-04-01",
+        end_date: "2027-03-31",
+        is_current: true
+      }], { onConflict: "organization_id, name" });
+
+      console.log(`[DB] School '${schoolName}' and Academic Session persisted to Supabase ✅`);
+    } catch (dbErr) {
+      console.warn("[DB] School activation persistence note:", dbErr.message);
+    }
+  }
 
   res.json({
     success: true,
