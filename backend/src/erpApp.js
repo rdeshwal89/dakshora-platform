@@ -6854,15 +6854,16 @@ let ERP_LIBRARY_RESERVATIONS = [
 // Helper to resolve library member details from ERP_STUDENTS or ERP_STAFF
 function resolveLibraryMember(memberType, memberId) {
   if (memberType === 'student') {
-    const st = ERP_STUDENTS.find(s => s.id === memberId);
+    const st = ERP_STUDENTS.find(s => s.id === memberId || s.admissionNo === memberId || s.db_id === memberId);
     if (!st) return null;
-    const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => t.memberId === memberId && (t.status === 'issued' || t.status === 'overdue'));
+    const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => (t.memberId === st.id || t.memberId === st.admissionNo || t.memberId === memberId) && (t.status === 'issued' || t.status === 'overdue'));
     const overdueLoans = activeLoans.filter(t => t.status === 'overdue' || (t.dueAt && new Date(t.dueAt) < new Date()));
-    const fines = ERP_LIBRARY_FINES.filter(f => f.memberId === memberId && f.status === 'outstanding');
+    const fines = ERP_LIBRARY_FINES.filter(f => (f.memberId === st.id || f.memberId === st.admissionNo || f.memberId === memberId) && f.status === 'outstanding');
     const totalOutstandingFine = fines.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
     return {
       id: st.id,
       memberId: st.id,
+      db_id: st.db_id,
       memberType: 'student',
       name: st.name || `${st.firstName || ''} ${st.lastName || ''}`.trim(),
       identifier: st.admissionNo || st.rollNo || st.id,
@@ -6878,15 +6879,16 @@ function resolveLibraryMember(memberType, memberId) {
       loanPeriodDays: ERP_LIBRARY_SETTINGS.loanPeriodStudentDays
     };
   } else {
-    const sf = ERP_STAFF.find(s => s.id === memberId);
+    const sf = ERP_STAFF.find(s => s.id === memberId || s.empId === memberId || s.db_id === memberId);
     if (!sf) return null;
-    const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => t.memberId === memberId && (t.status === 'issued' || t.status === 'overdue'));
+    const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => (t.memberId === sf.id || t.memberId === sf.empId || t.memberId === memberId) && (t.status === 'issued' || t.status === 'overdue'));
     const overdueLoans = activeLoans.filter(t => t.status === 'overdue' || (t.dueAt && new Date(t.dueAt) < new Date()));
-    const fines = ERP_LIBRARY_FINES.filter(f => f.memberId === memberId && f.status === 'outstanding');
+    const fines = ERP_LIBRARY_FINES.filter(f => (f.memberId === sf.id || f.memberId === sf.empId || f.memberId === memberId) && f.status === 'outstanding');
     const totalOutstandingFine = fines.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
     return {
       id: sf.id,
       memberId: sf.id,
+      db_id: sf.db_id,
       memberType: sf.role === 'teacher' ? 'teacher' : 'staff',
       name: sf.name || sf.fullName || `${sf.firstName || ''} ${sf.lastName || ''}`.trim(),
       identifier: sf.empId || sf.id,
@@ -15580,8 +15582,265 @@ app.get("/api/erp/transport", (req, res) => {
 });
 
 // =========================================================================
-// 10. ENTERPRISE LIBRARY MANAGEMENT ENDPOINTS
+// 10. ENTERPRISE LIBRARY MANAGEMENT ENDPOINTS (Supabase PostgreSQL Live Persistence)
 // =========================================================================
+
+// Helper: Resolve or create book in memory and public.library_books table
+async function resolveOrCreateLibraryBook(orgId, bookData) {
+  if (!bookData || !bookData.title) return { book: null, db_id: null };
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const targetId = bookData.id || bookData.bookId;
+
+  let memoryBook = ERP_LIBRARY_BOOKS.find(b => 
+    (!b.organization_id || b.organization_id === orgId) && 
+    (b.id === targetId || b.db_id === targetId || (b.isbn && bookData.isbn && b.isbn === bookData.isbn) || (b.title && b.title.toLowerCase() === bookData.title.toLowerCase()))
+  );
+
+  let dbBookId = memoryBook?.db_id || (isUuid.test(targetId) ? targetId : null);
+
+  if (supabase) {
+    try {
+      if (!dbBookId) {
+        let q = supabase.from("library_books").select("*").eq("organization_id", orgId);
+        if (isUuid.test(targetId)) {
+          q = q.eq("id", targetId);
+        } else if (bookData.isbn && bookData.isbn.trim()) {
+          q = q.eq("isbn", bookData.isbn.trim());
+        } else {
+          q = q.eq("title", bookData.title.trim());
+        }
+        const { data: dbExisting } = await q.maybeSingle();
+        if (dbExisting) {
+          dbBookId = dbExisting.id;
+          if (memoryBook) memoryBook.db_id = dbExisting.id;
+          return { book: memoryBook || dbExisting, db_id: dbBookId, dbBook: dbExisting };
+        }
+      }
+
+      if (!dbBookId) {
+        const count = Math.max(1, parseInt(bookData.totalCopies || bookData.copiesCount, 10) || 1);
+        const { data: newDbBook, error: insErr } = await supabase
+          .from("library_books")
+          .insert([{
+            organization_id: orgId,
+            isbn: bookData.isbn ? bookData.isbn.trim() : null,
+            title: bookData.title.trim(),
+            author: bookData.author || bookData.authorName || null,
+            category: bookData.category || bookData.categoryName || "General",
+            publisher: bookData.publisher || bookData.publisherName || null,
+            total_copies: count,
+            available_copies: count
+          }])
+          .select()
+          .maybeSingle();
+
+        if (newDbBook) {
+          dbBookId = newDbBook.id;
+          if (memoryBook) memoryBook.db_id = newDbBook.id;
+          return { book: memoryBook || newDbBook, db_id: dbBookId, dbBook: newDbBook };
+        }
+      }
+    } catch (e) {
+      console.warn("[DB] resolveOrCreateLibraryBook exception:", e.message);
+    }
+  }
+
+  return { book: memoryBook, db_id: dbBookId || memoryBook?.id };
+}
+
+// Helper: Resolve library member asynchronously (checking in-memory and Supabase DB)
+async function resolveLibraryMemberAsync(orgId, memberType, memberId) {
+  let mem = resolveLibraryMember(memberType, memberId);
+  if (mem) return mem;
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!supabase) return null;
+
+  try {
+    if (memberType === 'student') {
+      let q = supabase.from("students").select("*");
+      if (orgId) q = q.eq("organization_id", orgId);
+      if (isUuid.test(memberId)) {
+        q = q.eq("id", memberId);
+      } else {
+        q = q.eq("admission_no", memberId);
+      }
+      const { data: dbStd } = await q.maybeSingle();
+      if (dbStd) {
+        let memObj = ERP_STUDENTS.find(s => s.id === dbStd.id || s.db_id === dbStd.id);
+        if (!memObj) {
+          memObj = {
+            id: dbStd.id,
+            db_id: dbStd.id,
+            organization_id: dbStd.organization_id || orgId,
+            name: `${dbStd.first_name || ''} ${dbStd.last_name || ''}`.trim() || "Student",
+            admissionNo: dbStd.admission_no,
+            grade: dbStd.grade || "Class 10",
+            section: dbStd.section || "A",
+            email: dbStd.email || "",
+            phone: dbStd.phone || ""
+          };
+          ERP_STUDENTS.push(memObj);
+        }
+        return resolveLibraryMember('student', dbStd.id);
+      }
+    } else {
+      let q = supabase.from("staff").select("*");
+      if (orgId) q = q.eq("organization_id", orgId);
+      if (isUuid.test(memberId)) {
+        q = q.eq("id", memberId);
+      } else {
+        q = q.eq("employee_code", memberId);
+      }
+      const { data: dbStf } = await q.maybeSingle();
+      if (dbStf) {
+        let memObj = ERP_STAFF.find(s => s.id === dbStf.id || s.db_id === dbStf.id);
+        if (!memObj) {
+          memObj = {
+            id: dbStf.id,
+            db_id: dbStf.id,
+            organization_id: dbStf.organization_id || orgId,
+            name: `${dbStf.first_name || ''} ${dbStf.last_name || ''}`.trim() || "Staff Member",
+            empId: dbStf.employee_code,
+            role: dbStf.designation?.toLowerCase().includes("teacher") || dbStf.designation?.toLowerCase().includes("professor") ? "teacher" : "staff",
+            department: dbStf.department || "Academics",
+            designation: dbStf.designation || "Faculty",
+            email: dbStf.email || "",
+            phone: dbStf.phone || ""
+          };
+          ERP_STAFF.push(memObj);
+        }
+        return resolveLibraryMember(memObj.role === 'teacher' ? 'teacher' : 'staff', dbStf.id);
+      }
+    }
+  } catch (e) {
+    console.warn("[DB] resolveLibraryMemberAsync exception:", e.message);
+  }
+
+  return null;
+}
+
+// Helper: Resolve borrower (student or staff) DB UUID for library transaction
+async function resolveLibraryBorrowerDbId(orgId, memberType, memberId) {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let studentDbId = null;
+  let staffDbId = null;
+
+  if (memberType === "student") {
+    const st = ERP_STUDENTS.find(s => 
+      (!s.organization_id || s.organization_id === orgId) && 
+      (s.id === memberId || s.admissionNo === memberId || s.db_id === memberId)
+    );
+    if (st && st.db_id) {
+      studentDbId = st.db_id;
+    } else if (isUuid.test(memberId)) {
+      studentDbId = memberId;
+    } else if (supabase) {
+      const { data: dbStd } = await supabase
+        .from("students")
+        .select("id")
+        .eq("organization_id", orgId)
+        .or(`admission_no.eq.${memberId},id.eq.${isUuid.test(memberId) ? memberId : '00000000-0000-0000-0000-000000000000'}`)
+        .maybeSingle();
+      if (dbStd) studentDbId = dbStd.id;
+    }
+  } else {
+    const sf = ERP_STAFF.find(s => 
+      (!s.organization_id || s.organization_id === orgId) && 
+      (s.id === memberId || s.empId === memberId || s.db_id === memberId)
+    );
+    if (sf && sf.db_id) {
+      staffDbId = sf.db_id;
+    } else if (isUuid.test(memberId)) {
+      staffDbId = memberId;
+    } else if (supabase) {
+      const { data: dbStf } = await supabase
+        .from("staff")
+        .select("id")
+        .eq("organization_id", orgId)
+        .or(`employee_code.eq.${memberId},id.eq.${isUuid.test(memberId) ? memberId : '00000000-0000-0000-0000-000000000000'}`)
+        .maybeSingle();
+      if (dbStf) staffDbId = dbStf.id;
+    }
+  }
+
+  return { studentDbId, staffDbId };
+}
+
+// Helper: Persist circulation transaction into public.library_transactions
+async function recordLibraryTransactionDb(orgId, txData) {
+  if (!txData) return null;
+
+  const bookRes = await resolveOrCreateLibraryBook(orgId, { 
+    id: txData.bookId, 
+    title: txData.bookTitle || "Library Book" 
+  });
+  const dbBookId = bookRes.db_id;
+  const borrower = await resolveLibraryBorrowerDbId(orgId, txData.memberType || "student", txData.memberId);
+
+  if (supabase && dbBookId && (borrower.studentDbId || borrower.staffDbId)) {
+    try {
+      const { data: dbTx, error: insErr } = await supabase
+        .from("library_transactions")
+        .insert([{
+          organization_id: orgId,
+          book_id: dbBookId,
+          student_id: borrower.studentDbId || null,
+          staff_id: borrower.staffDbId || null,
+          issued_at: txData.issuedAt || new Date().toISOString(),
+          due_at: txData.dueAt || null,
+          fine: Number(txData.fine || 0)
+        }])
+        .select()
+        .maybeSingle();
+
+      if (insErr) {
+        console.warn("[DB] Library transaction insert warning:", insErr.message);
+      } else if (dbTx) {
+        return dbTx;
+      }
+    } catch (e) {
+      console.warn("[DB] recordLibraryTransactionDb exception:", e.message);
+    }
+  }
+  return null;
+}
+
+// Helper: Update circulation transaction on return in public.library_transactions
+async function updateLibraryTransactionReturnDb(orgId, txId, returnedAt, fine = 0) {
+  if (!txId) return null;
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let memoryTx = ERP_LIBRARY_TRANSACTIONS.find(t => 
+    (!t.organization_id || t.organization_id === orgId) && 
+    (t.id === txId || t.db_id === txId)
+  );
+
+  let targetDbId = memoryTx?.db_id || (isUuid.test(txId) ? txId : null);
+
+  if (supabase && targetDbId) {
+    try {
+      const { data, error } = await supabase
+        .from("library_transactions")
+        .update({
+          returned_at: returnedAt || new Date().toISOString(),
+          fine: Number(fine || 0)
+        })
+        .eq("id", targetDbId)
+        .select();
+
+      if (error) {
+        console.warn("[DB] Library transaction return update warning:", error.message);
+      } else {
+        return data;
+      }
+    } catch (e) {
+      console.warn("[DB] updateLibraryTransactionReturnDb exception:", e.message);
+    }
+  }
+  return null;
+}
 
 // 10a. GET /api/erp/library/overview - Real aggregated dashboard KPIs & widgets
 app.get("/api/erp/library/overview", (req, res) => {
@@ -15659,6 +15918,15 @@ app.get("/api/erp/library/overview", (req, res) => {
 
   res.json({
     success: true,
+    totalBooks,
+    totalCopies,
+    availableCopies,
+    issuedBooks,
+    overdueBooks,
+    reservedBooks,
+    outstandingFines,
+    activeMembers,
+    circulationRatePercent: totalCopies > 0 ? Math.round((issuedBooks / totalCopies) * 100) : 0,
     metrics: {
       totalBooks,
       totalCopies,
@@ -15736,7 +16004,7 @@ app.get("/api/erp/library/books", (req, res) => {
   });
 });
 
-app.post("/api/erp/library/books", (req, res) => {
+app.post("/api/erp/library/books", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const {
     title,
@@ -15796,6 +16064,12 @@ app.post("/api/erp/library/books", (req, res) => {
 
   ERP_LIBRARY_BOOKS.unshift(newBook);
 
+  // Persist to Supabase public.library_books table
+  const dbBookRes = await resolveOrCreateLibraryBook(orgId, newBook);
+  if (dbBookRes && dbBookRes.db_id) {
+    newBook.db_id = dbBookRes.db_id;
+  }
+
   // Auto-generate physical copies
   const addedCopies = [];
   for (let i = 1; i <= count; i++) {
@@ -15847,14 +16121,14 @@ app.post("/api/erp/library/books", (req, res) => {
 
 app.get("/api/erp/library/books/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const book = ERP_LIBRARY_BOOKS.find(b => b.id === req.params.id && b.organization_id === orgId);
+  const book = ERP_LIBRARY_BOOKS.find(b => (b.id === req.params.id || b.db_id === req.params.id) && b.organization_id === orgId);
   if (!book) {
     return res.status(404).json({ success: false, message: "Book not found in catalogue" });
   }
 
-  const copies = ERP_LIBRARY_COPIES.filter(c => c.bookId === book.id && c.organization_id === orgId);
-  const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => t.bookId === book.id && (t.status === "issued" || t.status === "overdue"));
-  const reservations = ERP_LIBRARY_RESERVATIONS.filter(r => r.bookId === book.id && (r.status === "pending" || r.status === "ready"));
+  const copies = ERP_LIBRARY_COPIES.filter(c => (c.bookId === book.id || c.bookId === book.db_id) && c.organization_id === orgId);
+  const activeLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => (t.bookId === book.id || t.bookId === book.db_id) && (t.status === "issued" || t.status === "overdue"));
+  const reservations = ERP_LIBRARY_RESERVATIONS.filter(r => (r.bookId === book.id || r.bookId === book.db_id) && (r.status === "pending" || r.status === "ready"));
 
   res.json({
     success: true,
@@ -15867,9 +16141,9 @@ app.get("/api/erp/library/books/:id", (req, res) => {
   });
 });
 
-app.patch("/api/erp/library/books/:id", (req, res) => {
+app.patch("/api/erp/library/books/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const book = ERP_LIBRARY_BOOKS.find(b => b.id === req.params.id && b.organization_id === orgId);
+  const book = ERP_LIBRARY_BOOKS.find(b => (b.id === req.params.id || b.db_id === req.params.id) && b.organization_id === orgId);
   if (!book) {
     return res.status(404).json({ success: false, message: "Book not found in catalogue" });
   }
@@ -15887,6 +16161,28 @@ app.patch("/api/erp/library/books/:id", (req, res) => {
     }
   });
   book.updatedAt = new Date().toISOString();
+
+  // Sync with Supabase public.library_books
+  if (supabase) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const targetDbId = book.db_id || (isUuid.test(req.params.id) ? req.params.id : null);
+      if (targetDbId) {
+        await supabase
+          .from("library_books")
+          .update({
+            title: book.title,
+            author: book.author || book.authorName,
+            category: book.category || book.categoryName,
+            publisher: book.publisher || book.publisherName,
+            isbn: book.isbn
+          })
+          .eq("id", targetDbId);
+      }
+    } catch (e) {
+      console.warn("[DB] library_books update exception:", e.message);
+    }
+  }
 
   ERP_AUDIT_LOGS.unshift({
     id: `aud-${Date.now()}`,
@@ -16176,21 +16472,29 @@ app.get("/api/erp/library/members", (req, res) => {
   res.json({ success: true, members, total: members.length });
 });
 
-app.get("/api/erp/library/members/:id", (req, res) => {
+app.get("/api/erp/library/members/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const memberType = req.query.type || "student";
-  const member = resolveLibraryMember(memberType, req.params.id);
+  let memberType = req.query.type;
+  let member = null;
+  if (memberType) {
+    member = await resolveLibraryMemberAsync(orgId, memberType, req.params.id);
+  } else {
+    member = await resolveLibraryMemberAsync(orgId, "student", req.params.id);
+    if (!member) {
+      member = await resolveLibraryMemberAsync(orgId, "staff", req.params.id);
+    }
+  }
 
   if (!member) {
     return res.status(404).json({ success: false, message: "Library member not found" });
   }
 
   // Active loans & history
-  const allLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => t.memberId === req.params.id && t.organization_id === orgId);
+  const allLoans = ERP_LIBRARY_TRANSACTIONS.filter(t => (t.memberId === req.params.id || t.memberId === member.id || t.memberIdentifier === member.identifier) && t.organization_id === orgId);
   const activeLoans = allLoans.filter(t => t.status === "issued" || t.status === "overdue");
   const pastLoans = allLoans.filter(t => t.status === "returned");
-  const fines = ERP_LIBRARY_FINES.filter(f => f.memberId === req.params.id && f.organization_id === orgId);
-  const reservations = ERP_LIBRARY_RESERVATIONS.filter(r => r.memberId === req.params.id && r.organization_id === orgId);
+  const fines = ERP_LIBRARY_FINES.filter(f => (f.memberId === req.params.id || f.memberId === member.id || f.memberIdentifier === member.identifier) && f.organization_id === orgId);
+  const reservations = ERP_LIBRARY_RESERVATIONS.filter(r => (r.memberId === req.params.id || r.memberId === member.id || r.memberIdentifier === member.identifier) && r.organization_id === orgId);
 
   res.json({
     success: true,
@@ -16200,12 +16504,16 @@ app.get("/api/erp/library/members/:id", (req, res) => {
       pastLoans,
       fines,
       reservations
-    }
+    },
+    activeLoans,
+    pastLoans,
+    fines,
+    reservations
   });
 });
 
 // 10g. Transactions: Issue, Return, Renew
-app.post("/api/erp/library/transactions/issue", (req, res) => {
+app.post("/api/erp/library/transactions/issue", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { memberType = "student", memberId, bookId, bookCopyId, dueDate, remarks = "" } = req.body;
 
@@ -16216,7 +16524,7 @@ app.post("/api/erp/library/transactions/issue", (req, res) => {
     return res.status(400).json({ success: false, message: "Book or Copy selection is required" });
   }
 
-  const member = resolveLibraryMember(memberType, memberId);
+  const member = await resolveLibraryMemberAsync(orgId, memberType, memberId);
   if (!member) {
     return res.status(404).json({ success: false, message: "Member record not found" });
   }
@@ -16242,16 +16550,16 @@ app.post("/api/erp/library/transactions/issue", (req, res) => {
   let targetBook = null;
 
   if (bookCopyId) {
-    targetCopy = ERP_LIBRARY_COPIES.find(c => c.id === bookCopyId && c.organization_id === orgId);
+    targetCopy = ERP_LIBRARY_COPIES.find(c => (c.id === bookCopyId || c.db_id === bookCopyId) && c.organization_id === orgId);
     if (!targetCopy) return res.status(404).json({ success: false, message: "Physical copy not found" });
     if (targetCopy.status !== "available") {
       return res.status(400).json({ success: false, message: `Copy ${targetCopy.accessionNumber} is currently ${targetCopy.status}` });
     }
-    targetBook = ERP_LIBRARY_BOOKS.find(b => b.id === targetCopy.bookId);
+    targetBook = ERP_LIBRARY_BOOKS.find(b => b.id === targetCopy.bookId || b.db_id === targetCopy.bookId);
   } else {
-    targetBook = ERP_LIBRARY_BOOKS.find(b => b.id === bookId && b.organization_id === orgId);
+    targetBook = ERP_LIBRARY_BOOKS.find(b => (b.id === bookId || b.db_id === bookId) && b.organization_id === orgId);
     if (!targetBook) return res.status(404).json({ success: false, message: "Book not found in catalogue" });
-    targetCopy = ERP_LIBRARY_COPIES.find(c => c.bookId === targetBook.id && c.status === "available" && c.organization_id === orgId);
+    targetCopy = ERP_LIBRARY_COPIES.find(c => (c.bookId === targetBook.id || c.bookId === targetBook.db_id) && c.status === "available" && c.organization_id === orgId);
     if (!targetCopy) {
       return res.status(400).json({ success: false, message: `No available physical copies for "${targetBook.title}". All copies are currently issued or reserved.` });
     }
@@ -16292,6 +16600,12 @@ app.post("/api/erp/library/transactions/issue", (req, res) => {
   };
 
   ERP_LIBRARY_TRANSACTIONS.unshift(newTx);
+
+  // Persist to Supabase public.library_transactions
+  const dbTx = await recordLibraryTransactionDb(orgId, newTx);
+  if (dbTx) {
+    newTx.db_id = dbTx.id;
+  }
 
   // Update physical copy status
   targetCopy.status = "issued";
@@ -16337,18 +16651,18 @@ app.post("/api/erp/library/transactions/issue", (req, res) => {
 
 app.get("/api/erp/library/transactions/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const tx = ERP_LIBRARY_TRANSACTIONS.find(t => t.id === req.params.id && t.organization_id === orgId);
+  const tx = ERP_LIBRARY_TRANSACTIONS.find(t => (t.id === req.params.id || t.db_id === req.params.id) && t.organization_id === orgId);
   if (!tx) {
     return res.status(404).json({ success: false, message: "Transaction record not found" });
   }
   const copy = ERP_LIBRARY_COPIES.find(c => c.id === tx.bookCopyId);
-  const book = ERP_LIBRARY_BOOKS.find(b => b.id === tx.bookId);
+  const book = ERP_LIBRARY_BOOKS.find(b => b.id === tx.bookId || b.db_id === tx.bookId);
   res.json({ success: true, transaction: tx, copy, book });
 });
 
-app.post("/api/erp/library/transactions/:id/return", (req, res) => {
+app.post("/api/erp/library/transactions/:id/return", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const tx = ERP_LIBRARY_TRANSACTIONS.find(t => t.id === req.params.id && t.organization_id === orgId);
+  const tx = ERP_LIBRARY_TRANSACTIONS.find(t => (t.id === req.params.id || t.db_id === req.params.id) && t.organization_id === orgId);
   if (!tx) {
     return res.status(404).json({ success: false, message: "Transaction record not found" });
   }
@@ -16366,11 +16680,11 @@ app.post("/api/erp/library/transactions/:id/return", (req, res) => {
 
   // Find physical copy and book
   const copy = ERP_LIBRARY_COPIES.find(c => c.id === tx.bookCopyId);
-  const book = ERP_LIBRARY_BOOKS.find(b => b.id === tx.bookId);
+  const book = ERP_LIBRARY_BOOKS.find(b => b.id === tx.bookId || b.db_id === tx.bookId);
 
   // Check for reservations on this book
   const pendingRes = ERP_LIBRARY_RESERVATIONS
-    .filter(r => r.bookId === tx.bookId && r.organization_id === orgId && r.status === "pending")
+    .filter(r => (r.bookId === tx.bookId || r.bookId === book?.id || r.bookId === book?.db_id) && r.organization_id === orgId && r.status === "pending")
     .sort((a, b) => a.priorityOrder - b.priorityOrder)[0];
 
   if (copy) {
@@ -16439,7 +16753,13 @@ app.post("/api/erp/library/transactions/:id/return", (req, res) => {
       updatedAt: now.toISOString()
     };
     ERP_LIBRARY_FINES.unshift(generatedFine);
+    tx.fine = fineAmount;
+  } else {
+    tx.fine = 0;
   }
+
+  // Sync with Supabase public.library_transactions
+  await updateLibraryTransactionReturnDb(orgId, tx.id, tx.returnedAt, tx.fine || 0);
 
   // Audit log
   ERP_AUDIT_LOGS.unshift({
@@ -16579,7 +16899,7 @@ app.get("/api/erp/library/reservations", (req, res) => {
   res.json({ success: true, reservations: list, total: list.length });
 });
 
-app.post("/api/erp/library/reservations", (req, res) => {
+app.post("/api/erp/library/reservations", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { bookId, memberType = "student", memberId } = req.body;
 
@@ -16587,21 +16907,21 @@ app.post("/api/erp/library/reservations", (req, res) => {
     return res.status(400).json({ success: false, message: "Book and Member are required for reservation" });
   }
 
-  const book = ERP_LIBRARY_BOOKS.find(b => b.id === bookId && b.organization_id === orgId);
+  const book = ERP_LIBRARY_BOOKS.find(b => (b.id === bookId || b.db_id === bookId) && b.organization_id === orgId);
   if (!book) return res.status(404).json({ success: false, message: "Book not found" });
 
-  const member = resolveLibraryMember(memberType, memberId);
+  const member = await resolveLibraryMemberAsync(orgId, memberType, memberId);
   if (!member) return res.status(404).json({ success: false, message: "Member record not found" });
 
   // Prevent duplicate reservation by same member for same book
   const existing = ERP_LIBRARY_RESERVATIONS.find(
-    r => r.bookId === bookId && r.memberId === memberId && (r.status === "pending" || r.status === "ready")
+    r => (r.bookId === bookId || r.bookId === book.id || r.bookId === book.db_id) && r.memberId === memberId && (r.status === "pending" || r.status === "ready")
   );
   if (existing) {
     return res.status(400).json({ success: false, message: `${member.name} already has an active reservation for this book title` });
   }
 
-  const existingBookQueue = ERP_LIBRARY_RESERVATIONS.filter(r => r.bookId === bookId && r.status === "pending");
+  const existingBookQueue = ERP_LIBRARY_RESERVATIONS.filter(r => (r.bookId === bookId || r.bookId === book.id || r.bookId === book.db_id) && r.status === "pending");
   const priorityOrder = existingBookQueue.length + 1;
 
   const newRes = {
@@ -16682,6 +17002,8 @@ app.get("/api/erp/library/fines", (req, res) => {
 
   res.json({
     success: true,
+    count: list.length,
+    total: list.length,
     fines: list,
     summary: {
       totalOutstanding,
