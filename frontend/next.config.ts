@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
     const backendUrl =
       process.env.BACKEND_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
-      (process.env.NODE_ENV === "production" ? "https://api.dakshora.co.in" : "http://127.0.0.1:5000");
+      (process.env.NODE_ENV === "production" ? "https://dakshora-api.onrender.com" : "http://127.0.0.1:5000");
     return [
       {
         source: "/",
