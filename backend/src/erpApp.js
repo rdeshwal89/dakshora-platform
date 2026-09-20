@@ -8709,6 +8709,382 @@ app.get("/api/erp/attendance/student/reports", (req, res) => {
   res.json({ success: true, type, message: "Report generated", count: 0, data: [] });
 });
 
+// =========================================================================
+// 3g. STAFF HR, ATTENDANCE & PAYROLL SUBSYSTEM (Supabase PostgreSQL Live Persistence)
+// =========================================================================
+
+let ERP_STAFF_LEAVES = [];
+
+// Helper: Resolve or create staff in memory and public.staff PostgreSQL table
+async function resolveOrCreateStaff(orgId, staffIdentifier) {
+  if (!staffIdentifier) return { staff: null, db_id: null };
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const targetId = typeof staffIdentifier === "string" ? staffIdentifier : (staffIdentifier.id || staffIdentifier.staffId || staffIdentifier.empId);
+  
+  let memoryStaff = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === targetId || s.empId === targetId || s.db_id === targetId || (typeof staffIdentifier === "object" && s.email && s.email === staffIdentifier.email))
+  );
+
+  let dbStaffId = memoryStaff?.db_id || (isUuid.test(targetId) ? targetId : null);
+
+  if (supabase) {
+    try {
+      if (!dbStaffId) {
+        let q = supabase.from("staff").select("*").eq("organization_id", orgId);
+        if (isUuid.test(targetId)) {
+          q = q.eq("id", targetId);
+        } else {
+          const code = typeof staffIdentifier === "object" ? (staffIdentifier.empId || staffIdentifier.employee_code || targetId) : targetId;
+          q = q.eq("employee_code", code);
+        }
+        const { data: dbExisting } = await q.maybeSingle();
+        if (dbExisting) {
+          dbStaffId = dbExisting.id;
+          if (memoryStaff) memoryStaff.db_id = dbExisting.id;
+          return { staff: memoryStaff || dbExisting, db_id: dbStaffId, dbStaff: dbExisting };
+        }
+      }
+
+      if (!dbStaffId && typeof staffIdentifier === "object") {
+        const empCode = staffIdentifier.empId || staffIdentifier.employee_code || `FAC-${Math.floor(100 + Math.random() * 900)}`;
+        const fullName = staffIdentifier.name || `${staffIdentifier.firstName || "Faculty"} ${staffIdentifier.lastName || ""}`.trim();
+        const firstName = staffIdentifier.firstName || fullName.split(" ")[0] || "Faculty";
+        const lastName = staffIdentifier.lastName || fullName.split(" ").slice(1).join(" ") || null;
+        const dbGender = (staffIdentifier.gender || "").toLowerCase().includes("female")
+          ? "female"
+          : (staffIdentifier.gender || "").toLowerCase().includes("male")
+          ? "male"
+          : "other";
+
+        const { data: newDbStaff, error: insErr } = await supabase
+          .from("staff")
+          .insert([{
+            organization_id: orgId,
+            employee_code: empCode,
+            first_name: firstName,
+            last_name: lastName,
+            gender: dbGender,
+            phone: staffIdentifier.phone || null,
+            email: staffIdentifier.email || null,
+            designation: staffIdentifier.designation || "Teacher",
+            department: staffIdentifier.department || "Academics",
+            joining_date: staffIdentifier.joiningDate || new Date().toISOString().split("T")[0],
+            is_active: staffIdentifier.isActive !== false
+          }])
+          .select()
+          .maybeSingle();
+
+        if (newDbStaff) {
+          dbStaffId = newDbStaff.id;
+          if (memoryStaff) memoryStaff.db_id = newDbStaff.id;
+          return { staff: memoryStaff || newDbStaff, db_id: dbStaffId, dbStaff: newDbStaff };
+        }
+      }
+    } catch (e) {
+      console.warn("[DB] resolveOrCreateStaff exception:", e.message);
+    }
+  }
+
+  return { staff: memoryStaff, db_id: dbStaffId || memoryStaff?.id };
+}
+
+// Helper: Upsert staff daily attendance into public.staff_attendance PostgreSQL table
+async function recordStaffAttendanceDb(orgId, staffId, date, status, remarks, markedByUserId) {
+  const statusMap = {
+    present: "present",
+    absent: "absent",
+    late: "late",
+    half_day: "half_day",
+    "half-day": "half_day",
+    leave: "leave",
+    on_leave: "leave"
+  };
+  const enumStatus = statusMap[(status || "").toLowerCase()] || "present";
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let dbStaffId = null;
+
+  let memoryStaff = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === staffId || s.empId === staffId || s.db_id === staffId)
+  );
+
+  if (memoryStaff && memoryStaff.db_id) {
+    dbStaffId = memoryStaff.db_id;
+  } else if (isUuid.test(staffId)) {
+    dbStaffId = staffId;
+  }
+
+  if (supabase) {
+    try {
+      if (!dbStaffId) {
+        const resolved = await resolveOrCreateStaff(orgId, memoryStaff || { id: staffId, empId: staffId });
+        dbStaffId = resolved.db_id;
+      }
+      if (dbStaffId) {
+        const isUserIdUuid = markedByUserId && isUuid.test(markedByUserId);
+        const { data, error } = await supabase
+          .from("staff_attendance")
+          .upsert([{
+            organization_id: orgId,
+            staff_id: dbStaffId,
+            attendance_date: date,
+            status: enumStatus,
+            remarks: remarks || null,
+            marked_by: isUserIdUuid ? markedByUserId : null
+          }], { onConflict: "staff_id,attendance_date" })
+          .select();
+        if (error) {
+          console.warn("[DB] Staff attendance upsert warning:", error.message);
+        } else {
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn("[DB] Staff attendance upsert exception:", e.message);
+    }
+  }
+  return null;
+}
+
+// Helper: Persist staff leave request into public.leave_requests PostgreSQL table
+async function recordStaffLeaveRequestDb(orgId, staffId, fromDate, toDate, reason, status = "pending", approvedByUserId = null) {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let dbStaffId = null;
+
+  let memoryStaff = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === staffId || s.empId === staffId || s.db_id === staffId)
+  );
+
+  if (memoryStaff && memoryStaff.db_id) {
+    dbStaffId = memoryStaff.db_id;
+  } else if (isUuid.test(staffId)) {
+    dbStaffId = staffId;
+  }
+
+  if (supabase) {
+    try {
+      if (!dbStaffId) {
+        const resolved = await resolveOrCreateStaff(orgId, memoryStaff || { id: staffId, empId: staffId });
+        dbStaffId = resolved.db_id;
+      }
+      if (dbStaffId) {
+        const isUserIdUuid = approvedByUserId && isUuid.test(approvedByUserId);
+        const { data, error } = await supabase
+          .from("leave_requests")
+          .insert([{
+            organization_id: orgId,
+            staff_id: dbStaffId,
+            from_date: fromDate,
+            to_date: toDate,
+            reason: reason || "Staff Leave Application",
+            status: status || "pending",
+            approved_by: isUserIdUuid ? approvedByUserId : null
+          }])
+          .select()
+          .maybeSingle();
+        if (error) {
+          console.warn("[DB] Leave request insert warning:", error.message);
+        } else if (data) {
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn("[DB] Leave request insert exception:", e.message);
+    }
+  }
+  return null;
+}
+
+// Helper: Calculate standard Indian School statutory payroll breakdown
+function calculateStaffPayroll(staff, salaryMonth, workingDays = 30, absentDays = 0) {
+  const baseSalary = Number(staff.salaryINR) || 50000;
+  
+  // Earnings Components
+  const basicSalary = Math.round(baseSalary * 0.50);
+  const da = Math.round(baseSalary * 0.20);
+  const hra = Math.round(baseSalary * 0.20);
+  const specialAllowance = Math.round(baseSalary * 0.10);
+  const grossSalary = basicSalary + da + hra + specialAllowance;
+
+  // Deductions Components
+  const pf = Math.round(basicSalary * 0.12);
+  const professionalTax = 200;
+  const tds = grossSalary > 60000 ? Math.round((grossSalary - 60000) * 0.10) : 0;
+  const lop = absentDays > 0 ? Math.round((grossSalary / workingDays) * absentDays) : 0;
+  const totalDeductions = pf + professionalTax + tds + lop;
+  const netSalary = Math.max(0, grossSalary - totalDeductions);
+
+  return {
+    baseSalary,
+    earnings: {
+      basicSalary,
+      da,
+      hra,
+      specialAllowance,
+      grossSalary
+    },
+    deductions: {
+      pf,
+      professionalTax,
+      tds,
+      lop,
+      totalDeductions
+    },
+    netSalary,
+    workingDays,
+    absentDays,
+    payableDays: Math.max(0, workingDays - absentDays)
+  };
+}
+
+// Helper: Generate Official A4 Printable Payslip HTML
+function generatePrintablePayslipHtml(payrollRecord, staffMember, schoolMeta = {}) {
+  const schoolName = schoolMeta.name || "DELHI PUBLIC HERITAGE SCHOOL";
+  const schoolAddress = schoolMeta.address || "Sector 45, Urban Estate, Gurugram, Haryana 122001";
+  const cbseCode = schoolMeta.cbseCode || "CBSE-AFF-2130894 / School Code: 40892";
+  const contact = schoolMeta.contact || "Phone: +91 124 4567890 | Email: hr@dpsheritage.edu.in";
+  
+  const empName = staffMember.name || `${staffMember.firstName || "Faculty"} ${staffMember.lastName || ""}`.trim();
+  const empCode = staffMember.empId || staffMember.employee_code || "FAC-001";
+  const designation = staffMember.designation || "Senior PGT Teacher";
+  const department = staffMember.department || "Academics";
+  const monthYear = payrollRecord.monthYear || payrollRecord.salary_month || "September 2026";
+  const panNo = staffMember.panNo || "ABCDE1234F";
+  const uanNo = staffMember.uanNo || "101234567890";
+  const bankAcc = staffMember.bankAccountNo || "XXXX-XXXX-8921";
+  const bankName = staffMember.bankName || "State Bank of India";
+  
+  const earnings = payrollRecord.earnings || {
+    basicSalary: Math.round((Number(payrollRecord.gross_salary || payrollRecord.grossSalary) || 50000) * 0.5),
+    da: Math.round((Number(payrollRecord.gross_salary || payrollRecord.grossSalary) || 50000) * 0.2),
+    hra: Math.round((Number(payrollRecord.gross_salary || payrollRecord.grossSalary) || 50000) * 0.2),
+    specialAllowance: Math.round((Number(payrollRecord.gross_salary || payrollRecord.grossSalary) || 50000) * 0.1),
+    grossSalary: Number(payrollRecord.gross_salary || payrollRecord.grossSalary || 50000)
+  };
+
+  const deductions = payrollRecord.deductions_detail || {
+    pf: Math.round(earnings.basicSalary * 0.12),
+    professionalTax: 200,
+    tds: 0,
+    lop: Math.max(0, Number(payrollRecord.deductions || 0) - Math.round(earnings.basicSalary * 0.12) - 200),
+    totalDeductions: Number(payrollRecord.deductions || 0)
+  };
+
+  const netSalary = Number(payrollRecord.net_salary || payrollRecord.netSalary || (earnings.grossSalary - deductions.totalDeductions));
+  const amountInWords = numberToWordsINR(netSalary);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Payslip - ${empName} - ${monthYear}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; margin: 0; padding: 10px; background: #fff; line-height: 1.4; }
+    .payslip-box { border: 2px solid #0f172a; border-radius: 6px; padding: 24px; position: relative; max-width: 800px; margin: 0 auto; }
+    .watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg); font-size: 58px; font-weight: 800; color: rgba(15, 23, 42, 0.04); text-transform: uppercase; pointer-events: none; z-index: 0; white-space: nowrap; }
+    .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
+    .header h1 { margin: 0; font-size: 20px; font-weight: 800; color: #0f172a; letter-spacing: 0.5px; }
+    .header p { margin: 3px 0; font-size: 11px; color: #475569; }
+    .payslip-title { text-align: center; font-size: 14px; font-weight: 700; text-transform: uppercase; margin-bottom: 16px; background: #f1f5f9; padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; letter-spacing: 1px; }
+    .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 16px; font-size: 11px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed #cbd5e1; }
+    .info-row { display: flex; justify-content: space-between; }
+    .info-label { font-weight: 600; color: #475569; }
+    .info-val { font-weight: 700; color: #0f172a; }
+    .salary-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
+    .salary-table th, .salary-table td { border: 1px solid #cbd5e1; padding: 8px 10px; }
+    .salary-table th { background: #f8fafc; font-weight: 700; text-transform: uppercase; color: #334155; }
+    .salary-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .total-row { font-weight: 800; background: #f1f5f9; }
+    .net-box { background: #f8fafc; border: 1.5px solid #0f172a; border-radius: 4px; padding: 12px 16px; margin-bottom: 24px; }
+    .net-amount { font-size: 16px; font-weight: 800; color: #047857; }
+    .words { font-style: italic; font-size: 11px; color: #334155; margin-top: 4px; }
+    .signatures { display: flex; justify-content: space-between; margin-top: 40px; padding-top: 12px; font-size: 11px; }
+    .sig-col { text-align: center; width: 200px; border-top: 1px solid #64748b; padding-top: 6px; font-weight: 600; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .payslip-box { border: none; padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="payslip-box">
+    <div class="watermark">DAKSHORA 2.0 ERP</div>
+    <div class="header">
+      <h1>${schoolName}</h1>
+      <p>${schoolAddress}</p>
+      <p>${cbseCode} | ${contact}</p>
+    </div>
+    <div class="payslip-title">Salary Slip for the Month of ${monthYear}</div>
+    
+    <div class="info-grid">
+      <div class="info-row"><span class="info-label">Employee Code:</span><span class="info-val">${empCode}</span></div>
+      <div class="info-row"><span class="info-label">Employee Name:</span><span class="info-val">${empName}</span></div>
+      <div class="info-row"><span class="info-label">Designation:</span><span class="info-val">${designation}</span></div>
+      <div class="info-row"><span class="info-label">Department:</span><span class="info-val">${department}</span></div>
+      <div class="info-row"><span class="info-label">Bank Name:</span><span class="info-val">${bankName}</span></div>
+      <div class="info-row"><span class="info-label">Bank Account No:</span><span class="info-val">${bankAcc}</span></div>
+      <div class="info-row"><span class="info-label">PAN Number:</span><span class="info-val">${panNo}</span></div>
+      <div class="info-row"><span class="info-label">UAN / PF Number:</span><span class="info-val">${uanNo}</span></div>
+      <div class="info-row"><span class="info-label">Working Days:</span><span class="info-val">${payrollRecord.workingDays || 30}</span></div>
+      <div class="info-row"><span class="info-label">Payable Days:</span><span class="info-val">${payrollRecord.payableDays || (30 - (payrollRecord.absentDays || 0))}</span></div>
+    </div>
+
+    <table class="salary-table">
+      <thead>
+        <tr>
+          <th style="width: 50%;">Earnings (Gross)</th>
+          <th style="width: 50%;">Deductions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div class="info-row"><span>Basic Salary:</span><span class="num">₹${earnings.basicSalary.toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>Dearness Allowance (DA):</span><span class="num">₹${earnings.da.toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>House Rent Allowance (HRA):</span><span class="num">₹${earnings.hra.toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>Special Allowance:</span><span class="num">₹${earnings.specialAllowance.toLocaleString('en-IN')}</span></div>
+          </td>
+          <td>
+            <div class="info-row"><span>Provident Fund (PF):</span><span class="num">₹${deductions.pf.toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>Professional Tax (PT):</span><span class="num">₹${deductions.professionalTax.toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>Tax Deducted at Source (TDS):</span><span class="num">₹${(deductions.tds || 0).toLocaleString('en-IN')}</span></div>
+            <div class="info-row"><span>Loss of Pay (LOP):</span><span class="num">₹${(deductions.lop || 0).toLocaleString('en-IN')}</span></div>
+          </td>
+        </tr>
+        <tr class="total-row">
+          <td>
+            <div class="info-row"><span>Total Gross Earnings:</span><span class="num">₹${earnings.grossSalary.toLocaleString('en-IN')}</span></div>
+          </td>
+          <td>
+            <div class="info-row"><span>Total Deductions:</span><span class="num">₹${deductions.totalDeductions.toLocaleString('en-IN')}</span></div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="net-box">
+      <div class="info-row">
+        <span style="font-size: 13px; font-weight: 700; text-transform: uppercase;">Net Salary Payable:</span>
+        <span class="net-amount">₹${netSalary.toLocaleString('en-IN')}</span>
+      </div>
+      <div class="words">In Words: <strong>${amountInWords}</strong></div>
+    </div>
+
+    <div class="signatures">
+      <div class="sig-col">Employee Signature</div>
+      <div class="sig-col">Principal / Authorized Signatory</div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 // 3g. GET /api/erp/attendance/staff - Daily Staff Attendance
 app.get("/api/erp/attendance/staff", (req, res) => {
   const orgId = resolveTenantOrgId(req);
@@ -8746,7 +9122,7 @@ app.get("/api/erp/attendance/staff", (req, res) => {
   });
 });
 
-// 3h. POST /api/erp/attendance/staff/bulk - Bulk Save Staff Attendance
+// 3h. POST /api/erp/attendance/staff/bulk - Bulk Save Staff Attendance with Supabase Persistence
 app.post("/api/erp/attendance/staff/bulk", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { date, records } = req.body || {};
@@ -8758,9 +9134,9 @@ app.post("/api/erp/attendance/staff/bulk", async (req, res) => {
   let count = 0;
   const markedBy = req.user?.name || req.user?.email || "Admin";
 
-  records.forEach(item => {
+  for (const item of records) {
     const staffId = item.staffId;
-    if (!staffId) return;
+    if (!staffId) continue;
 
     const existing = ERP_STAFF_ATTENDANCE.find(a =>
       (!a.organization_id || a.organization_id === orgId) &&
@@ -8786,8 +9162,11 @@ app.post("/api/erp/attendance/staff/bulk", async (req, res) => {
         updated_at: new Date().toISOString()
       });
     }
+
+    // Persist to Supabase public.staff_attendance
+    await recordStaffAttendanceDb(orgId, staffId, date, item.status || "present", item.remarks || "", req.user?.id);
     count++;
-  });
+  }
 
   await recordAuditLog("erp.staff_attendance_saved", req.user?.email || markedBy, "staff_attendance", date, req);
 
@@ -8817,7 +9196,258 @@ app.patch("/api/erp/attendance/staff/:id", async (req, res) => {
   if (remarks !== undefined) rec.remarks = remarks;
   rec.updated_at = new Date().toISOString();
 
+  // Sync with Supabase public.staff_attendance
+  await recordStaffAttendanceDb(orgId, rec.staffId, rec.attendanceDate, rec.status, rec.remarks, req.user?.id);
+
   res.json({ success: true, message: "Staff attendance updated", record: rec });
+});
+
+// 3j. GET /api/erp/attendance/staff/summary - Monthly Staff Attendance & LOP Summary
+app.get("/api/erp/attendance/staff/summary", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const month = (req.query.month || new Date().toISOString().slice(0, 7)).trim(); // YYYY-MM
+  const staffId = req.query.staffId ? req.query.staffId.trim() : null;
+
+  let tenantStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  if (staffId) {
+    tenantStaff = tenantStaff.filter(s => s.id === staffId || s.empId === staffId || s.db_id === staffId);
+  }
+
+  const monthAtt = ERP_STAFF_ATTENDANCE.filter(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.attendanceDate && a.attendanceDate.startsWith(month))
+  );
+
+  const summary = tenantStaff.map(stf => {
+    const stfRecords = monthAtt.filter(a => a.staffId === stf.id || a.staffId === stf.empId || a.staffId === stf.db_id);
+    let present = 0;
+    let late = 0;
+    let halfDay = 0;
+    let leave = 0;
+    let absent = 0;
+
+    stfRecords.forEach(r => {
+      const st = (r.status || "").toLowerCase();
+      if (st === "present") present++;
+      else if (st === "late") late++;
+      else if (st === "half_day" || st === "half-day") halfDay++;
+      else if (st === "leave" || st === "on_leave") leave++;
+      else if (st === "absent") absent++;
+      else present++;
+    });
+
+    const totalMarked = stfRecords.length || 1;
+    const workingDays = 30;
+    const payableDays = present + late + (halfDay * 0.5) + leave;
+    const lopDays = absent + (halfDay * 0.5);
+    const attendancePercentage = Math.min(100, Math.round((payableDays / Math.max(1, totalMarked)) * 100));
+
+    return {
+      staffId: stf.id,
+      empId: stf.empId,
+      name: stf.name,
+      designation: stf.designation,
+      department: stf.department,
+      month,
+      totalMarked,
+      workingDays,
+      present: present + late,
+      halfDay,
+      leave,
+      absent,
+      payableDays,
+      lopDays,
+      attendancePercentage
+    };
+  });
+
+  res.json({
+    success: true,
+    month,
+    totalStaff: summary.length,
+    summary
+  });
+});
+
+// 3k. GET /api/erp/hr/leaves - Staff Leave Applications List
+app.get("/api/erp/hr/leaves", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { status, staffId } = req.query;
+
+  let leaves = ERP_STAFF_LEAVES.filter(l => !l.organization_id || l.organization_id === orgId);
+
+  // Sync from Supabase public.leave_requests
+  if (supabase) {
+    try {
+      let q = supabase.from("leave_requests").select("*, staff:staff_id(id, employee_code, first_name, last_name, designation, department)").eq("organization_id", orgId);
+      if (status) q = q.eq("status", status);
+      const { data: dbLeaves } = await q.order("created_at", { ascending: false });
+      if (dbLeaves && dbLeaves.length > 0) {
+        dbLeaves.forEach(dbl => {
+          const exists = leaves.find(l => l.id === dbl.id || l.db_id === dbl.id);
+          if (!exists) {
+            const staffName = dbl.staff ? `${dbl.staff.first_name} ${dbl.staff.last_name || ""}`.trim() : "Faculty Member";
+            leaves.push({
+              id: dbl.id,
+              db_id: dbl.id,
+              organization_id: dbl.organization_id,
+              staffId: dbl.staff_id,
+              empId: dbl.staff?.employee_code || "FAC-001",
+              staffName,
+              designation: dbl.staff?.designation || "Teacher",
+              department: dbl.staff?.department || "Academics",
+              fromDate: dbl.from_date,
+              toDate: dbl.to_date,
+              reason: dbl.reason,
+              status: dbl.status,
+              created_at: dbl.created_at
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[DB] leave_requests query exception:", e.message);
+    }
+  }
+
+  if (status) leaves = leaves.filter(l => l.status === status);
+  if (staffId) leaves = leaves.filter(l => l.staffId === staffId || l.empId === staffId);
+
+  res.json({
+    success: true,
+    count: leaves.length,
+    leaves
+  });
+});
+
+// 3l. POST /api/erp/hr/leaves - Submit Staff Leave Application
+app.post("/api/erp/hr/leaves", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { staffId, fromDate, toDate, reason, leaveType } = req.body || {};
+
+  if (!staffId || !fromDate || !toDate) {
+    return res.status(400).json({ success: false, message: "staffId, fromDate, and toDate are required" });
+  }
+
+  const staff = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === staffId || s.empId === staffId || s.db_id === staffId)
+  );
+
+  const newLeave = {
+    id: `leave-stf-${Date.now()}`,
+    organization_id: orgId,
+    staffId: staff ? staff.id : staffId,
+    empId: staff ? staff.empId : staffId,
+    staffName: staff ? staff.name : "Staff Member",
+    designation: staff ? staff.designation : "Teacher",
+    department: staff ? staff.department : "Academics",
+    fromDate,
+    toDate,
+    leaveType: leaveType || "Casual Leave",
+    reason: reason || "Personal reasons",
+    status: "pending",
+    created_at: new Date().toISOString()
+  };
+
+  ERP_STAFF_LEAVES.unshift(newLeave);
+
+  // Persist to Supabase public.leave_requests
+  const dbLeave = await recordStaffLeaveRequestDb(orgId, newLeave.staffId, fromDate, toDate, reason, "pending", req.user?.id);
+  if (dbLeave) {
+    newLeave.db_id = dbLeave.id;
+  }
+
+  await recordAuditLog("erp.staff_leave_applied", req.user?.email || "admin", "leave_request", newLeave.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Staff leave application submitted successfully",
+    leave: newLeave
+  });
+});
+
+// 3m. PATCH /api/erp/hr/leaves/:id/status - Approve or Reject Staff Leave
+app.patch("/api/erp/hr/leaves/:id/status", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+  const { status, reviewRemarks } = req.body || {};
+
+  if (!["approved", "rejected", "pending"].includes(status)) {
+    return res.status(400).json({ success: false, message: "Status must be 'approved', 'rejected', or 'pending'" });
+  }
+
+  let leave = ERP_STAFF_LEAVES.find(l => 
+    (!l.organization_id || l.organization_id === orgId) && 
+    (l.id === id || l.db_id === id)
+  );
+
+  if (!leave) {
+    return res.status(404).json({ success: false, message: "Leave application not found" });
+  }
+
+  leave.status = status;
+  leave.reviewRemarks = reviewRemarks || "";
+  leave.reviewedBy = req.user?.name || req.user?.email || "SuperAdmin";
+  leave.reviewedAt = new Date().toISOString();
+
+  // If approved, automatically record attendance as 'leave' for each date in range
+  if (status === "approved") {
+    const start = new Date(leave.fromDate);
+    const end = new Date(leave.toDate);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().slice(0, 10);
+      const existing = ERP_STAFF_ATTENDANCE.find(a => 
+        (!a.organization_id || a.organization_id === orgId) && 
+        (a.staffId === leave.staffId || a.staffId === leave.empId) && 
+        a.attendanceDate === dateStr
+      );
+      if (existing) {
+        existing.status = "on_leave";
+        existing.remarks = `Leave Approved: ${leave.reason}`;
+      } else {
+        ERP_STAFF_ATTENDANCE.push({
+          id: `stf-att-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          staffId: leave.staffId,
+          attendanceDate: dateStr,
+          status: "on_leave",
+          remarks: `Leave Approved: ${leave.reason}`,
+          marked_by: leave.reviewedBy,
+          organization_id: orgId,
+          created_at: new Date().toISOString()
+        });
+      }
+      await recordStaffAttendanceDb(orgId, leave.staffId, dateStr, "leave", `Leave Approved: ${leave.reason}`, req.user?.id);
+    }
+  }
+
+  // Update Supabase public.leave_requests
+  if (supabase) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const targetDbId = leave.db_id || (isUuid.test(id) ? id : null);
+      if (targetDbId) {
+        const isUserUuid = req.user?.id && isUuid.test(req.user.id);
+        await supabase
+          .from("leave_requests")
+          .update({
+            status,
+            approved_by: isUserUuid ? req.user.id : null
+          })
+          .eq("id", targetDbId);
+      }
+    } catch (e) {
+      console.warn("[DB] leave_requests status update exception:", e.message);
+    }
+  }
+
+  await recordAuditLog(`erp.staff_leave_${status}`, req.user?.email || "admin", "leave_request", leave.id, req);
+
+  res.json({
+    success: true,
+    message: `Staff leave application has been ${status}`,
+    leave
+  });
 });
 
 // 3j. GET & POST /api/erp/attendance/settings - Attendance Configuration & Cutoffs
@@ -16319,20 +16949,388 @@ app.post("/api/erp/library/return", (req, res) => {
 });
 
 
-// 11. Payroll Endpoints
-app.get("/api/erp/payroll", (req, res) => {
-  res.json({ success: true, payroll: ERP_PAYROLL, totalDisbursed: 125000 });
+// =========================================================================
+// 11. STAFF PAYROLL & STATUTORY SALARY MANAGEMENT SUITE (Production Multi-Tenant)
+// =========================================================================
+
+// 11a. GET /api/erp/payroll/overview - Monthly Payroll Summary & Disbursal KPIs
+app.get("/api/erp/payroll/overview", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const month = (req.query.month || new Date().toISOString().slice(0, 7)).trim(); // YYYY-MM
+  const orgStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  const orgPayroll = ERP_PAYROLL.filter(p => 
+    (!p.organization_id || p.organization_id === orgId) && 
+    (p.salaryMonth?.startsWith(month) || p.monthYear?.includes(month))
+  );
+
+  const totalGross = orgPayroll.reduce((acc, p) => acc + (Number(p.grossSalary || p.gross_salary || p.basicSalaryINR) || 0), 0);
+  const totalDeductions = orgPayroll.reduce((acc, p) => acc + (Number(p.deductions) || 0), 0);
+  const totalNet = orgPayroll.reduce((acc, p) => acc + (Number(p.netSalary || p.net_salary || p.netPayoutINR) || 0), 0);
+  const totalDisbursed = orgPayroll
+    .filter(p => p.paymentStatus === "processed" || p.status === "paid")
+    .reduce((acc, p) => acc + (Number(p.netSalary || p.net_salary || p.netPayoutINR) || 0), 0);
+
+  const statusCounts = {
+    draft: orgPayroll.filter(p => (p.status === "draft" || !p.status) && p.paymentStatus !== "processed").length,
+    processed: orgPayroll.filter(p => p.status === "processed" || p.paymentStatus === "processed").length,
+    paid: orgPayroll.filter(p => p.status === "paid").length
+  };
+
+  res.json({
+    success: true,
+    month,
+    totalStaff: orgStaff.length,
+    totalPayrollRecords: orgPayroll.length,
+    totalGross,
+    totalDeductions,
+    totalNet,
+    totalDisbursed,
+    statusCounts
+  });
 });
 
-app.post("/api/erp/payroll/disburse", (req, res) => {
-  const { payrollId } = req.body;
-  const p = ERP_PAYROLL.find(item => item.id === payrollId);
-  if (p) {
-    p.paymentStatus = "processed";
-    p.disbursedDate = new Date().toISOString().slice(0, 10);
-    return res.json({ success: true, message: "Salary disbursed", payroll: p });
+// 11b. GET /api/erp/payroll/records - Filterable Staff Payroll Directory
+app.get("/api/erp/payroll/records", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { month, status, department } = req.query;
+
+  let records = ERP_PAYROLL.filter(p => !p.organization_id || p.organization_id === orgId);
+
+  // Sync from Supabase public.payroll
+  if (supabase) {
+    try {
+      let q = supabase
+        .from("payroll")
+        .select("*, staff:staff_id(id, employee_code, first_name, last_name, designation, department, phone, email)")
+        .eq("organization_id", orgId);
+      if (status) q = q.eq("status", status);
+      const { data: dbPayroll } = await q.order("salary_month", { ascending: false });
+      if (dbPayroll && dbPayroll.length > 0) {
+        dbPayroll.forEach(dbp => {
+          const exists = records.find(r => r.id === dbp.id || r.db_id === dbp.id);
+          if (!exists) {
+            const staffName = dbp.staff ? `${dbp.staff.first_name} ${dbp.staff.last_name || ""}`.trim() : "Faculty Member";
+            records.push({
+              id: dbp.id,
+              db_id: dbp.id,
+              organization_id: dbp.organization_id,
+              staffId: dbp.staff_id,
+              empId: dbp.staff?.employee_code || "FAC-001",
+              staffName,
+              designation: dbp.staff?.designation || "Teacher",
+              department: dbp.staff?.department || "Academics",
+              salaryMonth: dbp.salary_month,
+              monthYear: new Date(dbp.salary_month).toLocaleString('default', { month: 'long', year: 'numeric' }),
+              grossSalary: Number(dbp.gross_salary),
+              deductions: Number(dbp.deductions),
+              netSalary: Number(dbp.net_salary),
+              status: dbp.status,
+              paidAt: dbp.paid_at,
+              created_at: dbp.created_at
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[DB] payroll query exception:", e.message);
+    }
   }
-  res.status(404).json({ success: false, message: "Payroll record not found" });
+
+  if (month) {
+    records = records.filter(p => p.salaryMonth?.startsWith(month) || p.monthYear?.includes(month));
+  }
+  if (status) {
+    records = records.filter(p => p.status === status || p.paymentStatus === status);
+  }
+  if (department) {
+    records = records.filter(p => p.department?.toLowerCase() === department.toLowerCase());
+  }
+
+  res.json({
+    success: true,
+    count: records.length,
+    records
+  });
+});
+
+// 11c. POST /api/erp/payroll/generate - Run Batch Monthly Payroll Calculation & DB Persistence
+app.post("/api/erp/payroll/generate", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { salaryMonth, staffIds } = req.body || {};
+
+  // Default to current month YYYY-MM-01
+  const monthDate = salaryMonth 
+    ? (salaryMonth.length === 7 ? `${salaryMonth}-01` : salaryMonth) 
+    : `${new Date().toISOString().slice(0, 7)}-01`;
+  const monthPrefix = monthDate.slice(0, 7);
+
+  let targetStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  if (Array.isArray(staffIds) && staffIds.length > 0) {
+    targetStaff = targetStaff.filter(s => staffIds.includes(s.id) || staffIds.includes(s.empId) || staffIds.includes(s.db_id));
+  }
+
+  if (targetStaff.length === 0) {
+    return res.status(400).json({ success: false, message: "No active staff found to process payroll" });
+  }
+
+  const generatedRecords = [];
+  const monthAtt = ERP_STAFF_ATTENDANCE.filter(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.attendanceDate && a.attendanceDate.startsWith(monthPrefix))
+  );
+
+  for (const stf of targetStaff) {
+    // Count absent days from attendance
+    const stfAtt = monthAtt.filter(a => a.staffId === stf.id || a.staffId === stf.empId || a.staffId === stf.db_id);
+    let absentDays = 0;
+    stfAtt.forEach(a => {
+      const st = (a.status || "").toLowerCase();
+      if (st === "absent") absentDays += 1;
+      else if (st === "half_day" || st === "half-day") absentDays += 0.5;
+    });
+
+    const calc = calculateStaffPayroll(stf, monthDate, 30, absentDays);
+    
+    // Check if payroll already exists for this staff in this month
+    let payrollRecord = ERP_PAYROLL.find(p => 
+      (!p.organization_id || p.organization_id === orgId) && 
+      (p.staffId === stf.id || p.empId === stf.empId) && 
+      (p.salaryMonth === monthDate || p.salaryMonth?.startsWith(monthPrefix))
+    );
+
+    if (payrollRecord) {
+      payrollRecord.grossSalary = calc.earnings.grossSalary;
+      payrollRecord.gross_salary = calc.earnings.grossSalary;
+      payrollRecord.deductions = calc.deductions.totalDeductions;
+      payrollRecord.netSalary = calc.netSalary;
+      payrollRecord.net_salary = calc.netSalary;
+      payrollRecord.earnings = calc.earnings;
+      payrollRecord.deductions_detail = calc.deductions;
+      payrollRecord.absentDays = absentDays;
+      payrollRecord.payableDays = calc.payableDays;
+      payrollRecord.workingDays = calc.workingDays;
+      payrollRecord.updated_at = new Date().toISOString();
+    } else {
+      payrollRecord = {
+        id: `pay-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        organization_id: orgId,
+        staffId: stf.id,
+        empId: stf.empId,
+        staffName: stf.name,
+        designation: stf.designation,
+        department: stf.department,
+        salaryMonth: monthDate,
+        monthYear: new Date(monthDate).toLocaleString('default', { month: 'long', year: 'numeric' }),
+        grossSalary: calc.earnings.grossSalary,
+        gross_salary: calc.earnings.grossSalary,
+        deductions: calc.deductions.totalDeductions,
+        netSalary: calc.netSalary,
+        net_salary: calc.netSalary,
+        earnings: calc.earnings,
+        deductions_detail: calc.deductions,
+        absentDays,
+        payableDays: calc.payableDays,
+        workingDays: calc.workingDays,
+        status: "draft",
+        paymentStatus: "pending",
+        created_at: new Date().toISOString()
+      };
+      ERP_PAYROLL.unshift(payrollRecord);
+    }
+
+    // Persist to Supabase public.payroll
+    if (supabase) {
+      try {
+        let dbStaffId = stf.db_id;
+        if (!dbStaffId) {
+          const resolved = await resolveOrCreateStaff(orgId, stf);
+          dbStaffId = resolved.db_id;
+        }
+        if (dbStaffId) {
+          const { data: dbPay, error: payErr } = await supabase
+            .from("payroll")
+            .upsert([{
+              organization_id: orgId,
+              staff_id: dbStaffId,
+              salary_month: monthDate,
+              gross_salary: calc.earnings.grossSalary,
+              deductions: calc.deductions.totalDeductions,
+              net_salary: calc.netSalary,
+              status: payrollRecord.status || "draft"
+            }], { onConflict: "staff_id,salary_month" })
+            .select()
+            .maybeSingle();
+
+          if (payErr) {
+            console.warn("[DB] Payroll upsert warning:", payErr.message);
+          } else if (dbPay) {
+            payrollRecord.db_id = dbPay.id;
+          }
+        }
+      } catch (e) {
+        console.warn("[DB] Payroll upsert exception:", e.message);
+      }
+    }
+
+    generatedRecords.push(payrollRecord);
+  }
+
+  await recordAuditLog("erp.payroll_batch_generated", req.user?.email || "admin", "payroll", monthDate, req);
+
+  res.status(201).json({
+    success: true,
+    message: `Batch payroll generated for ${generatedRecords.length} staff member(s) for ${monthDate}`,
+    salaryMonth: monthDate,
+    count: generatedRecords.length,
+    records: generatedRecords
+  });
+});
+
+// 11d. POST /api/erp/payroll/disburse - Disburse Salaries & Update Status
+app.post("/api/erp/payroll/disburse", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { payrollId, payrollIds, paymentMethod, referenceNo } = req.body || {};
+  const idsToDisburse = Array.isArray(payrollIds) ? payrollIds : (payrollId ? [payrollId] : []);
+
+  if (idsToDisburse.length === 0) {
+    return res.status(400).json({ success: false, message: "payrollId or payrollIds array required" });
+  }
+
+  const disbursed = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+
+  for (const pid of idsToDisburse) {
+    const p = ERP_PAYROLL.find(item => 
+      (!item.organization_id || item.organization_id === orgId) && 
+      (item.id === pid || item.db_id === pid)
+    );
+    if (p) {
+      p.status = "paid";
+      p.paymentStatus = "processed";
+      p.disbursedDate = today;
+      p.paidAt = now;
+      p.paid_at = now;
+      p.paymentMethod = paymentMethod || "bank_transfer";
+      p.referenceNo = referenceNo || `TXN-PAY-${Date.now()}`;
+      disbursed.push(p);
+
+      // Sync with Supabase public.payroll
+      if (supabase) {
+        try {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const targetDbId = p.db_id || (isUuid.test(pid) ? pid : null);
+          if (targetDbId) {
+            await supabase
+              .from("payroll")
+              .update({
+                status: "paid",
+                paid_at: now
+              })
+              .eq("id", targetDbId);
+          }
+        } catch (e) {
+          console.warn("[DB] Payroll disburse update exception:", e.message);
+        }
+      }
+    }
+  }
+
+  if (disbursed.length === 0) {
+    return res.status(404).json({ success: false, message: "No matching payroll records found to disburse" });
+  }
+
+  await recordAuditLog("erp.payroll_disbursed", req.user?.email || "admin", "payroll", idsToDisburse.join(","), req);
+
+  res.json({
+    success: true,
+    message: `Successfully disbursed salary for ${disbursed.length} record(s)`,
+    count: disbursed.length,
+    disbursed
+  });
+});
+
+// 11e. GET /api/erp/payroll/payslip/:id - Structured JSON or Standalone A4 Printable HTML
+app.get("/api/erp/payroll/payslip/:id", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+  const { format, month } = req.query;
+
+  let p = ERP_PAYROLL.find(item => 
+    (!item.organization_id || item.organization_id === orgId) && 
+    (item.id === id || item.db_id === id)
+  );
+
+  // If not found by payroll ID, check if id is a staffId
+  if (!p) {
+    p = ERP_PAYROLL.find(item => 
+      (!item.organization_id || item.organization_id === orgId) && 
+      (item.staffId === id || item.empId === id) &&
+      (!month || item.salaryMonth?.startsWith(month) || item.monthYear?.includes(month))
+    );
+  }
+
+  if (!p) {
+    return res.status(404).json({ success: false, message: `Payroll record or payslip not found for '${id}'` });
+  }
+
+  const staff = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === p.staffId || s.empId === p.empId || s.db_id === p.staffId)
+  ) || {
+    name: p.staffName,
+    empId: p.empId,
+    designation: p.designation,
+    department: p.department
+  };
+
+  const schoolMeta = {
+    name: "DELHI PUBLIC HERITAGE SCHOOL",
+    address: "Sector 45, Urban Estate, Gurugram, Haryana 122001",
+    cbseCode: "CBSE-AFF-2130894 / School Code: 40892",
+    contact: "Phone: +91 124 4567890 | Email: hr@dpsheritage.edu.in"
+  };
+
+  if (format === "html") {
+    const html = generatePrintablePayslipHtml(p, staff, schoolMeta);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  }
+
+  res.json({
+    success: true,
+    payslip: {
+      payrollId: p.id,
+      monthYear: p.monthYear || p.salaryMonth,
+      staff: {
+        id: staff.id,
+        empId: staff.empId,
+        name: staff.name,
+        designation: staff.designation,
+        department: staff.department
+      },
+      earnings: p.earnings || {
+        grossSalary: Number(p.grossSalary || p.gross_salary || 50000)
+      },
+      deductions: p.deductions_detail || {
+        totalDeductions: Number(p.deductions || 0)
+      },
+      netSalary: Number(p.netSalary || p.net_salary || 50000),
+      netSalaryInWords: numberToWordsINR(Number(p.netSalary || p.net_salary || 50000)),
+      status: p.status || p.paymentStatus || "draft",
+      disbursedDate: p.disbursedDate || p.paidAt || null
+    }
+  });
+});
+
+// 11f. Legacy GET /api/erp/payroll for backward compatibility
+app.get("/api/erp/payroll", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const orgPayroll = ERP_PAYROLL.filter(p => !p.organization_id || p.organization_id === orgId);
+  const totalDisbursed = orgPayroll
+    .filter(p => p.status === "paid" || p.paymentStatus === "processed")
+    .reduce((acc, p) => acc + (Number(p.netSalary || p.net_salary || p.netPayoutINR) || 0), 0);
+  res.json({ success: true, payroll: orgPayroll, totalDisbursed });
 });
 
 // =========================================================================
