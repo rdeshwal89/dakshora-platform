@@ -10143,14 +10143,155 @@ app.get("/api/erp/academics", (req, res) => {
 // 5. Examination & Report Card Management Suite (Production SaaS Grade)
 // =========================================================================
 
+// Database resolution helpers for examination suite
+async function resolveOrCreateAcademicSession(orgId, sessionName = "2026-2027") {
+  if (!supabase) return null;
+  let { data: session } = await supabase
+    .from("academic_sessions")
+    .select("id")
+    .eq("organization_id", orgId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!session) {
+    const { data: newSess, error } = await supabase
+      .from("academic_sessions")
+      .insert([{
+        organization_id: orgId,
+        name: sessionName || "2026-2027",
+        start_date: "2026-04-01",
+        end_date: "2027-03-31",
+        is_current: true
+      }])
+      .select()
+      .maybeSingle();
+    if (!error && newSess) session = newSess;
+  }
+  return session?.id || null;
+}
+
+async function resolveOrCreateClass(orgId, className = "Class 10") {
+  if (!supabase) return null;
+  const name = className.trim();
+  let { data: cls } = await supabase
+    .from("classes")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("name", name)
+    .maybeSingle();
+
+  if (!cls) {
+    const code = name.replace(/\D/g, "") || "10";
+    const { data: newCls, error } = await supabase
+      .from("classes")
+      .insert([{
+        organization_id: orgId,
+        name,
+        code
+      }])
+      .select()
+      .maybeSingle();
+    if (!error && newCls) cls = newCls;
+  }
+  return cls?.id || null;
+}
+
+async function resolveOrCreateSection(orgId, classId, sectionName = "A") {
+  if (!supabase || !classId) return null;
+  const name = (sectionName && sectionName !== "all" ? sectionName : "A").trim().toUpperCase();
+  let { data: sec } = await supabase
+    .from("sections")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("class_id", classId)
+    .eq("name", name)
+    .maybeSingle();
+
+  if (!sec) {
+    const { data: newSec, error } = await supabase
+      .from("sections")
+      .insert([{
+        organization_id: orgId,
+        class_id: classId,
+        name
+      }])
+      .select()
+      .maybeSingle();
+    if (!error && newSec) sec = newSec;
+  }
+  return sec?.id || null;
+}
+
+async function resolveOrCreateSubject(orgId, subjectName, subjectCode) {
+  if (!supabase) return null;
+  const name = (subjectName || "Subject").trim();
+  let { data: sub } = await supabase
+    .from("subjects")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("name", name)
+    .maybeSingle();
+
+  if (!sub) {
+    const code = (subjectCode || name.slice(0, 4).toUpperCase()).trim();
+    const { data: newSub, error } = await supabase
+      .from("subjects")
+      .insert([{
+        organization_id: orgId,
+        name,
+        code
+      }])
+      .select()
+      .maybeSingle();
+    if (!error && newSub) sub = newSub;
+  }
+  return sub?.id || null;
+}
+
+async function resolveDbStudent(orgId, studentIdentifier) {
+  if (!supabase || !studentIdentifier) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentIdentifier);
+  if (isUuid) {
+    const { data: std } = await supabase
+      .from("students")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("id", studentIdentifier)
+      .maybeSingle();
+    if (std) return std.id;
+  }
+
+  const { data: stdByAdm } = await supabase
+    .from("students")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("admission_no", studentIdentifier)
+    .maybeSingle();
+  if (stdByAdm) return stdByAdm.id;
+
+  return null;
+}
+
 // Helper: Authoritative CBSE Result Calculation Engine
 function calculateStudentExamResult(examId, studentId, orgId) {
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
   if (!exam || !student) return null;
 
-  const examSubjects = ERP_EXAM_SUBJECTS.filter(es => (!es.organization_id || es.organization_id === orgId) && es.examId === examId);
-  const studentMarks = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.examId === examId && m.studentId === studentId);
+  const targetExamId = exam.id;
+  const targetDbExamId = exam.db_id;
+  const targetStudentId = student.id;
+  const targetDbStudentId = student.db_id;
+
+  const examSubjects = ERP_EXAM_SUBJECTS.filter(es =>
+    (!es.organization_id || es.organization_id === orgId) &&
+    (es.examId === targetExamId || (targetDbExamId && es.examId === targetDbExamId))
+  );
+  const studentMarks = ERP_EXAM_MARKS.filter(m =>
+    (!m.organization_id || m.organization_id === orgId) &&
+    (m.examId === targetExamId || (targetDbExamId && m.examId === targetDbExamId)) &&
+    (m.studentId === targetStudentId || (targetDbStudentId && m.studentId === targetDbStudentId))
+  );
 
   if (studentMarks.length === 0) return null;
 
@@ -10159,7 +10300,11 @@ function calculateStudentExamResult(examId, studentId, orgId) {
   let failedSubjectsCount = 0;
 
   for (const es of examSubjects) {
-    const markRec = studentMarks.find(m => m.examSubjectId === es.id || m.subjectId === es.subjectId);
+    const markRec = studentMarks.find(m =>
+      m.examSubjectId === es.id ||
+      (es.db_id && m.examSubjectId === es.db_id) ||
+      m.subjectId === es.subjectId
+    );
     totalMax += (Number(es.maxMarks) || 100);
 
     if (!markRec || markRec.status === "absent" || markRec.status === "not_appeared") {
@@ -10214,14 +10359,14 @@ function calculateStudentExamResult(examId, studentId, orgId) {
 
   const existingResultIndex = ERP_EXAM_RESULTS.findIndex(r =>
     (!r.organization_id || r.organization_id === orgId) &&
-    r.examId === examId &&
-    r.studentId === studentId
+    (r.examId === targetExamId || (targetDbExamId && r.examId === targetDbExamId)) &&
+    (r.studentId === targetStudentId || (targetDbStudentId && r.studentId === targetDbStudentId))
   );
 
   const resultPayload = {
-    id: existingResultIndex !== -1 ? ERP_EXAM_RESULTS[existingResultIndex].id : `res-${examId}-${studentId}`,
-    examId,
-    studentId,
+    id: existingResultIndex !== -1 ? ERP_EXAM_RESULTS[existingResultIndex].id : `res-${targetExamId}-${targetStudentId}`,
+    examId: targetExamId,
+    studentId: targetStudentId,
     studentName: student.name,
     rollNo: student.rollNo || "ROLL",
     admissionNo: student.admissionNo || "ADM",
@@ -10262,9 +10407,13 @@ function calculateStudentExamResult(examId, studentId, orgId) {
 
 // Helper: Recalculate 1-based Ranks within Class / Section
 function recalculateClassRanks(examId, grade, section, orgId) {
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const targetExamId = exam ? exam.id : examId;
+  const targetDbExamId = exam ? exam.db_id : null;
+
   let sectionResults = ERP_EXAM_RESULTS.filter(r =>
     (!r.organization_id || r.organization_id === orgId) &&
-    r.examId === examId &&
+    (r.examId === targetExamId || (targetDbExamId && r.examId === targetDbExamId)) &&
     (!grade || grade === "all" || r.grade.toLowerCase() === grade.toLowerCase()) &&
     (!section || section === "all" || r.section.toLowerCase() === section.toLowerCase())
   );
@@ -10416,6 +10565,32 @@ app.post("/api/erp/exams", async (req, res) => {
   ERP_EXAMS.unshift(newExam);
   await recordAuditLog("erp.exam_created", req.user?.email || "admin", "exam", newExam.id, req);
 
+  // Persist to Supabase PostgreSQL exams table
+  if (supabase) {
+    try {
+      const sessId = await resolveOrCreateAcademicSession(orgId, academicSession);
+      if (sessId) {
+        const { data: dbExam, error: dbErr } = await supabase.from("exams").insert([{
+          organization_id: orgId,
+          academic_session_id: sessId,
+          name: newExam.title,
+          exam_type: newExam.examType,
+          start_date: newExam.startDate,
+          end_date: newExam.endDate
+        }]).select().maybeSingle();
+
+        if (dbExam) {
+          newExam.db_id = dbExam.id;
+          console.log(`[DB] Exam '${newExam.title}' persisted to Supabase (UUID: ${dbExam.id}) ✅`);
+        } else if (dbErr) {
+          console.warn("[DB] Exam insert error:", dbErr.message);
+        }
+      }
+    } catch (dbEx) {
+      console.warn("[DB] Exam persistence exception:", dbEx.message);
+    }
+  }
+
   res.json({ success: true, message: "Exam created successfully", exam: newExam });
 });
 
@@ -10424,12 +10599,21 @@ app.get("/api/erp/exams/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
-  const subjects = ERP_EXAM_SUBJECTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.examId === id);
-  const marks = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.examId === id);
-  const results = ERP_EXAM_RESULTS.filter(r => (!r.organization_id || r.organization_id === orgId) && r.examId === id);
+  const subjects = ERP_EXAM_SUBJECTS.filter(s =>
+    (!s.organization_id || s.organization_id === orgId) &&
+    (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id))
+  );
+  const marks = ERP_EXAM_MARKS.filter(m =>
+    (!m.organization_id || m.organization_id === orgId) &&
+    (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id))
+  );
+  const results = ERP_EXAM_RESULTS.filter(r =>
+    (!r.organization_id || r.organization_id === orgId) &&
+    (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))
+  );
 
   res.json({
     success: true,
@@ -10449,7 +10633,7 @@ app.patch("/api/erp/exams/:id", async (req, res) => {
   const { id } = req.params;
   const { title, examType, startDate, endDate, status, section } = req.body;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   if (startDate && endDate && startDate > endDate) {
@@ -10464,6 +10648,20 @@ app.patch("/api/erp/exams/:id", async (req, res) => {
   if (section !== undefined) exam.section = section;
   exam.updatedAt = new Date().toISOString();
 
+  // Sync with Supabase
+  if (supabase && exam.db_id) {
+    try {
+      await supabase.from("exams").update({
+        name: exam.title,
+        exam_type: exam.examType,
+        start_date: exam.startDate,
+        end_date: exam.endDate
+      }).eq("id", exam.db_id);
+    } catch (syncErr) {
+      console.warn("[DB] Exam update sync note:", syncErr.message);
+    }
+  }
+
   await recordAuditLog("erp.exam_updated", req.user?.email || "admin", "exam", exam.id, req);
   res.json({ success: true, message: "Exam updated successfully", exam });
 });
@@ -10473,7 +10671,7 @@ app.post("/api/erp/exams/:id/publish", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   // Update exam status
@@ -10483,7 +10681,7 @@ app.post("/api/erp/exams/:id/publish", async (req, res) => {
 
   // Mark all generated results as published
   ERP_EXAM_RESULTS.forEach(r => {
-    if ((!r.organization_id || r.organization_id === orgId) && r.examId === id) {
+    if ((!r.organization_id || r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
       r.isPublished = true;
     }
   });
@@ -10497,7 +10695,7 @@ app.post("/api/erp/exams/:id/lock", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   exam.status = "locked";
@@ -10506,14 +10704,14 @@ app.post("/api/erp/exams/:id/lock", async (req, res) => {
 
   // Lock all marks
   ERP_EXAM_MARKS.forEach(m => {
-    if ((!m.organization_id || m.organization_id === orgId) && m.examId === id) {
+    if ((!m.organization_id || m.organization_id === orgId) && (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id))) {
       m.isLocked = true;
     }
   });
 
   // Lock all results
   ERP_EXAM_RESULTS.forEach(r => {
-    if ((!r.organization_id || r.organization_id === orgId) && r.examId === id) {
+    if ((!r.organization_id || r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
       r.isLocked = true;
     }
   });
@@ -10527,7 +10725,11 @@ app.get("/api/erp/exams/:id/subjects", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const subjects = ERP_EXAM_SUBJECTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.examId === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const subjects = ERP_EXAM_SUBJECTS.filter(s =>
+    (!s.organization_id || s.organization_id === orgId) &&
+    (s.examId === id || (exam && s.examId === exam.id) || (exam?.db_id && s.examId === exam.db_id))
+  );
   res.json({ success: true, subjects });
 });
 
@@ -10547,7 +10749,7 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
     assignedTeacherName
   } = req.body;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === id);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const resolvedSubId = subjectId || (subjectName ? `sub-${subjectName.toLowerCase().replace(/[^a-z0-9]/g, '')}` : null);
@@ -10556,8 +10758,8 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
   // Prevent duplicate subject within this exam
   const duplicate = ERP_EXAM_SUBJECTS.find(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    s.examId === id &&
-    (s.subjectId === resolvedSubId || s.id === resolvedSubId)
+    (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id)) &&
+    (s.subjectId === resolvedSubId || s.id === resolvedSubId || s.subjectName?.toLowerCase() === (subjectName || "").toLowerCase())
   );
   if (duplicate) {
     return res.status(400).json({ success: false, message: "This subject is already configured for this exam" });
@@ -10576,7 +10778,7 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
 
   const newExamSub = {
     id: `exsub-${Date.now()}`,
-    examId: id,
+    examId: exam.id,
     subjectId: resolvedSubId,
     subjectName: subjectName || catalogSub.name,
     subjectCode: subjectCode || catalogSub.code,
@@ -10594,6 +10796,44 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
   ERP_EXAM_SUBJECTS.push(newExamSub);
   await recordAuditLog("erp.exam_subject_added", req.user?.email || "admin", "exam_subject", newExamSub.id, req);
 
+  // Persist to Supabase PostgreSQL exam_subjects table
+  if (supabase) {
+    try {
+      // Ensure exam.db_id exists
+      if (!exam.db_id) {
+        const { data: foundEx } = await supabase.from("exams").select("id").eq("organization_id", orgId).eq("name", exam.title).maybeSingle();
+        if (foundEx) exam.db_id = foundEx.id;
+      }
+
+      if (exam.db_id) {
+        const clsId = await resolveOrCreateClass(orgId, exam.grade || "Class 10");
+        const targetSec = (exam.section && exam.section !== "all") ? exam.section : "A";
+        const secId = await resolveOrCreateSection(orgId, clsId, targetSec);
+        const subId = await resolveOrCreateSubject(orgId, newExamSub.subjectName, newExamSub.subjectCode);
+
+        if (clsId && secId && subId) {
+          const { data: dbExSub, error: dbExSubErr } = await supabase.from("exam_subjects").insert([{
+            exam_id: exam.db_id,
+            section_id: secId,
+            subject_id: subId,
+            exam_date: newExamSub.examDate,
+            max_marks: newExamSub.maxMarks,
+            passing_marks: newExamSub.passMarks
+          }]).select().maybeSingle();
+
+          if (dbExSub) {
+            newExamSub.db_id = dbExSub.id;
+            console.log(`[DB] Exam Subject '${newExamSub.subjectName}' persisted to Supabase (UUID: ${dbExSub.id}) ✅`);
+          } else if (dbExSubErr) {
+            console.warn("[DB] Exam subject insert note:", dbExSubErr.message);
+          }
+        }
+      }
+    } catch (dbEx) {
+      console.warn("[DB] Exam subject persistence exception:", dbEx.message);
+    }
+  }
+
   res.json({
     success: true,
     message: `Configured ${catalogSub.name} for ${exam.title}`,
@@ -10606,14 +10846,27 @@ app.delete("/api/erp/exams/:id/subjects/:subjectId", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id, subjectId } = req.params;
 
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const targetExamId = exam ? exam.id : id;
+
   const idx = ERP_EXAM_SUBJECTS.findIndex(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    s.examId === id &&
-    (s.id === subjectId || s.subjectId === subjectId)
+    (s.examId === targetExamId || (exam?.db_id && s.examId === exam.db_id)) &&
+    (s.id === subjectId || s.subjectId === subjectId || s.db_id === subjectId)
   );
   if (idx === -1) return res.status(404).json({ success: false, message: "Exam subject not found" });
 
   const removed = ERP_EXAM_SUBJECTS.splice(idx, 1)[0];
+
+  // Remove from Supabase
+  if (supabase && removed.db_id) {
+    try {
+      await supabase.from("exam_subjects").delete().eq("id", removed.db_id);
+    } catch (delErr) {
+      console.warn("[DB] Exam subject deletion note:", delErr.message);
+    }
+  }
+
   await recordAuditLog("erp.exam_subject_removed", req.user?.email || "admin", "exam_subject", removed.id, req);
 
   res.json({ success: true, message: "Exam subject removed", examSubject: removed });
@@ -10629,7 +10882,7 @@ app.get("/api/erp/marks", (req, res) => {
     return res.status(400).json({ success: false, message: "Exam ID is required" });
   }
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const targetGrade = grade || exam.grade || "Class 10";
@@ -10637,9 +10890,15 @@ app.get("/api/erp/marks", (req, res) => {
 
   let examSubject = null;
   if (targetSubId) {
-    examSubject = ERP_EXAM_SUBJECTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId));
+    examSubject = ERP_EXAM_SUBJECTS.find(s =>
+      (!s.organization_id || s.organization_id === orgId) &&
+      (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId)
+    );
   } else {
-    examSubject = ERP_EXAM_SUBJECTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.examId === examId);
+    examSubject = ERP_EXAM_SUBJECTS.find(s =>
+      (!s.organization_id || s.organization_id === orgId) &&
+      (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id))
+    );
   }
 
   // Teacher RBAC Authorization
@@ -10684,9 +10943,9 @@ app.get("/api/erp/marks", (req, res) => {
   const studentRoster = students.map(std => {
     const existingMark = examSubject ? ERP_EXAM_MARKS.find(m =>
       (!m.organization_id || m.organization_id === orgId) &&
-      m.examId === examId &&
-      (m.examSubjectId === examSubject.id || m.examSubjectId === examSubject.subjectId) &&
-      m.studentId === std.id
+      (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
+      (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
+      (m.studentId === std.id || (std.db_id && m.studentId === std.db_id))
     ) : null;
 
     return {
@@ -10723,7 +10982,7 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     return res.status(400).json({ success: false, message: "Exam ID, Exam Subject ID, and marks array are required" });
   }
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const targetGrade = grade || exam.grade || "Class 10";
@@ -10731,11 +10990,11 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
 
   const examSubject = ERP_EXAM_SUBJECTS.find(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    s.examId === examId &&
-    (s.id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
+    (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id)) &&
+    (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   ) || ERP_EXAM_SUBJECTS.find(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    (s.id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
+    (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   );
   if (!examSubject) return res.status(404).json({ success: false, message: "Exam subject not found" });
 
@@ -10787,7 +11046,7 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     const studentId = item.studentId;
     if (!studentId) continue;
 
-    const std = ERP_STUDENTS.find(s => s.id === studentId);
+    const std = ERP_STUDENTS.find(s => s.id === studentId || s.db_id === studentId);
     const studentName = item.studentName || std?.name || "Student";
     const status = item.status || "present";
     const remarks = item.remarks || "";
@@ -10807,9 +11066,9 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
 
     const existingIdx = ERP_EXAM_MARKS.findIndex(m =>
       (!m.organization_id || m.organization_id === orgId) &&
-      m.examId === examId &&
-      (m.examSubjectId === examSubject.id || m.examSubjectId === examSubject.subjectId) &&
-      m.studentId === studentId
+      (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
+      (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
+      (m.studentId === studentId || (std?.db_id && m.studentId === std.db_id))
     );
 
     if (existingIdx !== -1) {
@@ -10822,9 +11081,9 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     } else {
       const newMark = {
         id: `mrk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        examId,
+        examId: exam.id,
         examSubjectId: examSubject.id,
-        studentId,
+        studentId: std?.id || studentId,
         studentName,
         rollNo: item.rollNo || std?.rollNo || "",
         admissionNo: item.admissionNo || std?.admissionNo || "",
@@ -10843,18 +11102,77 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     }
 
     // Auto-calculate student result
-    calculateStudentExamResult(examId, studentId, orgId);
+    calculateStudentExamResult(exam.id, std?.id || studentId, orgId);
   }
 
   // Recalculate ranks in the section
-  recalculateClassRanks(examId, targetGrade, targetSection, orgId);
+  recalculateClassRanks(exam.id, targetGrade, targetSection, orgId);
 
   // Transition exam status to marks_entry if it was scheduled
   if (exam.status === "scheduled") {
     exam.status = "marks_entry";
   }
 
-  await recordAuditLog("erp.marks_saved", enteredBy, "exam_marks", `${examId}-${examSubject.id}`, req);
+  await recordAuditLog("erp.marks_saved", enteredBy, "exam_marks", `${exam.id}-${examSubject.id}`, req);
+
+  // Persist to Supabase PostgreSQL marks table
+  if (supabase) {
+    try {
+      // Ensure examSubject.db_id exists
+      if (!examSubject.db_id && exam.db_id) {
+        const { data: foundExSub } = await supabase
+          .from("exam_subjects")
+          .select("id")
+          .eq("exam_id", exam.db_id)
+          .limit(1)
+          .maybeSingle();
+        if (foundExSub) examSubject.db_id = foundExSub.id;
+      }
+
+      if (examSubject.db_id) {
+        for (const item of marks) {
+          const studentId = item.studentId;
+          if (!studentId) continue;
+          const std = ERP_STUDENTS.find(s => s.id === studentId || s.db_id === studentId);
+          let dbStdId = std?.db_id;
+          if (!dbStdId) {
+            dbStdId = await resolveDbStudent(orgId, std?.admissionNo || item.admissionNo || studentId);
+            if (dbStdId && std) std.db_id = dbStdId;
+          }
+
+          if (dbStdId) {
+            const numVal = item.status === "present" ? Number(item.marksObtained) : null;
+            let computedGrade = "E";
+            if (numVal !== null) {
+              const pct = Math.round((numVal / maxMarks) * 100);
+              if (pct >= 91) computedGrade = "A1";
+              else if (pct >= 81) computedGrade = "A2";
+              else if (pct >= 71) computedGrade = "B1";
+              else if (pct >= 61) computedGrade = "B2";
+              else if (pct >= 51) computedGrade = "C1";
+              else if (pct >= 41) computedGrade = "C2";
+              else if (pct >= 33) computedGrade = "D";
+            }
+
+            const { error: mrkErr } = await supabase.from("marks").upsert([{
+              exam_subject_id: examSubject.db_id,
+              student_id: dbStdId,
+              marks_obtained: numVal,
+              grade: computedGrade,
+              remarks: item.remarks || null
+            }], { onConflict: "exam_subject_id, student_id" });
+
+            if (mrkErr) {
+              console.warn("[DB] Mark upsert note:", mrkErr.message);
+            }
+          }
+        }
+        console.log(`[DB] Bulk marks for '${examSubject.subjectName}' persisted to Supabase ✅`);
+      }
+    } catch (dbMarksErr) {
+      console.warn("[DB] Bulk marks persistence error:", dbMarksErr.message);
+    }
+  }
 
   res.json({
     success: true,
@@ -10880,13 +11198,15 @@ app.post("/api/erp/marks/correct", async (req, res) => {
     });
   }
 
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+
   const examSubject = ERP_EXAM_SUBJECTS.find(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    s.examId === examId &&
-    (s.id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
+    (s.examId === (exam ? exam.id : examId) || (exam?.db_id && s.examId === exam.db_id)) &&
+    (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   ) || ERP_EXAM_SUBJECTS.find(s =>
     (!s.organization_id || s.organization_id === orgId) &&
-    (s.id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
+    (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   );
   if (!examSubject) return res.status(404).json({ success: false, message: "Exam subject not found" });
 
@@ -10898,11 +11218,13 @@ app.post("/api/erp/marks/correct", async (req, res) => {
     }
   }
 
+  const std = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+
   const markRec = ERP_EXAM_MARKS.find(m =>
     (!m.organization_id || m.organization_id === orgId) &&
-    m.examId === examId &&
-    (m.examSubjectId === examSubject.id || m.examSubjectId === examSubject.subjectId) &&
-    m.studentId === studentId
+    (m.examId === (exam ? exam.id : examId) || (exam?.db_id && m.examId === exam.db_id)) &&
+    (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
+    (m.studentId === studentId || (std?.db_id && m.studentId === std.db_id))
   );
 
   const oldMarks = markRec ? markRec.marksObtained : "N/A";
@@ -10916,9 +11238,38 @@ app.post("/api/erp/marks/correct", async (req, res) => {
   }
 
   // Recalculate result
-  const recalculated = calculateStudentExamResult(examId, studentId, orgId);
-  const std = ERP_STUDENTS.find(s => s.id === studentId);
-  if (std) recalculateClassRanks(examId, std.grade, std.section, orgId);
+  const recalculated = calculateStudentExamResult(exam ? exam.id : examId, std ? std.id : studentId, orgId);
+  if (std) recalculateClassRanks(exam ? exam.id : examId, std.grade, std.section, orgId);
+
+  // Sync correction with Supabase
+  if (supabase && examSubject.db_id && std) {
+    try {
+      let dbStdId = std.db_id || await resolveDbStudent(orgId, std.admissionNo || studentId);
+      if (dbStdId) {
+        let computedGrade = "E";
+        if (newScore !== null) {
+          const pct = Math.round((newScore / maxMarks) * 100);
+          if (pct >= 91) computedGrade = "A1";
+          else if (pct >= 81) computedGrade = "A2";
+          else if (pct >= 71) computedGrade = "B1";
+          else if (pct >= 61) computedGrade = "B2";
+          else if (pct >= 51) computedGrade = "C1";
+          else if (pct >= 41) computedGrade = "C2";
+          else if (pct >= 33) computedGrade = "D";
+        }
+
+        await supabase.from("marks").upsert([{
+          exam_subject_id: examSubject.db_id,
+          student_id: dbStdId,
+          marks_obtained: newScore,
+          grade: computedGrade,
+          remarks: `Correction applied: ${reason.trim()}`
+        }], { onConflict: "exam_subject_id, student_id" });
+      }
+    } catch (syncCorrErr) {
+      console.warn("[DB] Mark correction sync note:", syncCorrErr.message);
+    }
+  }
 
   // Immutable audit log
   const auditLogId = `aud-corr-${Date.now()}`;
@@ -10929,7 +11280,7 @@ app.post("/api/erp/marks/correct", async (req, res) => {
     JSON.stringify({
       auditLogId,
       studentId,
-      examId,
+      examId: exam ? exam.id : examId,
       examSubjectId: examSubject.id,
       oldMarks,
       newMarks: newScore,
@@ -10953,10 +11304,13 @@ app.get("/api/erp/results/exam/:examId", (req, res) => {
   const { examId } = req.params;
   const { grade, section, status, search, page = 1, limit = 25 } = req.query;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
-  let results = ERP_EXAM_RESULTS.filter(r => (!r.organization_id || r.organization_id === orgId) && r.examId === examId);
+  let results = ERP_EXAM_RESULTS.filter(r =>
+    (!r.organization_id || r.organization_id === orgId) &&
+    (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))
+  );
 
   if (grade && grade !== "all") {
     results = results.filter(r => r.grade.toLowerCase() === grade.toLowerCase());
@@ -11035,11 +11389,17 @@ app.get("/api/erp/results/student/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
   if (!student) return res.status(404).json({ success: false, message: "Student not found" });
 
-  const results = ERP_EXAM_RESULTS.filter(r => (!r.organization_id || r.organization_id === orgId) && r.studentId === studentId);
-  const marks = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.studentId === studentId);
+  const results = ERP_EXAM_RESULTS.filter(r =>
+    (!r.organization_id || r.organization_id === orgId) &&
+    (r.studentId === student.id || (student.db_id && r.studentId === student.db_id))
+  );
+  const marks = ERP_EXAM_MARKS.filter(m =>
+    (!m.organization_id || m.organization_id === orgId) &&
+    (m.studentId === student.id || (student.db_id && m.studentId === student.db_id))
+  );
 
   res.json({
     success: true,
@@ -11049,29 +11409,45 @@ app.get("/api/erp/results/student/:studentId", (req, res) => {
   });
 });
 
-// 5n. GET /api/erp/report-cards/:examId/:studentId - Official A4 Printable Report Card Payload
+// 5n. GET /api/erp/report-cards/:examId/:studentId - Official A4 Printable Report Card Payload & HTML
 app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { examId, studentId } = req.params;
+  const { format } = req.query;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
 
   if (!exam || !student) {
     return res.status(404).json({ success: false, message: "Exam or Student record not found" });
   }
 
   // Ensure result calculation
-  let result = ERP_EXAM_RESULTS.find(r => (!r.organization_id || r.organization_id === orgId) && r.examId === examId && r.studentId === studentId);
+  let result = ERP_EXAM_RESULTS.find(r =>
+    (!r.organization_id || r.organization_id === orgId) &&
+    (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id)) &&
+    (r.studentId === student.id || (student.db_id && r.studentId === student.db_id))
+  );
   if (!result) {
-    result = calculateStudentExamResult(examId, studentId, orgId);
+    result = calculateStudentExamResult(exam.id, student.id, orgId);
   }
 
-  const examSubjects = ERP_EXAM_SUBJECTS.filter(es => (!es.organization_id || es.organization_id === orgId) && es.examId === examId);
-  const studentMarks = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.examId === examId && m.studentId === studentId);
+  const examSubjects = ERP_EXAM_SUBJECTS.filter(es =>
+    (!es.organization_id || es.organization_id === orgId) &&
+    (es.examId === exam.id || (exam.db_id && es.examId === exam.db_id))
+  );
+  const studentMarks = ERP_EXAM_MARKS.filter(m =>
+    (!m.organization_id || m.organization_id === orgId) &&
+    (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
+    (m.studentId === student.id || (student.db_id && m.studentId === student.db_id))
+  );
 
   const subjectRows = examSubjects.map(es => {
-    const markRec = studentMarks.find(m => m.examSubjectId === es.id || m.subjectId === es.subjectId);
+    const markRec = studentMarks.find(m =>
+      m.examSubjectId === es.id ||
+      (es.db_id && m.examSubjectId === es.db_id) ||
+      m.subjectId === es.subjectId
+    );
     const score = markRec && markRec.status === "present" ? Number(markRec.marksObtained) : null;
     const max = Number(es.maxMarks) || 100;
     const pass = Number(es.passMarks) || 33;
@@ -11101,7 +11477,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
     };
   });
 
-  const studentAtt = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && a.studentId === studentId);
+  const studentAtt = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && (a.studentId === student.id || (student.db_id && a.studentId === student.db_id)));
   const totalDays = studentAtt.length > 0 ? studentAtt.length : 120;
   const presentDays = studentAtt.length > 0 ? studentAtt.filter(a => a.status === 'present').length : 114;
   const attendancePercentage = Math.round((presentDays / totalDays) * 100);
@@ -11171,6 +11547,172 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
     teacherRemarks: result?.teacherRemarks || "Good performance.",
     principalRemarks: result?.principalRemarks || "Promoted."
   };
+
+  // If format=html is requested, render a standalone print-ready CBSE Report Card
+  if (format === "html") {
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CBSE Report Card — ${studentInfo.name} (${studentInfo.rollNumber})</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    body { background-color: #f1f5f9; color: #0f172a; padding: 24px; line-height: 1.4; }
+    .page-container { max-width: 820px; margin: 0 auto; background: #ffffff; padding: 36px; border: 2px solid #1e3a8a; border-radius: 8px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); position: relative; }
+    .no-print { display: flex; justify-content: flex-end; margin-bottom: 16px; max-width: 820px; margin-left: auto; margin-right: auto; }
+    .btn-print { background: #1e3a8a; color: #ffffff; border: none; padding: 10px 20px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .btn-print:hover { background: #1d4ed8; }
+    .school-header { text-align: center; border-bottom: 2px solid #1e3a8a; padding-bottom: 16px; margin-bottom: 20px; }
+    .school-emblem { font-size: 32px; margin-bottom: 4px; }
+    .school-name { font-size: 22px; font-weight: 800; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; }
+    .school-meta { font-size: 11px; color: #475569; margin-top: 4px; font-weight: 500; }
+    .badge-doc { display: inline-block; background: #eff6ff; color: #1e3a8a; font-weight: 800; font-size: 11px; padding: 4px 16px; border-radius: 20px; border: 1px solid #bfdbfe; margin-top: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .dossier-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 18px; margin-bottom: 20px; font-size: 12px; }
+    .dossier-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #e2e8f0; padding: 3px 0; }
+    .dossier-label { color: #64748b; font-weight: 500; }
+    .dossier-value { color: #0f172a; font-weight: 700; }
+    .marks-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
+    .marks-table th { background: #1e3a8a; color: #ffffff; text-align: left; padding: 8px 12px; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .marks-table th.num, .marks-table td.num { text-align: right; }
+    .marks-table th.center, .marks-table td.center { text-align: center; }
+    .marks-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; color: #1e293b; }
+    .marks-table tr:nth-child(even) { background-color: #f8fafc; }
+    .marks-table .total-row td { background: #eff6ff; font-weight: 800; border-top: 2px solid #1e3a8a; color: #1e3a8a; font-size: 13px; }
+    .badge-pass { background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 4px; font-weight: 800; font-size: 10px; text-transform: uppercase; }
+    .badge-fail { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: 800; font-size: 10px; text-transform: uppercase; }
+    .grade-val { font-weight: 800; color: #1e3a8a; font-size: 12px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .summary-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; text-align: center; }
+    .summary-card-title { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 4px; letter-spacing: 0.5px; }
+    .summary-card-val { font-size: 18px; font-weight: 800; color: #0f172a; }
+    .remarks-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; }
+    .remarks-title { font-weight: 700; color: #1e3a8a; margin-bottom: 4px; }
+    .remarks-text { color: #334155; font-style: italic; }
+    .grading-scale-box { font-size: 10px; color: #64748b; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 14px; margin-bottom: 30px; }
+    .grading-scale-title { font-weight: 700; color: #334155; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; text-align: center; margin-top: 40px; padding-top: 16px; border-top: 1px dashed #cbd5e1; font-size: 11px; font-weight: 700; color: #475569; }
+    .sig-line { border-top: 1px solid #94a3b8; width: 80%; margin: 36px auto 6px auto; }
+    @media print {
+      body { background: #ffffff; padding: 0; }
+      .page-container { border: 2px solid #1e3a8a; box-shadow: none; padding: 20px; max-width: 100%; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button class="btn-print" onclick="window.print()">🖨️ Print Official Report Card (PDF)</button>
+  </div>
+  <div class="page-container">
+    <header class="school-header">
+      <div class="school-emblem">🏫</div>
+      <h1 class="school-name">${school.name}</h1>
+      <p class="school-meta">Affiliated to ${school.board} • Affiliation No: ${school.affiliationNo} • School Code: ${school.schoolCode}</p>
+      <p class="school-meta">${school.address} • Contact: ${school.contact}</p>
+      <div class="badge-doc">Official CBSE Academic Performance Assessment Card • Session ${school.academicSession}</div>
+    </header>
+
+    <section class="dossier-grid">
+      <div>
+        <div class="dossier-row"><span class="dossier-label">Student Name</span><span class="dossier-value">${studentInfo.name}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Roll Number</span><span class="dossier-value">${studentInfo.rollNumber}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Admission No</span><span class="dossier-value">${studentInfo.admissionNumber}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Class & Section</span><span class="dossier-value">${studentInfo.grade} - ${studentInfo.section}</span></div>
+      </div>
+      <div>
+        <div class="dossier-row"><span class="dossier-label">Father / Guardian</span><span class="dossier-value">${studentInfo.guardianName}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Date of Birth</span><span class="dossier-value">${studentInfo.dateOfBirth}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Assessment Title</span><span class="dossier-value">${examInfo.title}</span></div>
+        <div class="dossier-row"><span class="dossier-label">Report Card No</span><span class="dossier-value" style="font-family: monospace;">${reportCardId}</span></div>
+      </div>
+    </section>
+
+    <table class="marks-table">
+      <thead>
+        <tr>
+          <th>Sl No</th>
+          <th>Subject Name</th>
+          <th>Code</th>
+          <th class="num">Max Marks</th>
+          <th class="num">Pass Marks</th>
+          <th class="num">Marks Obtained</th>
+          <th class="center">Grade</th>
+          <th class="center">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${subjectRows.map((sub, idx) => `
+        <tr>
+          <td>${idx + 1}</td>
+          <td><strong>${sub.subjectName}</strong></td>
+          <td style="font-family: monospace; color: #64748b;">${sub.subjectCode}</td>
+          <td class="num">${sub.maxMarks}</td>
+          <td class="num">${sub.passMarks}</td>
+          <td class="num" style="font-weight: 700;">${sub.marksObtained !== null ? sub.marksObtained : (sub.status === 'absent' ? 'AB' : '—')}</td>
+          <td class="center"><span class="grade-val">${sub.grade}</span></td>
+          <td class="center"><span class="${sub.result === 'PASS' ? 'badge-pass' : 'badge-fail'}">${sub.result}</span></td>
+        </tr>`).join('')}
+        <tr class="total-row">
+          <td colspan="3">GRAND TOTAL & OVERALL PERFORMANCE</td>
+          <td class="num">${resultInfo.maxTotalMarks}</td>
+          <td class="num">${Math.round(resultInfo.maxTotalMarks * 0.33)}</td>
+          <td class="num">${resultInfo.totalMarksObtained}</td>
+          <td class="center">${resultInfo.overallGrade}</td>
+          <td class="center"><span class="${resultInfo.resultStatus === 'PASS' ? 'badge-pass' : 'badge-fail'}">${resultInfo.resultStatus}</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <section class="summary-grid">
+      <div class="summary-card">
+        <div class="summary-card-title">Percentage</div>
+        <div class="summary-card-val" style="color: #1e3a8a;">${resultInfo.percentage}%</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Overall Grade</div>
+        <div class="summary-card-val" style="color: #047857;">${resultInfo.overallGrade}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Class Rank</div>
+        <div class="summary-card-val" style="color: #4338ca;">#${resultInfo.classRank}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-card-title">Attendance</div>
+        <div class="summary-card-val" style="color: #0f172a;">${attendancePercentage}%</div>
+      </div>
+    </section>
+
+    <div class="remarks-box">
+      <div class="remarks-title">Class Teacher & Principal Remarks</div>
+      <p class="remarks-text">"${resultInfo.teacherRemarks}" — <em>${resultInfo.principalRemarks}</em></p>
+    </div>
+
+    <div class="grading-scale-box">
+      <div class="grading-scale-title">CBSE 9-Point Grading Scale Reference:</div>
+      <div>A1 (91–100%) • A2 (81–90%) • B1 (71–80%) • B2 (61–70%) • C1 (51–60%) • C2 (41–50%) • D (33–40%) • E (Needs Improvement / Below 33%)</div>
+    </div>
+
+    <footer class="signatures">
+      <div>
+        <div class="sig-line"></div>
+        <div>Class Teacher</div>
+      </div>
+      <div>
+        <div class="sig-line"></div>
+        <div>Controller of Examinations</div>
+      </div>
+      <div>
+        <div class="sig-line"></div>
+        <div>Principal (${school.principalName})</div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>`;
+    return res.type("text/html").send(html);
+  }
 
   res.json({
     success: true,
