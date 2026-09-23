@@ -14151,7 +14151,7 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
   const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
   const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
   
-  const isValidSignature = !signature || signature === expectedSignature || signature.length >= 16;
+  const isValidSignature = Boolean(signature && signature === expectedSignature);
   if (!isValidSignature) {
     return res.status(400).json({ success: false, message: "Invalid payment signature verification failed" });
   }
