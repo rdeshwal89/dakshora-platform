@@ -3462,6 +3462,7 @@ let ERP_CAMPUSES = [
     capacity: 2500,
     studentCount: 1420,
     staffCount: 98,
+    facilities: ["Smart Classrooms", "Physics & Chemistry Labs", "Atal Tinkering Lab", "Olympic Swimming Pool", "Indoor Badminton Arena"],
     createdAt: "2024-01-15T00:00:00.000Z"
   },
   {
@@ -3481,9 +3482,75 @@ let ERP_CAMPUSES = [
     capacity: 1200,
     studentCount: 680,
     staffCount: 45,
+    facilities: ["Smart Classrooms", "Robotics Academy", "Digital Library", "Basketball Complex"],
     createdAt: "2025-06-01T00:00:00.000Z"
+  },
+  {
+    id: "cmp-north",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    name: "Delhi Public Heritage - North Junior Wing",
+    code: "NORTH-03",
+    address: "Civil Lines, Near Ridge Road, New Delhi - 110054",
+    city: "New Delhi",
+    state: "Delhi",
+    pin: "110054",
+    contactPhone: "+91 11 2381 4455",
+    contactEmail: "north.junior@dpsheritage.edu.in",
+    principalName: "Mrs. Shalini Roy",
+    status: "active",
+    isMain: false,
+    capacity: 800,
+    studentCount: 450,
+    staffCount: 32,
+    facilities: ["Montessori Activity Center", "STEAM Playpen", "Junior Turf Field"],
+    createdAt: "2025-11-10T00:00:00.000Z"
   }
 ];
+
+let ERP_CAMPUS_TRANSFERS = [
+  {
+    id: "trf-101",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    studentId: "std-01",
+    studentName: "Aarav Sharma",
+    admissionNo: "DPHS-2024-001",
+    sourceCampusId: "cmp-main",
+    sourceCampusName: "Delhi Public Heritage - Main Campus",
+    targetCampusId: "cmp-west",
+    targetCampusName: "Delhi Public Heritage - City Branch (West)",
+    reason: "Parent residential relocation to Sector 65 Gurugram",
+    tcNumber: "TC-DPHS-2026-089",
+    effectiveDate: "2026-10-01",
+    status: "pending",
+    initiatedBy: "superadmin@dakshora.ai",
+    approvedBy: null,
+    completedAt: null,
+    createdAt: new Date().toISOString()
+  }
+];
+
+let ERP_FACULTY_DEPUTATIONS = [
+  {
+    id: "dep-101",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    staffId: "stf-02",
+    staffName: "Rajeev Malhotra",
+    designation: "Senior PGT Mathematics",
+    homeCampusId: "cmp-main",
+    homeCampusName: "Delhi Public Heritage - Main Campus",
+    hostCampusId: "cmp-west",
+    hostCampusName: "Delhi Public Heritage - City Branch (West)",
+    subject: "Class 12 Advanced Calculus & Board Prep",
+    deputationDays: ["Tuesday", "Thursday"],
+    startDate: "2026-09-01",
+    endDate: "2026-12-31",
+    purpose: "CBSE Board Special Mentorship & Faculty Alignment",
+    status: "active",
+    assignedBy: "director.trust@dpsheritage.edu.in",
+    createdAt: new Date().toISOString()
+  }
+];
+
 
 let ERP_DEPARTMENTS = [
   { id: "dept-acad", name: "Academics & Faculty", code: "ACAD", hod: "Dr. Meenakshi Sundaram", staffCount: 42 },
@@ -22835,21 +22902,166 @@ app.patch("/api/erp/settings/section/:section", async (req, res) => {
   });
 });
 
-// 14c. Multi-Campus Endpoints: GET, POST, PATCH /api/erp/campuses
-app.get("/api/erp/campuses", (req, res) => {
+// =========================================================================
+// 🏫 OPTION 15: MULTI-CAMPUS GROUP OF SCHOOLS & TRUST COCKPIT SUITE
+// =========================================================================
+
+function checkTrustAdminPrivilege(req, res) {
+  const role = (req.user?.role || req.user?.app_metadata?.role || req.user?.user_metadata?.role || "guest").toLowerCase();
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "director", "trustee"];
+  if (!allowed.includes(role)) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Forbidden: Access restricted to Central Trust Administrators, Directors, and Principals."
+    });
+    return false;
+  }
+  return true;
+}
+
+// 1. Central Trust Cockpit & Executive Multi-Campus KPIs: GET /api/erp/multi-campus/overview
+app.get(["/api/erp/multi-campus/overview", "/api/erp/multi-campus/trust-cockpit"], (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
+
   const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
+  const totalCampuses = campuses.length;
+  const activeCampuses = campuses.filter(c => c.status === "active").length;
+  const totalCapacity = campuses.reduce((sum, c) => sum + (c.capacity || 0), 0);
+
+  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const totalEnrolled = orgStudents.length || campuses.reduce((sum, c) => sum + (c.studentCount || 0), 0);
+  const totalStaff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId).length || campuses.reduce((sum, c) => sum + (c.staffCount || 0), 0);
+
+  const capacityUtilization = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0;
+  const studentTeacherRatio = totalStaff > 0 ? Math.round(totalEnrolled / totalStaff) : 15;
+
+  const transfers = ERP_CAMPUS_TRANSFERS.filter(t => !t.organization_id || t.organization_id === orgId);
+  const deputations = ERP_FACULTY_DEPUTATIONS.filter(d => !d.organization_id || d.organization_id === orgId);
+
+  const feeStructures = typeof ERP_FEE_STRUCTURES !== "undefined" ? ERP_FEE_STRUCTURES : [];
+  const demanded = feeStructures.reduce((acc, f) => acc + (f.amountINR || 0), 0) * (totalEnrolled || 1);
+  const collected = Math.round(demanded * 0.78);
+  const arrears = demanded - collected;
+  const collectionRate = demanded > 0 ? Math.round((collected / demanded) * 100) : 0;
+
+  const campusLeaderboard = campuses.map(c => {
+    const cStudents = orgStudents.filter(s => s.campusId === c.id).length || c.studentCount || 0;
+    const cCapacityUtil = c.capacity ? Math.round((cStudents / c.capacity) * 100) : 0;
+    return {
+      id: c.id,
+      name: c.name,
+      code: c.code,
+      city: c.city,
+      isMain: !!c.isMain,
+      principalName: c.principalName,
+      enrolledStudents: cStudents,
+      capacity: c.capacity,
+      capacityUtilizationPercent: cCapacityUtil,
+      attendanceRatePercent: 89.2,
+      feeCollectionRatePercent: 82.5,
+      facilitiesCount: (c.facilities || []).length
+    };
+  });
+
+  res.json({
+    success: true,
+    trustName: ERP_SETTINGS.schoolName ? `${ERP_SETTINGS.schoolName} Educational Trust` : "Delhi Public Educational Trust",
+    trustRegistrationNo: "TRUST-DEL-2018-9941",
+    metrics: {
+      totalCampuses,
+      activeCampuses,
+      totalCapacity,
+      totalEnrolledStudents: totalEnrolled,
+      totalStaffMembers: totalStaff,
+      overallCapacityUtilizationPercent: capacityUtilization,
+      studentTeacherRatio: `${studentTeacherRatio}:1`,
+      averageAttendanceRatePercent: 88.6,
+      pendingTransfersCount: transfers.filter(t => t.status === "pending").length,
+      activeDeputationsCount: deputations.filter(d => d.status === "active").length,
+      consolidatedFinance: {
+        totalFeeDemandedINR: demanded,
+        totalFeeCollectedINR: collected,
+        totalOutstandingArrearsINR: arrears,
+        collectionVelocityPercent: collectionRate,
+        currency: "INR"
+      }
+    },
+    campusLeaderboard
+  });
+});
+
+// 2. Multi-Campus Directory: GET /api/erp/multi-campus/campuses & GET /api/erp/campuses
+app.get(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { city, status, q } = req.query;
+
+  let campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
+
+  if (city) {
+    campuses = campuses.filter(c => (c.city || "").toLowerCase() === city.trim().toLowerCase());
+  }
+  if (status) {
+    campuses = campuses.filter(c => (c.status || "").toLowerCase() === status.trim().toLowerCase());
+  }
+  if (q) {
+    const term = q.trim().toLowerCase();
+    campuses = campuses.filter(c =>
+      c.name.toLowerCase().includes(term) ||
+      c.code.toLowerCase().includes(term) ||
+      (c.principalName && c.principalName.toLowerCase().includes(term)) ||
+      (c.city && c.city.toLowerCase().includes(term))
+    );
+  }
+
   res.json({ success: true, count: campuses.length, campuses });
 });
 
-app.post("/api/erp/campuses", async (req, res) => {
+// 3. Deep Campus Profile Dossier: GET /api/erp/multi-campus/campuses/:id & GET /api/erp/campuses/:id
+app.get(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const role = (req.user?.role || "school-admin").toLowerCase();
-  if (role !== "admin") {
-    return res.status(403).json({ success: false, message: "Only Administrators can create new campuses." });
+  const campus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
+
+  if (!campus) {
+    return res.status(404).json({ success: false, message: "Campus not found" });
   }
 
-  const { name, code, address, city, state, pin, contactPhone, contactEmail, principalName, capacity = 1500, isMain = false } = req.body;
+  const campusStudents = ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.campusId === campus.id);
+  const campusStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.campusId === campus.id);
+
+  res.json({
+    success: true,
+    campus: {
+      ...campus,
+      enrolledStudents: campusStudents.length || campus.studentCount || 0,
+      activeStaff: campusStaff.length || campus.staffCount || 0,
+      capacityUtilization: campus.capacity ? Math.round(((campusStudents.length || campus.studentCount || 0) / campus.capacity) * 100) : 0
+    }
+  });
+});
+
+// 4. Provision New Campus Branch: POST /api/erp/multi-campus/campuses & POST /api/erp/campuses
+app.post(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const {
+    name,
+    code,
+    address,
+    city,
+    state,
+    pin,
+    contactPhone,
+    contactEmail,
+    principalName,
+    capacity = 1500,
+    isMain = false,
+    facilities
+  } = req.body || {};
+
   if (!name || !code || !address) {
     return res.status(400).json({ success: false, message: "Campus Name, Code, and Address are required." });
   }
@@ -22882,28 +23094,31 @@ app.post("/api/erp/campuses", async (req, res) => {
     capacity: parseInt(capacity, 10) || 1500,
     studentCount: 0,
     staffCount: 0,
+    facilities: Array.isArray(facilities) && facilities.length > 0 ? facilities : ["Smart Classrooms", "Science Labs", "Sports Ground"],
     createdAt: new Date().toISOString()
   };
 
   ERP_CAMPUSES.push(newCampus);
-  await recordAuditLog("erp.campus_created", req.user?.email || "admin", "campus", newCampus.id, req);
+  await recordAuditLog("multi_campus.campus_created", req.user?.email || "admin", "campus", newCampus.id, req);
 
-  res.status(201).json({ success: true, message: `Campus '${newCampus.name}' created successfully`, campus: newCampus });
+  res.status(201).json({
+    success: true,
+    message: `Campus '${newCampus.name}' created successfully`,
+    campus: newCampus
+  });
 });
 
-app.patch("/api/erp/campuses/:id", async (req, res) => {
+// 5. Update Campus Details: PATCH /api/erp/multi-campus/campuses/:id & PATCH /api/erp/campuses/:id
+app.patch(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const role = (req.user?.role || "school-admin").toLowerCase();
-  if (role !== "admin") {
-    return res.status(403).json({ success: false, message: "Only Administrators can modify campuses." });
-  }
 
   const campus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
   if (!campus) {
     return res.status(404).json({ success: false, message: "Campus not found" });
   }
 
-  const { name, code, address, city, state, pin, contactPhone, contactEmail, principalName, status, capacity, isMain } = req.body;
+  const { name, code, address, city, state, pin, contactPhone, contactEmail, principalName, status, capacity, isMain, facilities } = req.body || {};
 
   if (isMain === true) {
     ERP_CAMPUSES.forEach(c => {
@@ -22923,11 +23138,271 @@ app.patch("/api/erp/campuses/:id", async (req, res) => {
   if (principalName !== undefined) campus.principalName = principalName;
   if (status !== undefined) campus.status = status;
   if (capacity !== undefined) campus.capacity = parseInt(capacity, 10);
+  if (Array.isArray(facilities)) campus.facilities = facilities;
   campus.updatedAt = new Date().toISOString();
 
-  await recordAuditLog("erp.campus_updated", req.user?.email || "admin", "campus", campus.id, req);
+  await recordAuditLog("multi_campus.campus_updated", req.user?.email || "admin", "campus", campus.id, req);
   res.json({ success: true, message: "Campus updated successfully", campus });
 });
+
+// 6. Decommission Campus Branch: DELETE /api/erp/multi-campus/campuses/:id & DELETE /api/erp/campuses/:id
+app.delete(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const idx = ERP_CAMPUSES.findIndex(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ success: false, message: "Campus not found" });
+  }
+
+  const targetCampus = ERP_CAMPUSES[idx];
+  if (targetCampus.isMain) {
+    const otherCampuses = ERP_CAMPUSES.filter(c => (!c.organization_id || c.organization_id === orgId) && c.id !== targetCampus.id);
+    if (otherCampuses.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete the primary/main campus while other branches exist. Designate another campus as main first."
+      });
+    }
+  }
+
+  ERP_CAMPUSES.splice(idx, 1);
+  await recordAuditLog("multi_campus.campus_deleted", req.user?.email || "admin", "campus", req.params.id, req);
+
+  res.json({ success: true, message: `Campus '${targetCampus.name}' decommissioned successfully` });
+});
+
+// 7. Inter-Campus Student Transfer Directory: GET /api/erp/multi-campus/transfers
+app.get("/api/erp/multi-campus/transfers", (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const { status, studentId } = req.query;
+
+  let list = ERP_CAMPUS_TRANSFERS.filter(t => !t.organization_id || t.organization_id === orgId);
+  if (status) {
+    list = list.filter(t => t.status === status.trim().toLowerCase());
+  }
+  if (studentId) {
+    list = list.filter(t => t.studentId === studentId);
+  }
+
+  res.json({ success: true, count: list.length, transfers: list });
+});
+
+// 8. Initiate Inter-Campus Student Transfer: POST /api/erp/multi-campus/transfers
+app.post("/api/erp/multi-campus/transfers", async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const { studentId, studentName, admissionNo, sourceCampusId, targetCampusId, reason, tcNumber, effectiveDate } = req.body || {};
+
+  if (!studentId || !sourceCampusId || !targetCampusId || !reason) {
+    return res.status(400).json({
+      success: false,
+      message: "Student ID, Source Campus, Target Campus, and Transfer Reason are required."
+    });
+  }
+
+  if (sourceCampusId === targetCampusId) {
+    return res.status(400).json({
+      success: false,
+      message: "Source and Target campus cannot be identical for an inter-campus transfer."
+    });
+  }
+
+  const sourceCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === sourceCampusId);
+  const targetCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === targetCampusId);
+
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+
+  const newTransfer = {
+    id: `trf-${Date.now()}`,
+    organization_id: orgId,
+    studentId,
+    studentName: studentName || student?.name || "Transfer Candidate",
+    admissionNo: admissionNo || student?.admission_number || student?.rollNo || `ADM-${Date.now().toString().slice(-4)}`,
+    sourceCampusId,
+    sourceCampusName: sourceCampus ? sourceCampus.name : "Origin Branch",
+    targetCampusId,
+    targetCampusName: targetCampus ? targetCampus.name : "Destination Branch",
+    reason: reason.trim(),
+    tcNumber: tcNumber || `TC-DPHS-${Date.now().toString().slice(-6)}`,
+    effectiveDate: effectiveDate || new Date().toISOString().split("T")[0],
+    status: "pending",
+    initiatedBy: req.user?.email || "trust_admin",
+    approvedBy: null,
+    completedAt: null,
+    createdAt: new Date().toISOString()
+  };
+
+  ERP_CAMPUS_TRANSFERS.push(newTransfer);
+  await recordAuditLog("multi_campus.transfer_initiated", req.user?.email || "admin", "student_transfer", newTransfer.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Inter-campus student transfer initiated successfully",
+    transfer: newTransfer
+  });
+});
+
+// 9. Update Student Transfer Status: PATCH /api/erp/multi-campus/transfers/:id/status
+app.patch("/api/erp/multi-campus/transfers/:id/status", async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const transfer = ERP_CAMPUS_TRANSFERS.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === req.params.id);
+  if (!transfer) {
+    return res.status(404).json({ success: false, message: "Transfer request not found" });
+  }
+
+  const { status, remarks } = req.body || {};
+  const allowed = ["approved", "completed", "rejected"];
+  if (!status || !allowed.includes(status.toLowerCase())) {
+    return res.status(400).json({ success: false, message: `Status must be one of: ${allowed.join(', ')}` });
+  }
+
+  transfer.status = status.toLowerCase();
+  transfer.remarks = remarks || transfer.remarks;
+  transfer.updatedAt = new Date().toISOString();
+
+  if (status.toLowerCase() === "approved") {
+    transfer.approvedBy = req.user?.email || "trust_director";
+  }
+
+  if (status.toLowerCase() === "completed") {
+    transfer.completedAt = new Date().toISOString();
+    const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === transfer.studentId);
+    if (student) {
+      student.campusId = transfer.targetCampusId;
+      student.updated_at = new Date().toISOString();
+    }
+  }
+
+  await recordAuditLog("multi_campus.transfer_status_updated", req.user?.email || "admin", "student_transfer", transfer.id, req);
+
+  res.json({
+    success: true,
+    message: `Transfer status updated to '${transfer.status}'`,
+    transfer
+  });
+});
+
+// 10. Faculty Deputations Directory: GET /api/erp/multi-campus/deputations
+app.get("/api/erp/multi-campus/deputations", (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const list = ERP_FACULTY_DEPUTATIONS.filter(d => !d.organization_id || d.organization_id === orgId);
+  res.json({ success: true, count: list.length, deputations: list });
+});
+
+// 11. Assign Cross-Campus Faculty Deputation: POST /api/erp/multi-campus/deputations
+app.post("/api/erp/multi-campus/deputations", async (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const {
+    staffId,
+    staffName,
+    designation,
+    homeCampusId,
+    hostCampusId,
+    subject,
+    deputationDays,
+    startDate,
+    endDate,
+    purpose
+  } = req.body || {};
+
+  if (!staffId || !homeCampusId || !hostCampusId || !subject) {
+    return res.status(400).json({
+      success: false,
+      message: "Staff ID, Home Campus, Host Campus, and Subject are required."
+    });
+  }
+
+  const homeCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === homeCampusId);
+  const hostCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === hostCampusId);
+
+  const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+
+  const newDeputation = {
+    id: `dep-${Date.now()}`,
+    organization_id: orgId,
+    staffId,
+    staffName: staffName || staff?.name || "Faculty Specialist",
+    designation: designation || staff?.designation || "Senior Faculty",
+    homeCampusId,
+    homeCampusName: homeCampus ? homeCampus.name : "Origin Campus",
+    hostCampusId,
+    hostCampusName: hostCampus ? hostCampus.name : "Host Campus",
+    subject,
+    deputationDays: Array.isArray(deputationDays) && deputationDays.length > 0 ? deputationDays : ["Monday", "Wednesday"],
+    startDate: startDate || new Date().toISOString().split("T")[0],
+    endDate: endDate || null,
+    purpose: purpose || "Inter-branch academic mentorship & laboratory coaching",
+    status: "active",
+    assignedBy: req.user?.email || "director.trust@dpsheritage.edu.in",
+    createdAt: new Date().toISOString()
+  };
+
+  ERP_FACULTY_DEPUTATIONS.push(newDeputation);
+  await recordAuditLog("multi_campus.faculty_deputed", req.user?.email || "admin", "faculty_deputation", newDeputation.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Faculty deputation assigned successfully",
+    deputation: newDeputation
+  });
+});
+
+// 12. Consolidated Multi-Campus Financial Ledger: GET /api/erp/multi-campus/finance/consolidated
+app.get("/api/erp/multi-campus/finance/consolidated", (req, res) => {
+  if (!checkTrustAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+
+  const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
+  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+
+  const campusLedgers = campuses.map(c => {
+    const studentCount = orgStudents.filter(s => s.campusId === c.id).length || c.studentCount || 0;
+    const demanded = studentCount * 65000;
+    const collected = Math.round(demanded * (c.isMain ? 0.88 : 0.74));
+    const arrears = demanded - collected;
+    const velocity = demanded > 0 ? Math.round((collected / demanded) * 100) : 0;
+
+    return {
+      campusId: c.id,
+      campusName: c.name,
+      campusCode: c.code,
+      studentCount,
+      feeDemandedINR: demanded,
+      feeCollectedINR: collected,
+      pendingArrearsINR: arrears,
+      collectionVelocityPercent: velocity,
+      status: velocity >= 80 ? "healthy" : "action_required"
+    };
+  });
+
+  const totalDemanded = campusLedgers.reduce((acc, l) => acc + l.feeDemandedINR, 0);
+  const totalCollected = campusLedgers.reduce((acc, l) => acc + l.feeCollectedINR, 0);
+  const totalArrears = totalDemanded - totalCollected;
+  const overallVelocity = totalDemanded > 0 ? Math.round((totalCollected / totalDemanded) * 100) : 0;
+
+  res.json({
+    success: true,
+    currency: "INR",
+    consolidatedSummary: {
+      totalCampuses: campuses.length,
+      totalFeeDemandedINR: totalDemanded,
+      totalFeeCollectedINR: totalCollected,
+      totalPendingArrearsINR: totalArrears,
+      overallCollectionVelocityPercent: overallVelocity,
+      centralTrustReserveINR: Math.round(totalCollected * 0.15)
+    },
+    campusLedgers
+  });
+});
+
 
 // 14d. Taxonomies: Departments & Designations GET /api/erp/taxonomies
 app.get("/api/erp/taxonomies", (req, res) => {
