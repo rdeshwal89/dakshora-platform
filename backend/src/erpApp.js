@@ -3646,6 +3646,60 @@ let ERP_TRANSPORT = [
   }
 ];
 
+let ERP_VEHICLES = [
+  {
+    id: "veh-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    registrationNumber: "HR 26 DQ 8890",
+    vehicleType: "bus",
+    capacity: 45,
+    driverName: "Ramesh Yadav",
+    driverPhone: "+91 98100 00555",
+    isActive: true,
+    assignedRouteId: "tr-01",
+    createdAt: "2026-04-01T00:00:00.000Z"
+  },
+  {
+    id: "veh-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    registrationNumber: "HR 26 EK 4412",
+    vehicleType: "bus",
+    capacity: 40,
+    driverName: "Balwan Singh",
+    driverPhone: "+91 98111 88991",
+    isActive: true,
+    assignedRouteId: "tr-02",
+    createdAt: "2026-04-01T00:00:00.000Z"
+  }
+];
+
+let ERP_STUDENT_TRANSPORT = [
+  {
+    id: "str-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    studentId: "std-101",
+    routeId: "tr-01",
+    vehicleId: "veh-01",
+    pickupPoint: "The Camellias, DLF 5",
+    dropPoint: "The Camellias, DLF 5",
+    fee: 2500,
+    status: "active",
+    allocatedAt: "2026-04-01T00:00:00.000Z"
+  },
+  {
+    id: "str-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    studentId: "std-102",
+    routeId: "tr-01",
+    vehicleId: "veh-01",
+    pickupPoint: "Magnolias Gate 2",
+    dropPoint: "Magnolias Gate 2",
+    fee: 2500,
+    status: "active",
+    allocatedAt: "2026-04-01T00:00:00.000Z"
+  }
+];
+
 // =========================================================================
 // 🎓 PARENT & STUDENT PORTAL: LEAVE APPLICATIONS, HOMEWORK & SUBMISSIONS
 // =========================================================================
@@ -15576,9 +15630,1047 @@ app.post("/api/erp/communication", (req, res) => {
   res.json({ success: true, message: "Notice broadcasted successfully", notice: newNotice });
 });
 
-// 9. Transport Endpoints
+// =========================================================================
+// 🚌 SECTION 9: ENTERPRISE STUDENT TRANSPORT & FLEET MANAGEMENT SUITE
+// Live Supabase PostgreSQL Persistence (transport_routes, vehicles, student_transport)
+// =========================================================================
+
+// Helper: Enforce School Administrator Role for Transport Fleet Management
+function checkTransportAdminPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "transport-manager", "transport_incharge"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School administrative role required to manage fleet routes or student transport allocations."
+    });
+    return false;
+  }
+  return true;
+}
+
+// Helper: Resolve or insert transport route into Supabase public.transport_routes
+async function resolveOrCreateTransportRouteDb(orgId, routeData) {
+  if (!routeData) return null;
+  if (!supabase) return null;
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const routeNo = (routeData.routeNumber || routeData.route_no || "").trim().toUpperCase();
+  const routeName = (routeData.name || routeData.routeName || "").trim();
+
+  try {
+    const candidateId = routeData.db_id || (isUuid.test(routeData.id) ? routeData.id : null);
+    if (candidateId) {
+      const { data: existing } = await supabase
+        .from("transport_routes")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("id", candidateId)
+        .maybeSingle();
+      if (existing) return existing;
+    }
+
+    if (routeNo) {
+      const { data: byRouteNo } = await supabase
+        .from("transport_routes")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("route_no", routeNo)
+        .maybeSingle();
+      if (byRouteNo) return byRouteNo;
+    }
+
+    const { data: newRoute, error } = await supabase
+      .from("transport_routes")
+      .insert([{
+        organization_id: orgId,
+        name: routeName || `Route ${routeNo || 'A'}`,
+        route_no: routeNo || `BUS-${Date.now().toString().slice(-4)}`,
+        pickup_points: routeData.stops || routeData.pickup_points || [],
+        fee: parseFloat(routeData.fee || routeData.monthlyFee || 0)
+      }])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[DB] resolveOrCreateTransportRouteDb insert error:", error.message);
+      return null;
+    }
+    return newRoute;
+  } catch (e) {
+    console.warn("[DB] resolveOrCreateTransportRouteDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Resolve or insert vehicle into Supabase public.vehicles
+async function resolveOrCreateVehicleDb(orgId, vehicleData) {
+  if (!vehicleData) return null;
+  if (!supabase) return null;
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const regNo = (vehicleData.registrationNumber || vehicleData.registration_no || "").trim().toUpperCase();
+
+  try {
+    const candidateId = vehicleData.db_id || (isUuid.test(vehicleData.id) ? vehicleData.id : null);
+    if (candidateId) {
+      const { data: existing } = await supabase
+        .from("vehicles")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("id", candidateId)
+        .maybeSingle();
+      if (existing) return existing;
+    }
+
+    if (regNo) {
+      const { data: byRegNo } = await supabase
+        .from("vehicles")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("registration_no", regNo)
+        .maybeSingle();
+      if (byRegNo) return byRegNo;
+    }
+
+    const { data: newVeh, error } = await supabase
+      .from("vehicles")
+      .insert([{
+        organization_id: orgId,
+        registration_no: regNo || `DL-01-${Date.now().toString().slice(-4)}`,
+        vehicle_type: vehicleData.vehicleType || vehicleData.vehicle_type || "bus",
+        capacity: parseInt(vehicleData.capacity, 10) || 40,
+        driver_name: vehicleData.driverName || vehicleData.driver_name || null,
+        driver_phone: vehicleData.driverPhone || vehicleData.driver_phone || null,
+        is_active: vehicleData.isActive !== false
+      }])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[DB] resolveOrCreateVehicleDb insert error:", error.message);
+      return null;
+    }
+    return newVeh;
+  } catch (e) {
+    console.warn("[DB] resolveOrCreateVehicleDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Resolve student UUID in Supabase public.students, auto-creating if memory-only
+async function resolveOrCreateStudentTransportDbId(orgId, studentIdentifier) {
+  let stdId = await resolveDbStudent(orgId, studentIdentifier);
+  if (stdId) return stdId;
+
+  if (!supabase) return null;
+
+  const memStd = ERP_STUDENTS.find(s => 
+    (!s.organization_id || s.organization_id === orgId) &&
+    (s.id === studentIdentifier || s.db_id === studentIdentifier || s.admissionNo === studentIdentifier)
+  );
+
+  if (memStd) {
+    const admNo = memStd.admissionNo || `ADM-TR-${Date.now().toString().slice(-6)}`;
+    const { data: newStd, error } = await supabase
+      .from("students")
+      .insert([{
+        organization_id: orgId,
+        admission_no: admNo,
+        first_name: memStd.name ? memStd.name.split(" ")[0] : "Student",
+        last_name: memStd.name ? memStd.name.split(" ").slice(1).join(" ") || "Dakshora" : "Dakshora",
+        admission_status: "admitted"
+      }])
+      .select()
+      .maybeSingle();
+
+    if (!error && newStd) {
+      memStd.db_id = newStd.id;
+      return newStd.id;
+    }
+  }
+  return null;
+}
+
+// Helper: Persist or upsert student transport allocation in Supabase public.student_transport
+async function recordStudentTransportAllocationDb(orgId, studentIdentifier, routeId, vehicleId, pickupPoint) {
+  if (!supabase) return null;
+
+  try {
+    const studentDbId = await resolveOrCreateStudentTransportDbId(orgId, studentIdentifier);
+    if (!studentDbId) return null;
+
+    let routeDbId = null;
+    if (routeId) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (isUuid.test(routeId)) {
+        routeDbId = routeId;
+      } else {
+        const r = ERP_TRANSPORT.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === routeId || t.routeNumber === routeId));
+        if (r) {
+          const dbR = await resolveOrCreateTransportRouteDb(orgId, r);
+          routeDbId = dbR?.id || null;
+        }
+      }
+    }
+
+    let vehicleDbId = null;
+    if (vehicleId) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (isUuid.test(vehicleId)) {
+        vehicleDbId = vehicleId;
+      } else {
+        const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(veh => 
+          (!veh.organization_id || veh.organization_id === orgId) && 
+          (veh.id === vehicleId || veh.registrationNumber === vehicleId)
+        );
+        if (v) {
+          const dbV = await resolveOrCreateVehicleDb(orgId, v);
+          vehicleDbId = dbV?.id || null;
+        }
+      }
+    }
+
+    const { data: alloc, error } = await supabase
+      .from("student_transport")
+      .upsert([{
+        student_id: studentDbId,
+        route_id: routeDbId,
+        vehicle_id: vehicleDbId,
+        pickup_point: pickupPoint || "Main Campus Stop"
+      }], { onConflict: "student_id" })
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[DB] recordStudentTransportAllocationDb upsert warning:", error.message);
+      return null;
+    }
+    return alloc;
+  } catch (e) {
+    console.warn("[DB] recordStudentTransportAllocationDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Remove student transport allocation from public.student_transport
+async function deleteStudentTransportDb(orgId, studentIdentifier) {
+  if (!supabase) return false;
+  try {
+    const studentDbId = await resolveDbStudent(orgId, studentIdentifier);
+    if (!studentDbId) return false;
+
+    const { error } = await supabase
+      .from("student_transport")
+      .delete()
+      .eq("student_id", studentDbId);
+    return !error;
+  } catch (e) {
+    console.warn("[DB] deleteStudentTransportDb exception:", e.message);
+    return false;
+  }
+}
+
+// Helper: Remove route from public.transport_routes and unassign students
+async function deleteTransportRouteDb(orgId, routeIdentifier) {
+  if (!supabase) return false;
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let routeDbId = isUuid.test(routeIdentifier) ? routeIdentifier : null;
+    if (!routeDbId) {
+      const r = ERP_TRANSPORT.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === routeIdentifier || t.routeNumber === routeIdentifier));
+      if (r && r.db_id) routeDbId = r.db_id;
+    }
+
+    if (routeDbId) {
+      await supabase.from("student_transport").update({ route_id: null }).eq("route_id", routeDbId);
+      const { error } = await supabase.from("transport_routes").delete().eq("organization_id", orgId).eq("id", routeDbId);
+      return !error;
+    }
+    return true;
+  } catch (e) {
+    console.warn("[DB] deleteTransportRouteDb exception:", e.message);
+    return false;
+  }
+}
+
+// Helper: Remove vehicle from public.vehicles and unassign students
+async function deleteVehicleDb(orgId, vehicleIdentifier) {
+  if (!supabase) return false;
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let vehicleDbId = isUuid.test(vehicleIdentifier) ? vehicleIdentifier : null;
+    if (!vehicleDbId) {
+      const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(veh => 
+        (!veh.organization_id || veh.organization_id === orgId) && 
+        (veh.id === vehicleIdentifier || veh.registrationNumber === vehicleIdentifier)
+      );
+      if (v && v.db_id) vehicleDbId = v.db_id;
+    }
+
+    if (vehicleDbId) {
+      await supabase.from("student_transport").update({ vehicle_id: null }).eq("vehicle_id", vehicleDbId);
+      const { error } = await supabase.from("vehicles").delete().eq("organization_id", orgId).eq("id", vehicleDbId);
+      return !error;
+    }
+    return true;
+  } catch (e) {
+    console.warn("[DB] deleteVehicleDb exception:", e.message);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------------------
+// 9a. GET /api/erp/transport/overview - Centralized Fleet & Route Analytics
+// -------------------------------------------------------------------------
+app.get("/api/erp/transport/overview", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => !v.organization_id || v.organization_id === orgId);
+  const allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(s => !s.organization_id || s.organization_id === orgId);
+
+  const totalRoutes = routes.length;
+  const totalVehicles = vehicles.length;
+  const activeVehicles = vehicles.filter(v => v.isActive !== false).length;
+  const totalCapacity = vehicles.reduce((acc, v) => acc + (parseInt(v.capacity, 10) || 0), 0);
+  const totalStudentsAllocated = allocations.length;
+  const utilizationPercent = totalCapacity > 0 ? Math.round((totalStudentsAllocated / totalCapacity) * 100) : 0;
+  const monthlyRevenue = allocations.reduce((acc, a) => acc + (parseFloat(a.fee) || 2500), 0);
+  const activeFleetOnRoad = routes.filter(r => r.currentStatus === "on_route" || r.currentStatus === "delayed").length;
+
+  res.json({
+    success: true,
+    totalRoutes,
+    totalVehicles,
+    activeVehicles,
+    totalCapacity,
+    totalStudentsAllocated,
+    utilizationPercent,
+    monthlyRevenue,
+    activeFleetOnRoad,
+    routesSummary: routes.map(r => ({
+      id: r.id,
+      routeNumber: r.routeNumber,
+      routeName: r.routeName,
+      assignedStudentsCount: r.assignedStudentsCount || (r.assignedStudentIds || []).length,
+      currentStatus: r.currentStatus || "depot"
+    }))
+  });
+});
+
+// -------------------------------------------------------------------------
+// 9b. Routes Endpoints: GET, POST, GET/:id, PATCH, DELETE
+// -------------------------------------------------------------------------
+app.get("/api/erp/transport/routes", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { q, status } = req.query;
+
+  let routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+
+  if (status) {
+    routes = routes.filter(r => (r.currentStatus || "depot").toLowerCase() === status.toLowerCase());
+  }
+
+  if (q) {
+    const query = q.toLowerCase();
+    routes = routes.filter(r => 
+      (r.routeNumber && r.routeNumber.toLowerCase().includes(query)) ||
+      (r.routeName && r.routeName.toLowerCase().includes(query)) ||
+      (r.vehicleNumber && r.vehicleNumber.toLowerCase().includes(query)) ||
+      (r.driverName && r.driverName.toLowerCase().includes(query))
+    );
+  }
+
+  res.json({
+    success: true,
+    totalRoutes: routes.length,
+    routes
+  });
+});
+
+app.post("/api/erp/transport/routes", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const {
+    routeName,
+    name,
+    routeNumber,
+    route_no,
+    vehicleNumber,
+    vehicleId,
+    driverName,
+    driverPhone,
+    capacity = 40,
+    fee = 2500,
+    stops = []
+  } = req.body;
+
+  const finalName = (routeName || name || "").trim();
+  const finalRouteNo = (routeNumber || route_no || "").trim().toUpperCase();
+
+  if (!finalName || !finalRouteNo) {
+    return res.status(400).json({
+      success: false,
+      code: "MISSING_FIELDS",
+      message: "routeName and routeNumber are required to create a transport route."
+    });
+  }
+
+  const newId = `tr-${Date.now().toString().slice(-4)}`;
+  const routeObj = {
+    id: newId,
+    organization_id: orgId,
+    routeNumber: finalRouteNo,
+    routeName: finalName,
+    vehicleNumber: vehicleNumber || "TBD",
+    driverName: driverName || "Unassigned",
+    driverPhone: driverPhone || "",
+    capacity: parseInt(capacity, 10) || 40,
+    fee: parseFloat(fee) || 0,
+    assignedStudentsCount: 0,
+    assignedStudentIds: [],
+    currentStatus: "depot",
+    stops: Array.isArray(stops) ? stops : [],
+    liveGps: {
+      latitude: 28.4595,
+      longitude: 77.0266,
+      speedKmH: 0,
+      lastPingSecAgo: 0,
+      statusText: "At Campus Depot"
+    },
+    createdAt: new Date().toISOString()
+  };
+
+  // Persist to Supabase public.transport_routes
+  const dbRoute = await resolveOrCreateTransportRouteDb(orgId, routeObj);
+  if (dbRoute) {
+    routeObj.db_id = dbRoute.id;
+  }
+
+  ERP_TRANSPORT.push(routeObj);
+  await recordAuditLog("erp.transport_route_created", req.user?.email || "admin", "transport_route", routeObj.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Transport route created successfully",
+    route: routeObj
+  });
+});
+
+app.get("/api/erp/transport/routes/:id", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const route = ERP_TRANSPORT.find(r => 
+    (!r.organization_id || r.organization_id === orgId) && 
+    (r.id === id || r.db_id === id || r.routeNumber === id)
+  );
+
+  if (!route) {
+    return res.status(404).json({
+      success: false,
+      code: "ROUTE_NOT_FOUND",
+      message: `Transport route '${id}' not found.`
+    });
+  }
+
+  // Resolve assigned vehicle
+  const vehicle = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
+    (!v.organization_id || v.organization_id === orgId) && 
+    (v.registrationNumber === route.vehicleNumber || v.assignedRouteId === route.id || v.assignedRouteId === route.db_id)
+  );
+
+  // Resolve passengers list
+  const allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.routeId === route.id || a.routeId === route.db_id)
+  );
+
+  const passengers = allocations.map(a => {
+    const s = ERP_STUDENTS.find(std => (!std.organization_id || std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
+    return {
+      studentId: a.studentId,
+      studentName: s?.name || "Student",
+      admissionNo: s?.admissionNo || "",
+      grade: s?.grade || "",
+      section: s?.section || "",
+      pickupPoint: a.pickupPoint,
+      fee: a.fee || route.fee
+    };
+  });
+
+  res.json({
+    success: true,
+    route,
+    vehicle: vehicle || null,
+    passengers,
+    totalPassengers: passengers.length
+  });
+});
+
+app.patch("/api/erp/transport/routes/:id", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = ERP_TRANSPORT.findIndex(r => 
+    (!r.organization_id || r.organization_id === orgId) && 
+    (r.id === id || r.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({
+      success: false,
+      code: "ROUTE_NOT_FOUND",
+      message: `Transport route '${id}' not found.`
+    });
+  }
+
+  const updated = {
+    ...ERP_TRANSPORT[idx],
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  ERP_TRANSPORT[idx] = updated;
+
+  // Synchronize with Supabase if db_id exists
+  if (updated.db_id && supabase) {
+    await supabase
+      .from("transport_routes")
+      .update({
+        name: updated.routeName || updated.name,
+        route_no: updated.routeNumber || updated.route_no,
+        pickup_points: updated.stops,
+        fee: parseFloat(updated.fee || 0)
+      })
+      .eq("organization_id", orgId)
+      .eq("id", updated.db_id);
+  }
+
+  await recordAuditLog("erp.transport_route_updated", req.user?.email || "admin", "transport_route", updated.id, req);
+
+  res.json({
+    success: true,
+    message: "Transport route updated successfully",
+    route: updated
+  });
+});
+
+app.delete("/api/erp/transport/routes/:id", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = ERP_TRANSPORT.findIndex(r => 
+    (!r.organization_id || r.organization_id === orgId) && 
+    (r.id === id || r.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({
+      success: false,
+      code: "ROUTE_NOT_FOUND",
+      message: `Transport route '${id}' not found.`
+    });
+  }
+
+  const removed = ERP_TRANSPORT[idx];
+  ERP_TRANSPORT.splice(idx, 1);
+
+  await deleteTransportRouteDb(orgId, removed.db_id || removed.id);
+  await recordAuditLog("erp.transport_route_deleted", req.user?.email || "admin", "transport_route", removed.id, req);
+
+  res.json({
+    success: true,
+    message: "Transport route deleted successfully"
+  });
+});
+
+// -------------------------------------------------------------------------
+// 9c. Fleet Vehicles Endpoints: GET, POST, PATCH, DELETE
+// -------------------------------------------------------------------------
+app.get("/api/erp/transport/vehicles", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => !v.organization_id || v.organization_id === orgId);
+
+  res.json({
+    success: true,
+    totalVehicles: vehicles.length,
+    vehicles
+  });
+});
+
+app.post("/api/erp/transport/vehicles", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const {
+    registrationNumber,
+    registration_no,
+    vehicleType = "bus",
+    capacity = 40,
+    driverName,
+    driverPhone,
+    assignedRouteId,
+    isActive = true
+  } = req.body;
+
+  const finalRegNo = (registrationNumber || registration_no || "").trim().toUpperCase();
+
+  if (!finalRegNo) {
+    return res.status(400).json({
+      success: false,
+      code: "MISSING_REGISTRATION_NO",
+      message: "registrationNumber is required to onboard a fleet vehicle."
+    });
+  }
+
+  // Prevent duplicate registration numbers in tenant
+  const existingVeh = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
+    (!v.organization_id || v.organization_id === orgId) && 
+    v.registrationNumber.toUpperCase() === finalRegNo
+  );
+  if (existingVeh) {
+    return res.status(409).json({
+      success: false,
+      code: "VEHICLE_ALREADY_EXISTS",
+      message: `Vehicle with registration number '${finalRegNo}' already exists in fleet.`
+    });
+  }
+
+  const newId = `veh-${Date.now().toString().slice(-4)}`;
+  const vehObj = {
+    id: newId,
+    organization_id: orgId,
+    registrationNumber: finalRegNo,
+    vehicleType,
+    capacity: parseInt(capacity, 10) || 40,
+    driverName: driverName || "Unassigned",
+    driverPhone: driverPhone || "",
+    assignedRouteId: assignedRouteId || null,
+    isActive: isActive !== false,
+    createdAt: new Date().toISOString()
+  };
+
+  // Persist to Supabase public.vehicles
+  const dbVeh = await resolveOrCreateVehicleDb(orgId, vehObj);
+  if (dbVeh) {
+    vehObj.db_id = dbVeh.id;
+  }
+
+  ERP_VEHICLES.push(vehObj);
+  await recordAuditLog("erp.transport_vehicle_created", req.user?.email || "admin", "transport_vehicle", vehObj.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Vehicle onboarded to fleet successfully",
+    vehicle: vehObj
+  });
+});
+
+app.patch("/api/erp/transport/vehicles/:id", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).findIndex(v => 
+    (!v.organization_id || v.organization_id === orgId) && 
+    (v.id === id || v.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({
+      success: false,
+      code: "VEHICLE_NOT_FOUND",
+      message: `Vehicle '${id}' not found in fleet.`
+    });
+  }
+
+  const updated = {
+    ...ERP_VEHICLES[idx],
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  ERP_VEHICLES[idx] = updated;
+
+  if (updated.db_id && supabase) {
+    await supabase
+      .from("vehicles")
+      .update({
+        registration_no: updated.registrationNumber,
+        vehicle_type: updated.vehicleType,
+        capacity: updated.capacity,
+        driver_name: updated.driverName,
+        driver_phone: updated.driverPhone,
+        is_active: updated.isActive !== false
+      })
+      .eq("organization_id", orgId)
+      .eq("id", updated.db_id);
+  }
+
+  await recordAuditLog("erp.transport_vehicle_updated", req.user?.email || "admin", "transport_vehicle", updated.id, req);
+
+  res.json({
+    success: true,
+    message: "Vehicle details updated successfully",
+    vehicle: updated
+  });
+});
+
+app.delete("/api/erp/transport/vehicles/:id", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).findIndex(v => 
+    (!v.organization_id || v.organization_id === orgId) && 
+    (v.id === id || v.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({
+      success: false,
+      code: "VEHICLE_NOT_FOUND",
+      message: `Vehicle '${id}' not found in fleet.`
+    });
+  }
+
+  const removed = ERP_VEHICLES[idx];
+  ERP_VEHICLES.splice(idx, 1);
+
+  await deleteVehicleDb(orgId, removed.db_id || removed.id);
+  await recordAuditLog("erp.transport_vehicle_deleted", req.user?.email || "admin", "transport_vehicle", removed.id, req);
+
+  res.json({
+    success: true,
+    message: "Vehicle decommissioned from fleet successfully"
+  });
+});
+
+// -------------------------------------------------------------------------
+// 9d. Student Transport Allocation & Bus Pass
+// -------------------------------------------------------------------------
+app.get("/api/erp/transport/students", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { routeId, vehicleId, grade, section, q } = req.query;
+
+  let allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
+    !a.organization_id || a.organization_id === orgId
+  );
+
+  if (routeId) allocations = allocations.filter(a => a.routeId === routeId);
+  if (vehicleId) allocations = allocations.filter(a => a.vehicleId === vehicleId);
+
+  const results = allocations.map(a => {
+    const s = ERP_STUDENTS.find(std => (!std.organization_id || std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
+    const r = ERP_TRANSPORT.find(rt => (!rt.organization_id || rt.organization_id === orgId) && (rt.id === a.routeId || rt.db_id === a.routeId));
+    const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(vh => (!vh.organization_id || vh.organization_id === orgId) && (vh.id === a.vehicleId || vh.db_id === a.vehicleId));
+
+    return {
+      id: a.id,
+      studentId: a.studentId,
+      studentDbId: s?.db_id || null,
+      studentName: s?.name || "Student",
+      admissionNo: s?.admissionNo || "",
+      grade: s?.grade || "",
+      section: s?.section || "",
+      routeId: a.routeId,
+      routeNumber: r?.routeNumber || "",
+      routeName: r?.routeName || "",
+      vehicleId: a.vehicleId,
+      vehicleNumber: v?.registrationNumber || r?.vehicleNumber || "",
+      pickupPoint: a.pickupPoint,
+      dropPoint: a.dropPoint || a.pickupPoint,
+      fee: a.fee || r?.fee || 2500,
+      status: a.status || "active",
+      allocatedAt: a.allocatedAt
+    };
+  });
+
+  res.json({
+    success: true,
+    totalAllocations: results.length,
+    students: results
+  });
+});
+
+app.post("/api/erp/transport/students/allocate", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const {
+    studentId,
+    routeId,
+    vehicleId,
+    pickupPoint = "Main Campus Gate",
+    dropPoint,
+    fee,
+    overrideCapacity = false
+  } = req.body;
+
+  if (!studentId || !routeId) {
+    return res.status(400).json({
+      success: false,
+      code: "MISSING_FIELDS",
+      message: "studentId and routeId are required to allocate transport."
+    });
+  }
+
+  const route = ERP_TRANSPORT.find(r => 
+    (!r.organization_id || r.organization_id === orgId) && 
+    (r.id === routeId || r.db_id === routeId)
+  );
+
+  if (!route) {
+    return res.status(404).json({
+      success: false,
+      code: "ROUTE_NOT_FOUND",
+      message: `Transport route '${routeId}' not found.`
+    });
+  }
+
+  // Capacity overload validation
+  const currentAssigned = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.routeId === route.id || a.routeId === route.db_id)
+  ).length;
+
+  let warnings = [];
+  if (route.capacity && currentAssigned >= route.capacity) {
+    if (!overrideCapacity) {
+      warnings.push(`Warning: Route '${route.routeNumber}' is at full capacity (${currentAssigned}/${route.capacity}). Allocation granted under administrative override.`);
+    }
+  }
+
+  // Resolve vehicle
+  const targetVeh = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
+    (!v.organization_id || v.organization_id === orgId) && 
+    (v.id === vehicleId || v.registrationNumber === route.vehicleNumber)
+  );
+
+  const allocId = `str-${Date.now().toString().slice(-4)}`;
+  const allocObj = {
+    id: allocId,
+    organization_id: orgId,
+    studentId,
+    routeId: route.id,
+    vehicleId: targetVeh ? targetVeh.id : null,
+    pickupPoint,
+    dropPoint: dropPoint || pickupPoint,
+    fee: fee !== undefined ? parseFloat(fee) : (route.fee || 2500),
+    status: "active",
+    allocatedAt: new Date().toISOString()
+  };
+
+  // Upsert into Supabase public.student_transport
+  const dbAlloc = await recordStudentTransportAllocationDb(
+    orgId,
+    studentId,
+    route.db_id || route.id,
+    targetVeh?.db_id || targetVeh?.id,
+    pickupPoint
+  );
+
+  if (dbAlloc) {
+    allocObj.db_id = dbAlloc.student_id;
+  }
+
+  // Update in-memory collections
+  const existIdx = ERP_STUDENT_TRANSPORT.findIndex(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.studentId === studentId)
+  );
+  if (existIdx !== -1) {
+    ERP_STUDENT_TRANSPORT[existIdx] = allocObj;
+  } else {
+    ERP_STUDENT_TRANSPORT.push(allocObj);
+  }
+
+  // Update assigned student IDs on route
+  if (!route.assignedStudentIds) route.assignedStudentIds = [];
+  if (!route.assignedStudentIds.includes(studentId)) {
+    route.assignedStudentIds.push(studentId);
+    route.assignedStudentsCount = route.assignedStudentIds.length;
+  }
+
+  await recordAuditLog("erp.transport_student_allocated", req.user?.email || "admin", "student_transport", studentId, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Student allocated to transport successfully",
+    allocation: allocObj,
+    warnings: warnings.length > 0 ? warnings : undefined
+  });
+});
+
+app.delete("/api/erp/transport/students/:studentId", requireAuth, async (req, res) => {
+  if (!checkTransportAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { studentId } = req.params;
+
+  const idx = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).findIndex(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.studentId === studentId)
+  );
+
+  if (idx !== -1) {
+    const alloc = ERP_STUDENT_TRANSPORT[idx];
+    ERP_STUDENT_TRANSPORT.splice(idx, 1);
+
+    // Decrement route assigned count
+    const r = ERP_TRANSPORT.find(rt => rt.id === alloc.routeId || rt.db_id === alloc.routeId);
+    if (r && r.assignedStudentIds) {
+      r.assignedStudentIds = r.assignedStudentIds.filter(id => id !== studentId);
+      r.assignedStudentsCount = r.assignedStudentIds.length;
+    }
+  }
+
+  await deleteStudentTransportDb(orgId, studentId);
+  await recordAuditLog("erp.transport_student_deallocated", req.user?.email || "admin", "student_transport", studentId, req);
+
+  res.json({
+    success: true,
+    message: "Student transport allocation removed successfully"
+  });
+});
+
+app.get("/api/erp/transport/students/:studentId/pass", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { studentId } = req.params;
+
+  const alloc = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).find(a => 
+    (!a.organization_id || a.organization_id === orgId) && 
+    (a.studentId === studentId)
+  );
+
+  const student = ERP_STUDENTS.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === studentId || s.db_id === studentId || s.admissionNo === studentId)
+  );
+
+  if (!alloc && !student) {
+    return res.status(404).json({
+      success: false,
+      code: "PASS_NOT_FOUND",
+      message: `No transport pass found for student '${studentId}'.`
+    });
+  }
+
+  const route = alloc ? ERP_TRANSPORT.find(r => r.id === alloc.routeId || r.db_id === alloc.routeId) : ERP_TRANSPORT[0];
+  const vehicle = route ? (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => v.registrationNumber === route.vehicleNumber || v.id === alloc?.vehicleId) : null;
+
+  const passNumber = `BUSPASS-2026-${(student?.admissionNo || studentId).replace(/\D/g, '') || '01'}`;
+
+  res.json({
+    success: true,
+    pass: {
+      passNumber,
+      academicSession: "2026-27",
+      issueDate: "2026-04-01",
+      validUntil: "2027-03-31",
+      student: {
+        id: student?.id || studentId,
+        name: student?.name || "Student",
+        admissionNo: student?.admissionNo || "ADM-2026-01",
+        grade: student?.grade || "Class 10",
+        section: student?.section || "A",
+        photoUrl: student?.avatarUrl || "https://images.unsplash.com/photo-1544717305-2782549b5136?w=150"
+      },
+      transport: {
+        routeNumber: route?.routeNumber || "BUS-04",
+        routeName: route?.routeName || "Campus Express",
+        pickupPoint: alloc?.pickupPoint || "Designated Stop",
+        dropPoint: alloc?.dropPoint || alloc?.pickupPoint || "Designated Stop",
+        vehicleNumber: vehicle?.registrationNumber || route?.vehicleNumber || "HR 26 DQ 8890",
+        driverName: vehicle?.driverName || route?.driverName || "Fleet Driver",
+        driverPhone: vehicle?.driverPhone || route?.driverPhone || "+91 98100 00555"
+      },
+      verificationQr: `https://dakshora.co.in/verify/pass/${passNumber}`,
+      emergencyContact: "+91 11 2613 8900"
+    }
+  });
+});
+
+// -------------------------------------------------------------------------
+// 9e. Live Fleet GPS Tracking & Telematics Telemetry
+// -------------------------------------------------------------------------
+app.get("/api/erp/transport/tracking", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+
+  const fleetLocations = routes.map(r => ({
+    routeId: r.id,
+    routeNumber: r.routeNumber,
+    routeName: r.routeName,
+    vehicleNumber: r.vehicleNumber,
+    driverName: r.driverName,
+    driverPhone: r.driverPhone,
+    status: r.currentStatus || "depot",
+    latitude: r.liveGps?.latitude || 28.4595,
+    longitude: r.liveGps?.longitude || 77.0266,
+    speedKmH: r.liveGps?.speedKmH || 0,
+    statusText: r.liveGps?.statusText || "Depot Staged",
+    lastPingSecAgo: r.liveGps?.lastPingSecAgo || 5
+  }));
+
+  res.json({
+    success: true,
+    totalBusesTracking: fleetLocations.length,
+    fleet: fleetLocations
+  });
+});
+
+app.post("/api/erp/transport/tracking/ping", requireAuth, (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { routeId, vehicleNumber, latitude, longitude, speedKmH, statusText, status } = req.body;
+
+  const route = ERP_TRANSPORT.find(r => 
+    (!r.organization_id || r.organization_id === orgId) && 
+    (r.id === routeId || r.routeNumber === routeId || r.vehicleNumber === vehicleNumber)
+  );
+
+  if (!route) {
+    return res.status(404).json({
+      success: false,
+      code: "ROUTE_NOT_FOUND",
+      message: "Target vehicle or route not found for telemetry ping."
+    });
+  }
+
+  route.liveGps = {
+    latitude: parseFloat(latitude) || route.liveGps.latitude,
+    longitude: parseFloat(longitude) || route.liveGps.longitude,
+    speedKmH: speedKmH !== undefined ? parseFloat(speedKmH) : route.liveGps.speedKmH,
+    lastPingSecAgo: 1,
+    statusText: statusText || route.liveGps.statusText
+  };
+
+  if (status) {
+    route.currentStatus = status;
+  }
+
+  res.json({
+    success: true,
+    message: "Telemetry ping ingested successfully",
+    liveGps: route.liveGps,
+    currentStatus: route.currentStatus
+  });
+});
+
+// -------------------------------------------------------------------------
+// 9f. Legacy Transport Endpoint (Backwards-Compatible)
+// -------------------------------------------------------------------------
 app.get("/api/erp/transport", (req, res) => {
-  res.json({ success: true, routes: ERP_TRANSPORT });
+  const orgId = resolveTenantOrgId(req);
+  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  res.json({ success: true, routes });
 });
 
 // =========================================================================
