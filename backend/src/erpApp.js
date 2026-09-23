@@ -14913,7 +14913,216 @@ app.post("/api/erp/admissions/:id/convert-to-student", handleConfirmAdmission);
 
 // =========================================================================
 // 📢 8. COMMUNICATION & NOTIFICATION REST API SUITE (Production SaaS Grade)
+// Live Supabase PostgreSQL Persistence (public.notices, public.notifications)
 // =========================================================================
+
+// Helper: Enforce School Administrator or Teacher Role for Communication Broadcasts
+function checkCommunicationAdminPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "teacher", "communications_incharge", "staff"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School administrative or academic staff role required to manage communications or broadcast circulars."
+    });
+    return false;
+  }
+  return true;
+}
+
+// Helper: Persist notice into Supabase public.notices
+async function recordNoticeDb(orgId, noticeData, createdByUserId) {
+  if (!noticeData || !supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const title = (noticeData.title || "").trim();
+  const body = (noticeData.body || noticeData.content || noticeData.title || "").trim();
+  const rawAudience = noticeData.audience || noticeData.targetAudience || noticeData.audienceType || "all";
+  const audience = Array.isArray(rawAudience) ? rawAudience : [String(rawAudience)];
+  const isPublished = noticeData.status === 'published';
+  const publishedAt = noticeData.publishAt || noticeData.published_at || (isPublished ? new Date().toISOString() : null);
+  const expiresAt = noticeData.expiresAt || noticeData.expires_at || null;
+  const validCreatedBy = createdByUserId && isUuid.test(createdByUserId) ? createdByUserId : null;
+
+  try {
+    const payload = {
+      organization_id: orgId,
+      title,
+      body,
+      audience,
+      published_at: publishedAt,
+      expires_at: expiresAt,
+      created_by: validCreatedBy
+    };
+    if (noticeData.id && isUuid.test(noticeData.id)) {
+      payload.id = noticeData.id;
+    }
+    const { data, error } = await supabase
+      .from("notices")
+      .insert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn(`[Supabase Notices] Notice insert error: ${error.message}`);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[Supabase Notices] Unexpected error inserting notice: ${err.message}`);
+    return null;
+  }
+}
+
+// Helper: Update notice in Supabase public.notices
+async function updateNoticeDb(orgId, noticeDbId, updateData) {
+  if (!noticeDbId || !supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!isUuid.test(noticeDbId)) return null;
+
+  try {
+    const payload = {};
+    if (updateData.title !== undefined) payload.title = updateData.title.trim();
+    if (updateData.body !== undefined || updateData.content !== undefined) {
+      payload.body = (updateData.body || updateData.content).trim();
+    }
+    if (updateData.audience !== undefined || updateData.targetAudience !== undefined) {
+      const rawAud = updateData.audience || updateData.targetAudience;
+      payload.audience = Array.isArray(rawAud) ? rawAud : [String(rawAud)];
+    }
+    if (updateData.publishAt !== undefined || updateData.published_at !== undefined) {
+      payload.published_at = updateData.publishAt || updateData.published_at;
+    }
+    if (updateData.expiresAt !== undefined || updateData.expires_at !== undefined) {
+      payload.expires_at = updateData.expiresAt || updateData.expires_at;
+    }
+
+    const { data, error } = await supabase
+      .from("notices")
+      .update(payload)
+      .eq("organization_id", orgId)
+      .eq("id", noticeDbId)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn(`[Supabase Notices] Notice update error: ${error.message}`);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[Supabase Notices] Unexpected error updating notice: ${err.message}`);
+    return null;
+  }
+}
+
+// Helper: Delete notice from Supabase public.notices
+async function deleteNoticeDb(orgId, noticeDbId) {
+  if (!noticeDbId || !supabase) return false;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!isUuid.test(noticeDbId)) return false;
+
+  try {
+    const { error } = await supabase
+      .from("notices")
+      .delete()
+      .eq("organization_id", orgId)
+      .eq("id", noticeDbId);
+
+    if (error) {
+      console.warn(`[Supabase Notices] Notice delete error: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[Supabase Notices] Unexpected error deleting notice: ${err.message}`);
+    return false;
+  }
+}
+
+// Helper: Insert in-app notification into Supabase public.notifications
+async function recordNotificationDb(orgId, notifData) {
+  if (!notifData || !supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const rawUserId = notifData.userId || notifData.user_id || notifData.recipientUserId;
+  if (!rawUserId || !isUuid.test(rawUserId)) {
+    return null; // foreign key requires valid auth.users(id)
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert({
+        organization_id: orgId,
+        user_id: rawUserId,
+        title: (notifData.title || "Notification").trim(),
+        body: (notifData.body || notifData.message || "").trim(),
+        type: notifData.type || notifData.notificationType || "general",
+        read_at: notifData.readAt || notifData.read_at || null
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.warn(`[Supabase Notifications] Notification insert error: ${error.message}`);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn(`[Supabase Notifications] Unexpected error inserting notification: ${err.message}`);
+    return null;
+  }
+}
+
+// Helper: Mark in-app notification read in Supabase public.notifications
+async function markNotificationReadDb(orgId, notifDbId, userId) {
+  if (!notifDbId || !supabase) return false;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!isUuid.test(notifDbId)) return false;
+
+  try {
+    let query = supabase
+      .from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .eq("organization_id", orgId)
+      .eq("id", notifDbId);
+    if (userId && isUuid.test(userId)) {
+      query = query.eq("user_id", userId);
+    }
+    const { error } = await query;
+    if (error) {
+      console.warn(`[Supabase Notifications] Mark read error: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[Supabase Notifications] Unexpected error marking read: ${err.message}`);
+    return false;
+  }
+}
+
+// Helper: Delete notification from Supabase public.notifications
+async function deleteNotificationDb(orgId, notifDbId) {
+  if (!notifDbId || !supabase) return false;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!isUuid.test(notifDbId)) return false;
+
+  try {
+    const { error } = await supabase
+      .from("notifications")
+      .delete()
+      .eq("organization_id", orgId)
+      .eq("id", notifDbId);
+
+    if (error) {
+      console.warn(`[Supabase Notifications] Delete notification error: ${error.message}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
 
 // 8a. GET /api/erp/communication/overview - Server-side aggregate metrics
 app.get("/api/erp/communication/overview", (req, res) => {
@@ -14982,10 +15191,47 @@ app.get("/api/erp/communication/overview", (req, res) => {
 });
 
 // 8b. Notices Endpoints
-app.get("/api/erp/communication/notices", (req, res) => {
+app.get("/api/erp/communication/notices", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, priority, status, search, audienceType } = req.query;
   let notices = ERP_NOTICES.filter(n => !n.organization_id || n.organization_id === orgId);
+
+  // Synchronize live notices from Supabase PostgreSQL if table has records
+  if (supabase) {
+    try {
+      const { data: dbNotices } = await supabase
+        .from("notices")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false });
+
+      if (dbNotices && dbNotices.length > 0) {
+        dbNotices.forEach(dbN => {
+          const exists = notices.find(n => n.db_id === dbN.id || n.id === dbN.id);
+          if (!exists) {
+            notices.unshift({
+              id: dbN.id,
+              db_id: dbN.id,
+              title: dbN.title,
+              content: dbN.body,
+              body: dbN.body,
+              category: 'general',
+              priority: 'normal',
+              targetAudience: Array.isArray(dbN.audience) && dbN.audience.length > 0 ? dbN.audience[0] : 'all',
+              status: dbN.published_at ? 'published' : 'draft',
+              publishAt: dbN.published_at,
+              expiresAt: dbN.expires_at,
+              organization_id: orgId,
+              createdAt: dbN.created_at,
+              updatedAt: dbN.created_at
+            });
+          }
+        });
+      }
+    } catch (e) {
+      // Continue with in-memory notices on query error
+    }
+  }
 
   if (category && category !== 'all') notices = notices.filter(n => n.category === category);
   if (priority && priority !== 'all') notices = notices.filter(n => n.priority === priority);
@@ -15000,13 +15246,14 @@ app.get("/api/erp/communication/notices", (req, res) => {
 
   res.json({
     success: true,
-    total: ERP_NOTICES.filter(n => !n.organization_id || n.organization_id === orgId).length,
+    total: notices.length,
     count: notices.length,
     notices
   });
 });
 
-app.post("/api/erp/communication/notices", (req, res) => {
+app.post("/api/erp/communication/notices", async (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const {
     title,
@@ -15053,11 +15300,17 @@ app.post("/api/erp/communication/notices", (req, res) => {
     updatedAt: nowStr
   };
 
+  // Real database persistence into Supabase public.notices
+  const dbNotice = await recordNoticeDb(orgId, noticeRecord, req.user?.id);
+  if (dbNotice) {
+    noticeRecord.db_id = dbNotice.id;
+  }
+
   ERP_NOTICES.unshift(noticeRecord);
 
   // If published, trigger in-app notification to audience
   if (noticeRecord.status === 'published') {
-    ERP_NOTIFICATIONS.unshift({
+    const notifObj = {
       id: `notif-${Date.now().toString().slice(-4)}`,
       recipientUserId: 'all',
       recipientRole: targetAudience === 'parents' ? 'parent' : targetAudience === 'students' ? 'student' : targetAudience === 'teachers' ? 'teacher' : 'all',
@@ -15065,17 +15318,21 @@ app.post("/api/erp/communication/notices", (req, res) => {
       message: noticeRecord.content,
       notificationType: 'notice',
       relatedEntityType: 'notice',
-      relatedEntityId: noticeId,
+      relatedEntityId: noticeRecord.db_id || noticeId,
       priority,
       readAt: null,
       createdAt: nowStr,
       organization_id: orgId
-    });
+    };
+    ERP_NOTIFICATIONS.unshift(notifObj);
+    if (req.user?.id) {
+      await recordNotificationDb(orgId, notifObj);
+    }
   }
 
-  recordAuditLog("erp.notice_created", req.user?.email || "principal@dpsheritage.edu.in", "notice", noticeId, req);
+  recordAuditLog("erp.notice_created", req.user?.email || "principal@dpsheritage.edu.in", "notice", noticeRecord.db_id || noticeId, req);
 
-  res.json({
+  res.status(201).json({
     success: true,
     message: "Circular created successfully! 📢",
     notice: noticeRecord
@@ -15084,30 +15341,38 @@ app.post("/api/erp/communication/notices", (req, res) => {
 
 app.get("/api/erp/communication/notices/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && n.id === req.params.id);
+  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
   res.json({ success: true, notice });
 });
 
-app.patch("/api/erp/communication/notices/:id", (req, res) => {
+app.patch("/api/erp/communication/notices/:id", async (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && n.id === req.params.id);
+  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
 
   const updates = req.body;
   Object.assign(notice, updates, { updatedAt: new Date().toISOString() });
-  recordAuditLog("erp.notice_updated", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+
+  // Sync update to Supabase public.notices
+  if (notice.db_id || req.params.id) {
+    await updateNoticeDb(orgId, notice.db_id || req.params.id, updates);
+  }
+
+  recordAuditLog("erp.notice_updated", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.db_id || notice.id, req);
 
   res.json({ success: true, message: "Notice updated successfully", notice });
 });
 
-app.post("/api/erp/communication/notices/:id/publish", (req, res) => {
+app.post("/api/erp/communication/notices/:id/publish", async (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && n.id === req.params.id);
+  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
@@ -15116,8 +15381,13 @@ app.post("/api/erp/communication/notices/:id/publish", (req, res) => {
   notice.publishAt = new Date().toISOString();
   notice.updatedAt = new Date().toISOString();
 
+  // Sync published status to Supabase public.notices
+  if (notice.db_id || req.params.id) {
+    await updateNoticeDb(orgId, notice.db_id || req.params.id, { publishAt: notice.publishAt });
+  }
+
   // Create in-app notification
-  ERP_NOTIFICATIONS.unshift({
+  const notifObj = {
     id: `notif-${Date.now().toString().slice(-4)}`,
     recipientUserId: 'all',
     recipientRole: 'all',
@@ -15125,30 +15395,54 @@ app.post("/api/erp/communication/notices/:id/publish", (req, res) => {
     message: notice.content,
     notificationType: 'notice',
     relatedEntityType: 'notice',
-    relatedEntityId: notice.id,
+    relatedEntityId: notice.db_id || notice.id,
     priority: notice.priority || 'normal',
     readAt: null,
     createdAt: new Date().toISOString(),
     organization_id: orgId
-  });
+  };
+  ERP_NOTIFICATIONS.unshift(notifObj);
+  if (req.user?.id) {
+    await recordNotificationDb(orgId, notifObj);
+  }
 
-  recordAuditLog("erp.notice_published", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+  recordAuditLog("erp.notice_published", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.db_id || notice.id, req);
 
   res.json({ success: true, message: "Circular published to campus! 📢", notice });
 });
 
 app.post("/api/erp/communication/notices/:id/archive", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && n.id === req.params.id);
+  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
 
   notice.status = 'archived';
   notice.updatedAt = new Date().toISOString();
-  recordAuditLog("erp.notice_archived", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.id, req);
+  recordAuditLog("erp.notice_archived", req.user?.email || "principal@dpsheritage.edu.in", "notice", notice.db_id || notice.id, req);
 
   res.json({ success: true, message: "Notice archived", notice });
+});
+
+// DELETE /api/erp/communication/notices/:id - Delete Notice & PostgreSQL Cleanup
+app.delete("/api/erp/communication/notices/:id", async (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const index = ERP_NOTICES.findIndex(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  
+  let targetNotice = null;
+  if (index !== -1) {
+    targetNotice = ERP_NOTICES[index];
+    ERP_NOTICES.splice(index, 1);
+  }
+
+  // Purge from Supabase public.notices
+  const targetDbId = targetNotice?.db_id || req.params.id;
+  await deleteNoticeDb(orgId, targetDbId);
+
+  res.json({ success: true, message: "Notice deleted successfully" });
 });
 
 // 8c. POST /api/erp/communication/audience/preview - Server-side Audience Calculation
@@ -15192,6 +15486,7 @@ app.get("/api/erp/communication/messages", (req, res) => {
 });
 
 app.post("/api/erp/communication/messages", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const {
     title,
@@ -15234,7 +15529,7 @@ app.post("/api/erp/communication/messages", (req, res) => {
     req
   );
 
-  res.json({
+  res.status(201).json({
     success: true,
     message: scheduledAt ? "Message scheduled successfully! ⏱️" : `Message dispatched to ${result.recipientCount} recipients! 🚀`,
     messageRecord: result.message,
@@ -15261,6 +15556,7 @@ app.get("/api/erp/communication/messages/:id", (req, res) => {
 });
 
 app.post("/api/erp/communication/messages/:id/send", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const message = ERP_COMMUNICATION_MESSAGES.find(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
   if (!message) {
@@ -15302,6 +15598,7 @@ app.post("/api/erp/communication/messages/:id/send", (req, res) => {
 });
 
 app.post("/api/erp/communication/messages/:id/cancel", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const message = ERP_COMMUNICATION_MESSAGES.find(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
   if (!message) {
@@ -15313,6 +15610,22 @@ app.post("/api/erp/communication/messages/:id/cancel", (req, res) => {
   recordAuditLog("erp.message_cancelled", req.user?.email || "principal@dpsheritage.edu.in", "message", message.id, req);
 
   res.json({ success: true, message: "Scheduled message cancelled", messageRecord: message });
+});
+
+// DELETE /api/erp/communication/messages/:id - Teardown message & deliveries
+app.delete("/api/erp/communication/messages/:id", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const mIdx = ERP_COMMUNICATION_MESSAGES.findIndex(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
+  if (mIdx !== -1) {
+    ERP_COMMUNICATION_MESSAGES.splice(mIdx, 1);
+  }
+  for (let i = ERP_MESSAGE_DELIVERIES.length - 1; i >= 0; i--) {
+    if (ERP_MESSAGE_DELIVERIES[i].messageId === req.params.id) {
+      ERP_MESSAGE_DELIVERIES.splice(i, 1);
+    }
+  }
+  res.json({ success: true, message: "Message deleted" });
 });
 
 // 8e. Templates Endpoints
@@ -15332,6 +15645,7 @@ app.get("/api/erp/communication/templates", (req, res) => {
 });
 
 app.post("/api/erp/communication/templates", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { code, name, category = 'general', channel = 'all', subject, body, variables = [] } = req.body;
 
@@ -15363,7 +15677,7 @@ app.post("/api/erp/communication/templates", (req, res) => {
   ERP_MESSAGE_TEMPLATES.push(newTpl);
   recordAuditLog("erp.template_created", req.user?.email || "principal@dpsheritage.edu.in", "template", newTpl.id, req);
 
-  res.json({ success: true, message: "Template created successfully", template: newTpl });
+  res.status(201).json({ success: true, message: "Template created successfully", template: newTpl });
 });
 
 app.get("/api/erp/communication/templates/:id", (req, res) => {
@@ -15376,6 +15690,7 @@ app.get("/api/erp/communication/templates/:id", (req, res) => {
 });
 
 app.patch("/api/erp/communication/templates/:id", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const template = ERP_MESSAGE_TEMPLATES.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
   if (!template) {
@@ -15384,6 +15699,17 @@ app.patch("/api/erp/communication/templates/:id", (req, res) => {
 
   Object.assign(template, req.body, { updatedAt: new Date().toISOString() });
   res.json({ success: true, message: "Template updated", template });
+});
+
+// DELETE /api/erp/communication/templates/:id - Teardown template
+app.delete("/api/erp/communication/templates/:id", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const tIdx = ERP_MESSAGE_TEMPLATES.findIndex(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
+  if (tIdx !== -1) {
+    ERP_MESSAGE_TEMPLATES.splice(tIdx, 1);
+  }
+  res.json({ success: true, message: "Template deleted" });
 });
 
 app.post("/api/erp/communication/templates/:id/preview", (req, res) => {
@@ -15476,23 +15802,56 @@ app.get("/api/erp/communication/delivery-logs", (req, res) => {
 });
 
 // 8h. In-App Notifications Endpoints
-app.get("/api/erp/communication/notifications", (req, res) => {
+app.get("/api/erp/communication/notifications", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const role = req.user?.role || req.query.role || "school-admin";
   const { status, type, limit } = req.query;
 
   let notifications = ERP_NOTIFICATIONS.filter(n => {
     if (n.organization_id && n.organization_id !== orgId) return false;
-    if (role === 'admin') return true; // Admin sees all tenant notifications
-    return n.recipientRole === role || n.recipientRole === 'all' || n.recipientUserId === role;
+    if (role === 'admin' || role === 'superadmin' || role === 'school-admin') return true;
+    return n.recipientRole === role || n.recipientRole === 'all' || n.recipientUserId === role || n.recipientUserId === req.user?.id;
   });
+
+  // Include any notifications from Supabase public.notifications
+  if (supabase && req.user?.id) {
+    try {
+      const { data: dbNotifs } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("user_id", req.user.id)
+        .order("created_at", { ascending: false });
+
+      if (dbNotifs && dbNotifs.length > 0) {
+        dbNotifs.forEach(dbN => {
+          const exists = notifications.find(n => n.db_id === dbN.id || n.id === dbN.id);
+          if (!exists) {
+            notifications.unshift({
+              id: dbN.id,
+              db_id: dbN.id,
+              recipientUserId: dbN.user_id,
+              recipientRole: 'user',
+              title: dbN.title,
+              message: dbN.body,
+              notificationType: dbN.type || 'general',
+              priority: 'normal',
+              readAt: dbN.read_at,
+              createdAt: dbN.created_at,
+              organization_id: orgId
+            });
+          }
+        });
+      }
+    } catch (e) {}
+  }
 
   if (status === 'unread') notifications = notifications.filter(n => !n.readAt);
   if (status === 'read') notifications = notifications.filter(n => Boolean(n.readAt));
   if (type && type !== 'all') notifications = notifications.filter(n => n.notificationType === type);
 
   notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const unreadCount = ERP_NOTIFICATIONS.filter(n => (!n.organization_id || n.organization_id === orgId) && !n.readAt).length;
+  const unreadCount = notifications.filter(n => !n.readAt).length;
 
   const finalLimit = limit ? parseInt(limit, 10) : 50;
   res.json({
@@ -15504,14 +15863,18 @@ app.get("/api/erp/communication/notifications", (req, res) => {
   });
 });
 
-app.patch("/api/erp/communication/notifications/:id/read", (req, res) => {
+app.patch("/api/erp/communication/notifications/:id/read", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const notif = ERP_NOTIFICATIONS.find(n => (!n.organization_id || n.organization_id === orgId) && n.id === req.params.id);
+  const notif = ERP_NOTIFICATIONS.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notif) {
     return res.status(404).json({ success: false, message: "Notification not found" });
   }
 
   notif.readAt = new Date().toISOString();
+  if (notif.db_id || req.params.id) {
+    await markNotificationReadDb(orgId, notif.db_id || req.params.id, req.user?.id);
+  }
+
   const unreadCount = ERP_NOTIFICATIONS.filter(n => (!n.organization_id || n.organization_id === orgId) && !n.readAt).length;
 
   res.json({ success: true, message: "Notification marked as read", notification: notif, unreadCount });
@@ -15524,7 +15887,7 @@ app.post("/api/erp/communication/notifications/read-all", (req, res) => {
 
   ERP_NOTIFICATIONS.forEach(n => {
     if (!n.organization_id || n.organization_id === orgId) {
-      if (role === 'admin' || n.recipientRole === role || n.recipientRole === 'all') {
+      if (role === 'admin' || role === 'superadmin' || n.recipientRole === role || n.recipientRole === 'all' || n.recipientUserId === req.user?.id) {
         if (!n.readAt) {
           n.readAt = new Date().toISOString();
           count++;
@@ -15536,6 +15899,17 @@ app.post("/api/erp/communication/notifications/read-all", (req, res) => {
   res.json({ success: true, message: `Marked ${count} notifications as read`, markedCount: count, unreadCount: 0 });
 });
 
+// DELETE /api/erp/communication/notifications/:id - Teardown notification
+app.delete("/api/erp/communication/notifications/:id", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const idx = ERP_NOTIFICATIONS.findIndex(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  if (idx !== -1) {
+    ERP_NOTIFICATIONS.splice(idx, 1);
+  }
+  await deleteNotificationDb(orgId, req.params.id);
+  res.json({ success: true, message: "Notification deleted" });
+});
+
 // 8i. Settings & Preferences Endpoints
 app.get("/api/erp/communication/settings", (req, res) => {
   const orgId = resolveTenantOrgId(req);
@@ -15544,6 +15918,7 @@ app.get("/api/erp/communication/settings", (req, res) => {
 });
 
 app.patch("/api/erp/communication/settings", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   if (!ERP_COMMUNICATION_SETTINGS[orgId]) {
     ERP_COMMUNICATION_SETTINGS[orgId] = { organization_id: orgId };
@@ -15586,8 +15961,9 @@ app.patch("/api/erp/communication/preferences", (req, res) => {
   res.json({ success: true, message: "Preferences updated", preferences: pref });
 });
 
-// 8j. Event Trigger API (for external or integration test triggering)
+// 8j. Event Trigger API (for automated triggers or integration tests)
 app.post("/api/erp/communication/events/trigger", (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { eventType, payload } = req.body;
 
@@ -15611,7 +15987,8 @@ app.get("/api/erp/communication", (req, res) => {
   res.json({ success: true, notices });
 });
 
-app.post("/api/erp/communication", (req, res) => {
+app.post("/api/erp/communication", async (req, res) => {
+  if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const newNotice = {
     id: `not-${Date.now().toString().slice(-4)}`,
@@ -15627,9 +16004,14 @@ app.post("/api/erp/communication", (req, res) => {
     createdAt: new Date().toISOString(),
     ...req.body
   };
+  const dbNotice = await recordNoticeDb(orgId, newNotice, req.user?.id);
+  if (dbNotice) {
+    newNotice.db_id = dbNotice.id;
+  }
   ERP_NOTICES.unshift(newNotice);
   res.json({ success: true, message: "Notice broadcasted successfully", notice: newNotice });
 });
+
 
 // =========================================================================
 // 🚌 SECTION 9: ENTERPRISE STUDENT TRANSPORT & FLEET MANAGEMENT SUITE
