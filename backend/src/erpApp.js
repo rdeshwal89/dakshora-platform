@@ -21218,10 +21218,136 @@ app.post("/api/erp/ai/knowledge-base/query", (req, res) => {
 });
 
 // =========================================================================
-// 🤖 PHASE 13: DAKSHORA ROBOTICS & STEAM ACADEMY MODULE
+// 🤖 13. ATAL TINKERING LAB (ATL) & HARDWARE KITS INVENTORY ENGINE (Production Multi-Tenant)
 // =========================================================================
 
-let IN_MEMORY_ROBOTICS_COURSES = [
+// Helper: Enforce Administrative or STEM Faculty Role for Robotics Hardware & Lab Inventory
+function checkRoboticsAdminPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "stem_coordinator", "lab_incharge", "teacher", "faculty", "staff"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School STEM coordinator, lab in-charge, or administrative faculty privilege required for robotics inventory management."
+    });
+    return false;
+  }
+  return true;
+}
+
+let ERP_ROBOTICS_INVENTORY = [
+  {
+    id: "kit-01",
+    kitCode: "ATL-MCU-01",
+    name: "Arduino Uno R4 WiFi Maker Kit",
+    category: "Microcontrollers",
+    totalQty: 40,
+    availableQty: 32,
+    issuedQty: 8,
+    location: "Cabinet A-1",
+    condition: "Excellent",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "kit-02",
+    kitCode: "ATL-SBC-02",
+    name: "Raspberry Pi 4 (4GB) AI Lab Kit",
+    category: "Single Board Computers",
+    totalQty: 25,
+    availableQty: 18,
+    issuedQty: 7,
+    location: "Cabinet A-2",
+    condition: "Good",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "kit-03",
+    kitCode: "ATL-FAB-03",
+    name: "Creality Ender-3 V3 3D Printer",
+    category: "Rapid Prototyping",
+    totalQty: 4,
+    availableQty: 4,
+    issuedQty: 0,
+    location: "Fab Lab Zone",
+    condition: "Active",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "kit-04",
+    kitCode: "ATL-AVN-04",
+    name: "Quadcopter Drone Assembly Kit",
+    category: "Avionics & Flight",
+    totalQty: 12,
+    availableQty: 9,
+    issuedQty: 3,
+    location: "Cabinet B-3",
+    condition: "Good",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "kit-05",
+    kitCode: "ATL-SEN-05",
+    name: "Ultrasonic & LiDAR Sensor Pack",
+    category: "Sensors & Actuators",
+    totalQty: 60,
+    availableQty: 54,
+    issuedQty: 6,
+    location: "Component Bin 04",
+    condition: "New",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "kit-06",
+    kitCode: "ATL-MOT-06",
+    name: "Dual H-Bridge Motor Drivers (L298N)",
+    category: "Motor Drivers",
+    totalQty: 50,
+    availableQty: 42,
+    issuedQty: 8,
+    location: "Component Bin 07",
+    condition: "Good",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  }
+];
+const IN_MEMORY_ROBOTICS_INVENTORY = ERP_ROBOTICS_INVENTORY;
+
+let ERP_ROBOTICS_LOANS = [
+  {
+    id: "loan-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    kitId: "kit-01",
+    kitCode: "ATL-MCU-01",
+    kitName: "Arduino Uno R4 WiFi Maker Kit",
+    studentId: "std-101",
+    studentName: "Aarav Sharma",
+    grade: "Class 10-A",
+    issuedBy: "Sunita Chawla (Robotics Lead)",
+    issuedDate: "2026-09-10T10:00:00.000Z",
+    dueDate: "2026-09-24T17:00:00.000Z",
+    returnedDate: null,
+    conditionOnReturn: null,
+    status: "issued"
+  },
+  {
+    id: "loan-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    kitId: "kit-02",
+    kitCode: "ATL-SBC-02",
+    kitName: "Raspberry Pi 4 (4GB) AI Lab Kit",
+    studentId: "std-102",
+    studentName: "Ananya Verma",
+    grade: "Class 10-A",
+    issuedBy: "Sunita Chawla (Robotics Lead)",
+    issuedDate: "2026-09-12T11:30:00.000Z",
+    dueDate: "2026-09-26T17:00:00.000Z",
+    returnedDate: null,
+    conditionOnReturn: null,
+    status: "issued"
+  }
+];
+
+let ERP_ROBOTICS_COURSES = [
   {
     id: "rob-crs-01",
     gradeRange: "Class 3-5 (Foundational)",
@@ -21275,21 +21401,15 @@ let IN_MEMORY_ROBOTICS_COURSES = [
     description: "3D CAD modeling on Autodesk Fusion 360, slicing for 3D printers, drone telemetry, and deep learning image classification at the edge."
   }
 ];
+const IN_MEMORY_ROBOTICS_COURSES = ERP_ROBOTICS_COURSES;
 
-let IN_MEMORY_ROBOTICS_INVENTORY = [
-  { id: "kit-01", name: "Arduino Uno R4 Maker Kit", category: "Microcontrollers", totalQty: 40, availableQty: 32, location: "Cabinet A-1", condition: "Excellent" },
-  { id: "kit-02", name: "Raspberry Pi 4 (4GB) AI Lab Kit", category: "Single Board Computers", totalQty: 25, availableQty: 18, location: "Cabinet A-2", condition: "Good" },
-  { id: "kit-03", name: "Creality Ender-3 V3 3D Printer", category: "Rapid Prototyping", totalQty: 4, availableQty: 4, location: "Fab Lab Zone", condition: "Active" },
-  { id: "kit-04", name: "Quadcopter Drone Assembly Kit", category: "Avionics & Flight", totalQty: 12, availableQty: 9, location: "Cabinet B-3", condition: "Good" },
-  { id: "kit-05", name: "Ultrasonic & LiDAR Sensor Pack", category: "Sensors & Actuators", totalQty: 60, availableQty: 54, location: "Component Bin 04", condition: "New" },
-  { id: "kit-06", name: "Dual H-Bridge Motor Drivers (L298N)", category: "Motor Drivers", totalQty: 50, availableQty: 42, location: "Component Bin 07", condition: "Good" }
-];
-
-let IN_MEMORY_ROBOTICS_PROJECTS = [
+let ERP_ROBOTICS_PROJECTS = [
   {
     id: "prj-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     title: "AgroBot: AI Soil Moisture & Irrigation Drone",
     studentName: "Aarav Sharma & Team",
+    studentId: "std-101",
     grade: "Class 10-A",
     category: "Smart Agriculture",
     mentor: "Sunita Chawla (Robotics Lead)",
@@ -21300,8 +21420,10 @@ let IN_MEMORY_ROBOTICS_PROJECTS = [
   },
   {
     id: "prj-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     title: "Smart Waste Segregator with Edge Vision",
     studentName: "Ananya Verma",
+    studentId: "std-102",
     grade: "Class 10-A",
     category: "Environmental IoT",
     mentor: "Sunita Chawla (Robotics Lead)",
@@ -21312,8 +21434,10 @@ let IN_MEMORY_ROBOTICS_PROJECTS = [
   },
   {
     id: "prj-03",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     title: "Gesture-Controlled Wheelchair for Mobility",
     studentName: "Rohan Patel & Kabir Singh",
+    studentId: "std-104",
     grade: "Class 11-Science",
     category: "Assistive Healthcare",
     mentor: "Dr. Meenakshi Sundaram",
@@ -21323,66 +21447,311 @@ let IN_MEMORY_ROBOTICS_PROJECTS = [
     summary: "Gyroscope and accelerometer glove transmitting Bluetooth commands to dual DC gear motors, empowering quadriplegic patients to navigate effortlessly."
   }
 ];
+const IN_MEMORY_ROBOTICS_PROJECTS = ERP_ROBOTICS_PROJECTS;
 
-let IN_MEMORY_ROBOTICS_COMPETITIONS = [
+let ERP_ROBOTICS_COMPETITIONS = [
   {
     id: "comp-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     name: "CBSE National Science & Tinkering Exhibition 2026",
     dates: "October 14-16, 2026",
     venue: "Pragati Maidan, New Delhi",
     teamSize: "2-4 Students",
     registrationDeadline: "September 30, 2026",
     status: "Registration Open",
-    category: "National Championship"
+    category: "National Championship",
+    registeredTeams: [
+      { id: "team-01", teamName: "AgroBot Innovators", members: ["Aarav Sharma", "Aditya Singhania"], projectTitle: "AgroBot" }
+    ]
   },
   {
     id: "comp-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     name: "Atal Tinkering Marathon (AIM - NITI Aayog)",
     dates: "November 5-8, 2026",
     venue: "Virtual & Regional Innovation Hubs",
     teamSize: "3 Students",
     registrationDeadline: "October 20, 2026",
     status: "Teams Selected",
-    category: "Government of India Initiative"
+    category: "Government of India Initiative",
+    registeredTeams: [
+      { id: "team-02", teamName: "EcoVisionaries", members: ["Ananya Verma", "Meera Chawla"], projectTitle: "Smart Waste Segregator" }
+    ]
   },
   {
     id: "comp-03",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     name: "DAKSHORA All-India Inter-School STEM Cup",
     dates: "December 12, 2026",
     venue: "DPS Heritage Innovation Arena",
     teamSize: "Individual & Team Tracks",
     registrationDeadline: "November 30, 2026",
     status: "Early Bird Open",
-    category: "Annual Flagship Event"
+    category: "Annual Flagship Event",
+    registeredTeams: []
   }
 ];
+const IN_MEMORY_ROBOTICS_COMPETITIONS = ERP_ROBOTICS_COMPETITIONS;
 
-// GET /api/erp/robotics/courses
-app.get("/api/erp/robotics/courses", (req, res) => {
-  res.json({ success: true, courses: IN_MEMORY_ROBOTICS_COURSES });
+// 1. Lab Overview & Key Metrics: GET /api/erp/robotics/overview
+app.get("/api/erp/robotics/overview", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
+
+  const inventory = isForeignEmpty ? [] : ERP_ROBOTICS_INVENTORY.filter(k => !k.organization_id || k.organization_id === orgId);
+  const loans = isForeignEmpty ? [] : ERP_ROBOTICS_LOANS.filter(l => !l.organization_id || l.organization_id === orgId);
+  const projects = isForeignEmpty ? [] : ERP_ROBOTICS_PROJECTS.filter(p => !p.organization_id || p.organization_id === orgId);
+  const competitions = isForeignEmpty ? [] : ERP_ROBOTICS_COMPETITIONS.filter(c => !c.organization_id || c.organization_id === orgId);
+
+  const totalEquipment = inventory.reduce((acc, k) => acc + (k.totalQty || 0), 0);
+  const totalAvailable = inventory.reduce((acc, k) => acc + (k.availableQty || 0), 0);
+  const totalIssued = inventory.reduce((acc, k) => acc + (k.issuedQty || 0), 0);
+
+  const activeLoans = loans.filter(l => l.status === "issued");
+  const overdueLoans = activeLoans.filter(l => l.dueDate && new Date(l.dueDate) < new Date());
+
+  res.json({
+    success: true,
+    overview: {
+      totalEquipmentKits: totalEquipment,
+      availableKits: totalAvailable,
+      issuedKits: totalIssued,
+      activeLoansCount: activeLoans.length,
+      overdueLoansCount: overdueLoans.length,
+      totalProjects: projects.length,
+      totalCourses: isForeignEmpty ? 0 : ERP_ROBOTICS_COURSES.length,
+      upcomingCompetitions: competitions.length
+    }
+  });
 });
 
-// GET /api/erp/robotics/inventory
+// 2. Hardware & Kit Inventory: GET /api/erp/robotics/inventory
 app.get("/api/erp/robotics/inventory", (req, res) => {
-  res.json({ success: true, inventory: IN_MEMORY_ROBOTICS_INVENTORY });
+  const orgId = resolveTenantOrgId(req);
+  const { category, condition, search } = req.query;
+
+  let items = ERP_ROBOTICS_INVENTORY.filter(k => !k.organization_id || k.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") items = [];
+
+  if (category && category !== "all") {
+    items = items.filter(k => (k.category || "").toLowerCase() === category.toLowerCase());
+  }
+  if (condition && condition !== "all") {
+    items = items.filter(k => (k.condition || "").toLowerCase() === condition.toLowerCase());
+  }
+  if (search) {
+    const q = search.toLowerCase();
+    items = items.filter(k => (k.name || "").toLowerCase().includes(q) || (k.kitCode || "").toLowerCase().includes(q));
+  }
+
+  res.json({
+    success: true,
+    inventory: items,
+    totalCount: items.length
+  });
 });
 
-// GET /api/erp/robotics/projects
+// 3. Register New Hardware Kit: POST /api/erp/robotics/inventory
+app.post("/api/erp/robotics/inventory", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const { name, category, totalQty = 1, location, condition = "Good", kitCode } = req.body;
+
+  if (!name || !category) {
+    return res.status(400).json({ success: false, message: "name and category are required." });
+  }
+
+  const newKit = {
+    id: `kit-${Date.now()}`,
+    kitCode: kitCode || `ATL-${category.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-3)}`,
+    name: name.trim(),
+    category: category.trim(),
+    totalQty: Number(totalQty),
+    availableQty: Number(totalQty),
+    issuedQty: 0,
+    location: location || "ATL Storage",
+    condition,
+    organization_id: orgId
+  };
+
+  ERP_ROBOTICS_INVENTORY.unshift(newKit);
+  await recordAuditLog("robotics.kit_added", req.user?.email, "robotics_kit", newKit.id, req);
+
+  res.status(201).json({ success: true, message: "Equipment registered in ATL inventory", kit: newKit });
+});
+
+// 4. Update Hardware Kit: PATCH /api/erp/robotics/inventory/:id
+app.patch("/api/erp/robotics/inventory/:id", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === req.params.id && (!k.organization_id || k.organization_id === orgId));
+
+  if (!kit) {
+    return res.status(404).json({ success: false, message: "Equipment kit not found" });
+  }
+
+  const { name, category, totalQty, location, condition } = req.body;
+  if (name !== undefined) kit.name = name.trim();
+  if (category !== undefined) kit.category = category.trim();
+  if (location !== undefined) kit.location = location;
+  if (condition !== undefined) kit.condition = condition;
+  if (totalQty !== undefined) {
+    const diff = Number(totalQty) - kit.totalQty;
+    kit.totalQty = Number(totalQty);
+    kit.availableQty = Math.max(0, kit.availableQty + diff);
+  }
+
+  await recordAuditLog("robotics.kit_updated", req.user?.email, "robotics_kit", kit.id, req);
+  res.json({ success: true, message: "Equipment updated", kit });
+});
+
+// 5. Decommission Kit: DELETE /api/erp/robotics/inventory/:id
+app.delete("/api/erp/robotics/inventory/:id", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const idx = ERP_ROBOTICS_INVENTORY.findIndex(k => k.id === req.params.id && (!k.organization_id || k.organization_id === orgId));
+
+  if (idx === -1) {
+    return res.status(404).json({ success: false, message: "Equipment kit not found" });
+  }
+
+  ERP_ROBOTICS_INVENTORY.splice(idx, 1);
+  await recordAuditLog("robotics.kit_deleted", req.user?.email, "robotics_kit", req.params.id, req);
+  res.json({ success: true, message: "Equipment decommissioned" });
+});
+
+// 6. Kit Loans / Checkouts Directory: GET /api/erp/robotics/loans
+app.get("/api/erp/robotics/loans", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { status, studentId } = req.query;
+
+  let loans = ERP_ROBOTICS_LOANS.filter(l => !l.organization_id || l.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") loans = [];
+
+  if (status && status !== "all") {
+    loans = loans.filter(l => l.status === status);
+  }
+  if (studentId) {
+    loans = loans.filter(l => l.studentId === studentId);
+  }
+
+  res.json({ success: true, loans, totalCount: loans.length });
+});
+
+// 7. Issue Kit to Student / Team: POST /api/erp/robotics/loans/issue
+app.post("/api/erp/robotics/loans/issue", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const { kitId, studentId, studentName, grade, dueDate } = req.body;
+
+  if (!kitId || !studentName) {
+    return res.status(400).json({ success: false, message: "kitId and studentName are required" });
+  }
+
+  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === kitId && (!k.organization_id || k.organization_id === orgId));
+  if (!kit) {
+    return res.status(404).json({ success: false, message: "Equipment kit not found in lab" });
+  }
+  if (kit.availableQty <= 0) {
+    return res.status(400).json({ success: false, message: "Kit is currently out of stock (all units on loan)" });
+  }
+
+  kit.availableQty -= 1;
+  kit.issuedQty = (kit.issuedQty || 0) + 1;
+
+  const newLoan = {
+    id: `loan-${Date.now()}`,
+    organization_id: orgId,
+    kitId: kit.id,
+    kitCode: kit.kitCode || "ATL-KIT",
+    kitName: kit.name,
+    studentId: studentId || "std-external",
+    studentName: studentName.trim(),
+    grade: grade || "General",
+    issuedBy: req.user?.name || "Lab In-Charge",
+    issuedDate: new Date().toISOString(),
+    dueDate: dueDate || new Date(Date.now() + 14 * 86400000).toISOString(),
+    returnedDate: null,
+    conditionOnReturn: null,
+    status: "issued"
+  };
+
+  ERP_ROBOTICS_LOANS.unshift(newLoan);
+  await recordAuditLog("robotics.kit_issued", req.user?.email, "robotics_loan", newLoan.id, req);
+
+  res.status(201).json({ success: true, message: "Hardware kit checked out to student", loan: newLoan });
+});
+
+// 8. Return Checked-out Kit: POST /api/erp/robotics/loans/:id/return
+app.post("/api/erp/robotics/loans/:id/return", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const loan = ERP_ROBOTICS_LOANS.find(l => l.id === req.params.id && (!l.organization_id || l.organization_id === orgId));
+
+  if (!loan) {
+    return res.status(404).json({ success: false, message: "Loan record not found" });
+  }
+  if (loan.status === "returned") {
+    return res.status(400).json({ success: false, message: "Kit has already been returned" });
+  }
+
+  const { conditionOnReturn = "Good" } = req.body;
+  loan.status = "returned";
+  loan.returnedDate = new Date().toISOString();
+  loan.conditionOnReturn = conditionOnReturn;
+
+  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === loan.kitId);
+  if (kit) {
+    kit.availableQty = Math.min(kit.totalQty, kit.availableQty + 1);
+    kit.issuedQty = Math.max(0, (kit.issuedQty || 1) - 1);
+    if (conditionOnReturn) kit.condition = conditionOnReturn;
+  }
+
+  await recordAuditLog("robotics.kit_returned", req.user?.email, "robotics_loan", loan.id, req);
+  res.json({ success: true, message: "Hardware kit returned and inventory replenished", loan });
+});
+
+// 9. STEM Curriculum Courses: GET /api/erp/robotics/courses
+app.get("/api/erp/robotics/courses", (req, res) => {
+  res.json({ success: true, courses: ERP_ROBOTICS_COURSES });
+});
+
+// 10. Innovation Projects Portfolio: GET /api/erp/robotics/projects
 app.get("/api/erp/robotics/projects", (req, res) => {
-  res.json({ success: true, projects: IN_MEMORY_ROBOTICS_PROJECTS });
+  const orgId = resolveTenantOrgId(req);
+  const { category, status, studentId } = req.query;
+
+  let projects = ERP_ROBOTICS_PROJECTS.filter(p => !p.organization_id || p.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") projects = [];
+
+  if (category && category !== "all") {
+    projects = projects.filter(p => (p.category || "").toLowerCase() === category.toLowerCase());
+  }
+  if (status && status !== "all") {
+    projects = projects.filter(p => (p.status || "").toLowerCase() === status.toLowerCase());
+  }
+  if (studentId) {
+    projects = projects.filter(p => p.studentId === studentId);
+  }
+
+  res.json({ success: true, projects, totalCount: projects.length });
 });
 
-// POST /api/erp/robotics/projects
-app.post("/api/erp/robotics/projects", (req, res) => {
-  const { title, studentName, grade, category, summary } = req.body;
+// 11. Submit Innovation Project: POST /api/erp/robotics/projects (Students & Staff allowed)
+app.post("/api/erp/robotics/projects", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { title, studentName, studentId, grade, category, summary } = req.body;
+
   if (!title || !studentName) {
     return res.status(400).json({ success: false, message: "Title and Student Name are required." });
   }
 
   const newPrj = {
     id: `prj-${Date.now()}`,
+    organization_id: orgId,
     title: title.trim(),
     studentName: studentName.trim(),
+    studentId: studentId || req.user?.id || null,
     grade: grade || "Class 10-A",
     category: category || "Robotics & IoT",
     mentor: "Sunita Chawla (Robotics Lead)",
@@ -21392,15 +21761,69 @@ app.post("/api/erp/robotics/projects", (req, res) => {
     summary: summary || "Student innovative prototype developed in Dakshora Tinkering Lab."
   };
 
-  IN_MEMORY_ROBOTICS_PROJECTS.unshift(newPrj);
-  recordAuditLog("robotics.project_submitted", req.user?.email || "student", "robotics_project", newPrj.id, req);
+  ERP_ROBOTICS_PROJECTS.unshift(newPrj);
+  await recordAuditLog("robotics.project_submitted", req.user?.email || "student", "robotics_project", newPrj.id, req);
 
-  res.json({ success: true, message: "Project submitted to innovation portfolio! 🚀", project: newPrj });
+  res.status(201).json({ success: true, message: "Project submitted to innovation portfolio! 🚀", project: newPrj });
 });
 
-// GET /api/erp/robotics/competitions
+// 12. Review Project & Assign Mentor Rating: PATCH /api/erp/robotics/projects/:id/review
+app.patch("/api/erp/robotics/projects/:id/review", async (req, res) => {
+  if (!checkRoboticsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const prj = ERP_ROBOTICS_PROJECTS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+
+  if (!prj) {
+    return res.status(404).json({ success: false, message: "Project not found" });
+  }
+
+  const { status, rating, award, mentorComments } = req.body;
+  if (status) prj.status = status;
+  if (rating) prj.rating = rating;
+  if (award) prj.award = award;
+  if (mentorComments) prj.mentorComments = mentorComments;
+  prj.reviewedBy = req.user?.name || "Mentor";
+  prj.reviewedAt = new Date().toISOString();
+
+  await recordAuditLog("robotics.project_reviewed", req.user?.email, "robotics_project", prj.id, req);
+  res.json({ success: true, message: "Project evaluated and review updated", project: prj });
+});
+
+// 13. Competitions Registry: GET /api/erp/robotics/competitions
 app.get("/api/erp/robotics/competitions", (req, res) => {
-  res.json({ success: true, competitions: IN_MEMORY_ROBOTICS_COMPETITIONS });
+  const orgId = resolveTenantOrgId(req);
+  let comps = ERP_ROBOTICS_COMPETITIONS.filter(c => !c.organization_id || c.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") comps = [];
+  res.json({ success: true, competitions: comps });
+});
+
+// 14. Register Team for Competition: POST /api/erp/robotics/competitions/:id/register
+app.post("/api/erp/robotics/competitions/:id/register", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const comp = ERP_ROBOTICS_COMPETITIONS.find(c => c.id === req.params.id && (!c.organization_id || c.organization_id === orgId));
+
+  if (!comp) {
+    return res.status(404).json({ success: false, message: "Competition not found" });
+  }
+
+  const { teamName, members = [], projectTitle } = req.body;
+  if (!teamName) {
+    return res.status(400).json({ success: false, message: "teamName is required" });
+  }
+
+  const newTeam = {
+    id: `team-${Date.now()}`,
+    teamName: teamName.trim(),
+    members: Array.isArray(members) ? members : [members],
+    projectTitle: projectTitle || "Innovation Prototype",
+    registeredAt: new Date().toISOString()
+  };
+
+  if (!comp.registeredTeams) comp.registeredTeams = [];
+  comp.registeredTeams.push(newTeam);
+
+  await recordAuditLog("robotics.competition_registered", req.user?.email, "robotics_competition", comp.id, req);
+  res.status(201).json({ success: true, message: "Team registered for competition! 🏆", team: newTeam });
 });
 
 // =========================================================================
