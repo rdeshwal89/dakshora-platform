@@ -181,21 +181,52 @@ const IN_MEMORY_AUDIT_LOGS = [
 ];
 const ERP_AUDIT_LOGS = IN_MEMORY_AUDIT_LOGS;
 async function recordAuditLog(action, userEmail, targetType, targetId, req) {
+  const isUuid = (val) => typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+  let orgId = null;
+  if (req?.user?.organizationId && isUuid(req.user.organizationId)) {
+    orgId = req.user.organizationId;
+  } else if (typeof resolveTenantOrgId === "function" && req) {
+    try { orgId = resolveTenantOrgId(req); } catch (e) {}
+  }
+  const userId = (req?.user?.id && isUuid(req.user.id)) ? req.user.id : null;
+
+  const logId = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+
   const logEntry = {
-    id: crypto.randomUUID(),
-    action,
-    user_email: userEmail || "anonymous",
+    id: logId,
+    action: action || "system.action",
+    user_email: userEmail || req?.user?.email || "anonymous",
     target_type: targetType || null,
     target_id: targetId || null,
     ip_address: req?.ip || "127.0.0.1",
-    timestamp: new Date().toISOString()
+    organization_id: orgId,
+    timestamp
   };
   IN_MEMORY_AUDIT_LOGS.unshift(logEntry);
   if (IN_MEMORY_AUDIT_LOGS.length > 1000) IN_MEMORY_AUDIT_LOGS.pop();
 
   if (!supabase) return;
   try {
-    await supabase.from("audit_logs").insert([logEntry]);
+    const dbPayload = {
+      id: logId,
+      organization_id: orgId && isUuid(orgId) ? orgId : null,
+      user_id: userId,
+      action: action || "system.action",
+      entity_type: targetType ? String(targetType) : null,
+      entity_id: (targetId && isUuid(targetId)) ? targetId : null,
+      metadata: {
+        user_email: userEmail || req?.user?.email || "anonymous",
+        ip_address: req?.ip || "127.0.0.1",
+        target_id: targetId ? String(targetId) : null,
+        target_type: targetType ? String(targetType) : null
+      },
+      created_at: timestamp
+    };
+    const { error: insErr } = await supabase.from("audit_logs").insert([dbPayload]);
+    if (insErr) {
+      console.warn("Audit log db insert warning:", insErr.message);
+    }
   } catch (err) {
     console.warn("Audit log save note:", err.message);
   }
@@ -19134,6 +19165,21 @@ app.get("/api/erp/payroll", (req, res) => {
 // 12. CENTRALIZED REPORTS & ANALYTICS ENGINE (Production Multi-Tenant)
 // =========================================================================
 
+// Helper: Enforce Administrative, Accounting or Academic Staff Role for Reports & Analytics
+function checkReportsAccessPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "accountant", "account", "teacher", "faculty", "staff"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School administrative, accounting, or faculty privilege required for reports and executive analytics."
+    });
+    return false;
+  }
+  return true;
+}
+
 let ERP_REPORT_PRESETS = [
   {
     id: "preset-01",
@@ -19155,6 +19201,7 @@ let ERP_REPORT_PRESETS = [
 
 // Legacy Backward-Compatible Endpoint: GET /api/erp/reports
 app.get("/api/erp/reports", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   res.json({
     success: true,
     metrics: {
@@ -19168,10 +19215,12 @@ app.get("/api/erp/reports", (req, res) => {
 
 // 1. Executive Cross-Module Overview: GET /api/erp/reports/overview
 app.get("/api/erp/reports/overview", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
+  const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
 
   // Student metrics
-  const students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const students = isForeignEmpty ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
   const totalStudents = students.length;
   const activeStudents = students.filter(s => s.status === "active").length;
   const inactiveStudents = totalStudents - activeStudents;
@@ -19179,50 +19228,50 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const femaleStudents = students.filter(s => (s.gender || "").toLowerCase() === "female").length;
 
   // Staff metrics
-  const staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  const staff = isForeignEmpty ? [] : ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
   const totalStaff = staff.length;
   const teachers = staff.filter(s => (s.staffType || s.role || "").toLowerCase().includes("teacher")).length;
   const nonTeaching = totalStaff - teachers;
   const onLeaveStaff = staff.filter(s => s.status === "on_leave").length;
 
   // Attendance metrics
-  const studentAtt = (ERP_ATTENDANCE || []).filter(a => !a.organization_id || a.organization_id === orgId);
+  const studentAtt = isForeignEmpty ? [] : (ERP_ATTENDANCE || []).filter(a => !a.organization_id || a.organization_id === orgId);
   const today = new Date().toISOString().split("T")[0];
   const todayRecords = studentAtt.filter(a => a.date === today);
-  const markedStudents = todayRecords.length > 0 ? todayRecords.length : totalStudents;
-  const presentStudents = todayRecords.filter(a => a.status === "present").length || Math.round(totalStudents * 0.94);
-  const absentStudents = markedStudents - presentStudents;
-  const attendanceRate = markedStudents > 0 ? Math.round((presentStudents / markedStudents) * 1000) / 10 : 94.8;
+  const markedStudents = todayRecords.length > 0 ? todayRecords.length : (totalStudents > 0 ? totalStudents : 0);
+  const presentStudents = todayRecords.filter(a => a.status === "present").length || (totalStudents > 0 ? Math.round(totalStudents * 0.94) : 0);
+  const absentStudents = Math.max(0, markedStudents - presentStudents);
+  const attendanceRate = markedStudents > 0 ? Math.round((presentStudents / markedStudents) * 1000) / 10 : 0;
 
   // Fees metrics
-  const demands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+  const demands = isForeignEmpty ? [] : ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
   const totalDemanded = demands.reduce((acc, d) => acc + (d.netAmount || d.amountINR || d.baseAmount || d.finalAmount || d.amount || 0), 0);
   const totalCollected = demands.reduce((acc, d) => acc + (d.paidAmount || 0), 0);
   const totalOutstanding = demands.reduce((acc, d) => acc + (d.balanceAmount || 0), 0);
   const collectionRate = totalDemanded > 0 ? Math.round((totalCollected / totalDemanded) * 1000) / 10 : 0;
 
   // Exams metrics
-  const exams = ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
+  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
   const totalExams = exams.length;
   const completedExams = exams.filter(e => e.status === "completed" || e.status === "published" || e.isLocked).length;
-  const distinctionsCount = (ERP_EXAM_RESULTS || []).filter(r => (!r.organization_id || r.organization_id === orgId) && (r.percentage || 0) >= 80).length;
+  const distinctionsCount = isForeignEmpty ? 0 : (ERP_EXAM_RESULTS || []).filter(r => (!r.organization_id || r.organization_id === orgId) && (r.percentage || 0) >= 80).length;
 
   // Library metrics
-  const books = ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
-  const copies = ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
+  const books = isForeignEmpty ? [] : ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
+  const copies = isForeignEmpty ? [] : ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
   const totalBooks = books.length;
   const totalCopies = copies.length;
   const issuedCopies = copies.filter(c => c.status === "issued").length;
-  const overdueLoans = (ERP_LIBRARY_TRANSACTIONS || []).filter(t => (!t.organization_id || t.organization_id === orgId) && t.status === "issued" && new Date(t.dueDate) < new Date()).length;
+  const overdueLoans = isForeignEmpty ? 0 : (ERP_LIBRARY_TRANSACTIONS || []).filter(t => (!t.organization_id || t.organization_id === orgId) && t.status === "issued" && new Date(t.dueDate) < new Date()).length;
 
   // Transport metrics
-  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  const routes = isForeignEmpty ? [] : ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
   const totalCapacity = routes.reduce((acc, r) => acc + (r.capacity || 0), 0);
   const assignedStudents = routes.reduce((acc, r) => acc + (r.assignedStudentsCount || 0), 0);
   const transportOccupancy = totalCapacity > 0 ? Math.round((assignedStudents / totalCapacity) * 1000) / 10 : 0;
 
   // Admissions metrics
-  const admissions = (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
+  const admissions = isForeignEmpty ? [] : (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
   const totalApplications = admissions.length;
   const admittedCount = admissions.filter(a => a.status === "admitted").length;
   const underReviewCount = admissions.filter(a => a.status === "under_review" || a.status === "new").length;
@@ -19230,11 +19279,13 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const conversionRate = totalApplications > 0 ? Math.round((admittedCount / totalApplications) * 1000) / 10 : 0;
 
   // Communication metrics
-  const messages = (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
+  const messages = isForeignEmpty ? [] : (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
   const totalMessages = messages.length;
   const deliveredMessages = messages.filter(m => m.status === "delivered" || m.status === "read").length;
-  const commDeliveryRate = totalMessages > 0 ? Math.round((deliveredMessages / totalMessages) * 1000) / 10 : 98.4;
-  const unreadNotifs = (ERP_NOTIFICATIONS || []).filter(n => (!n.organization_id || n.organization_id === orgId) && !n.isRead).length;
+  const commDeliveryRate = totalMessages > 0 ? Math.round((deliveredMessages / totalMessages) * 1000) / 10 : (isForeignEmpty ? 0 : 98.4);
+  const unreadNotifs = isForeignEmpty ? 0 : (ERP_NOTIFICATIONS || []).filter(n => (!n.organization_id || n.organization_id === orgId) && !n.isRead).length;
+
+  const tenantAuditLogs = isForeignEmpty ? [] : IN_MEMORY_AUDIT_LOGS.filter(l => !l.organization_id || l.organization_id === orgId);
 
   res.json({
     success: true,
@@ -19248,12 +19299,13 @@ app.get("/api/erp/reports/overview", (req, res) => {
     transport: { totalRoutes: routes.length, totalCapacity, assignedStudents, occupancyRate: transportOccupancy },
     admissions: { totalApplications, admittedCount, underReviewCount, approvedCount, conversionRate },
     communication: { totalMessages, deliveredMessages, deliveryRate: commDeliveryRate, unreadNotifications: unreadNotifs },
-    recentAuditActivities: IN_MEMORY_AUDIT_LOGS.slice(0, 5)
+    recentAuditActivities: tenantAuditLogs.slice(0, 5)
   });
 });
 
 // 2. Student Analytics & Registry: GET /api/erp/reports/students
 app.get("/api/erp/reports/students", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { className, section, gender, status, search, session } = req.query;
 
@@ -19326,6 +19378,7 @@ app.get("/api/erp/reports/students", (req, res) => {
 
 // 3. Attendance Reports & Defaulters: GET /api/erp/reports/attendance
 app.get("/api/erp/reports/attendance", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { date, className, section, threshold = 75 } = req.query;
 
@@ -19342,7 +19395,6 @@ app.get("/api/erp/reports/attendance", (req, res) => {
 
   // Attendance summary for target date
   const total = students.length;
-  // Compute realistic counts
   const absentStudentsList = students.filter(s => s.id === "std-103" || s.id === "std-106");
   const presentCount = Math.max(0, total - absentStudentsList.length);
   const absentCount = total - presentCount;
@@ -19372,14 +19424,15 @@ app.get("/api/erp/reports/attendance", (req, res) => {
     });
 
   // Class breakdown
-  const classBreakdown = [
+  const classBreakdown = total > 0 ? [
     { className: "Class 10", section: "A", totalStudents: 2, present: 1, absent: 1, rate: 50.0 },
     { className: "Class 10", section: "B", totalStudents: 1, present: 1, absent: 0, rate: 100.0 },
     { className: "Class 11", section: "A", totalStudents: 2, present: 2, absent: 0, rate: 100.0 }
-  ];
+  ] : [];
 
   // Staff summary
   const staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") staff.length = 0;
   const staffPresent = staff.filter(s => s.status === "active").length;
   const staffOnLeave = staff.filter(s => s.status === "on_leave").length;
   const staffSummary = {
@@ -19408,13 +19461,15 @@ app.get("/api/erp/reports/attendance", (req, res) => {
 
 // 4. Academic Curriculum & Allocations: GET /api/erp/reports/academics
 app.get("/api/erp/reports/academics", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const classes = (ERP_CLASSES || []).filter(c => !c.organization_id || c.organization_id === orgId);
-  const sections = (ERP_SECTIONS || []).filter(s => !s.organization_id || s.organization_id === orgId);
-  const subjects = (ERP_SUBJECTS || []).filter(sub => !sub.organization_id || sub.organization_id === orgId);
-  const homework = (ERP_HOMEWORK || []).filter(h => !h.organization_id || h.organization_id === orgId);
+  const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
+  const classes = isForeignEmpty ? [] : (ERP_CLASSES || []).filter(c => !c.organization_id || c.organization_id === orgId);
+  const sections = isForeignEmpty ? [] : (ERP_SECTIONS || []).filter(s => !s.organization_id || s.organization_id === orgId);
+  const subjects = isForeignEmpty ? [] : (ERP_SUBJECTS || []).filter(sub => !sub.organization_id || sub.organization_id === orgId);
+  const homework = isForeignEmpty ? [] : (ERP_HOMEWORK || []).filter(h => !h.organization_id || h.organization_id === orgId);
 
-  const teacherAllocations = [
+  const teacherAllocations = isForeignEmpty ? [] : [
     { teacherId: "stf-02", teacherName: "Rajeev Malhotra", subjectName: "Mathematics", subjectCode: "MATH-01", className: "Class 10", section: "A" },
     { teacherId: "stf-05", teacherName: "Anita Sharma", subjectName: "Science & Physics", subjectCode: "SCI-01", className: "Class 10", section: "B" },
     { teacherId: "stf-06", teacherName: "Dr. Sunita Rao", subjectName: "Biology", subjectCode: "BIO-01", className: "Class 11", section: "A" }
@@ -19446,14 +19501,16 @@ app.get("/api/erp/reports/academics", (req, res) => {
 
 // 5. Examination Performance & Results: GET /api/erp/reports/exams
 app.get("/api/erp/reports/exams", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const exams = ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
-  const results = ERP_EXAM_RESULTS.filter(r => !r.organization_id || r.organization_id === orgId);
+  const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
+  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
+  const results = isForeignEmpty ? [] : ERP_EXAM_RESULTS.filter(r => !r.organization_id || r.organization_id === orgId);
 
   const conductedExams = exams.filter(e => e.status === "completed" || e.status === "published" || e.isLocked).length;
   const totalResults = results.length;
   const distinctionCount = results.filter(r => (r.percentage || 0) >= 75).length;
-  const avgPct = totalResults > 0 ? Math.round(results.reduce((acc, r) => acc + (r.percentage || 0), 0) / totalResults) : 82.5;
+  const avgPct = totalResults > 0 ? Math.round(results.reduce((acc, r) => acc + (r.percentage || 0), 0) / totalResults) : (isForeignEmpty ? 0 : 82.5);
 
   res.json({
     success: true,
@@ -19463,7 +19520,7 @@ app.get("/api/erp/reports/exams", (req, res) => {
       scheduled: exams.length - conductedExams,
       overallAveragePct: avgPct,
       distinctionsCount: distinctionCount,
-      passPercentage: 100.0
+      passPercentage: totalResults > 0 ? 100.0 : 0
     },
     examList: exams.map(e => ({
       id: e.id,
@@ -19491,6 +19548,7 @@ app.get("/api/erp/reports/exams", (req, res) => {
 
 // 6. Fees & Collections Analytics: GET /api/erp/reports/fees
 app.get("/api/erp/reports/fees", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { className, status, startDate, endDate } = req.query;
 
@@ -19511,6 +19569,7 @@ app.get("/api/erp/reports/fees", (req, res) => {
 
   // Payments register
   let payments = (ERP_FEE_PAYMENTS || []).filter(p => !p.organization_id || p.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") payments = [];
   const paymentModeMap = { upi: 0, cash: 0, bank_transfer: 0, card: 0, cheque: 0 };
   payments.forEach(p => {
     const m = (p.paymentMethod || "upi").toLowerCase();
@@ -19555,12 +19614,13 @@ app.get("/api/erp/reports/fees", (req, res) => {
 
 // 7. Admissions & Funnel Conversion: GET /api/erp/reports/admissions
 app.get("/api/erp/reports/admissions", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   let admissions = (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") admissions = [];
 
   const leads = (typeof IN_MEMORY_LEADS !== "undefined" ? IN_MEMORY_LEADS : []).filter(l => !l.organization_id || l.organization_id === orgId);
-  const totalLeads = leads.length + 15;
+  const totalLeads = admissions.length > 0 ? leads.length + 15 : 0;
   const totalApplications = admissions.length;
   const admitted = admissions.filter(a => a.status === "admitted").length;
   const underReview = admissions.filter(a => a.status === "under_review" || a.status === "new").length;
@@ -19606,6 +19666,7 @@ app.get("/api/erp/reports/admissions", (req, res) => {
 
 // 8. Staff & HR Strength: GET /api/erp/reports/staff
 app.get("/api/erp/reports/staff", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   let staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") staff = [];
@@ -19651,6 +19712,7 @@ app.get("/api/erp/reports/staff", (req, res) => {
 
 // 9. Transport Fleet & Route Capacity: GET /api/erp/reports/transport
 app.get("/api/erp/reports/transport", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   let routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") routes = [];
@@ -19685,6 +19747,7 @@ app.get("/api/erp/reports/transport", (req, res) => {
 
 // 10. Library Circulation & Inventory: GET /api/erp/reports/library
 app.get("/api/erp/reports/library", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   let books = ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
   let copies = ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
@@ -19731,6 +19794,7 @@ app.get("/api/erp/reports/library", (req, res) => {
 
 // 11. Communication & Campaigns: GET /api/erp/reports/communication
 app.get("/api/erp/reports/communication", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   let messages = (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") messages = [];
@@ -19766,42 +19830,94 @@ app.get("/api/erp/reports/communication", (req, res) => {
 });
 
 // 12. Audit & Security Trail: GET /api/erp/reports/audit
-app.get("/api/erp/reports/audit", (req, res) => {
+app.get("/api/erp/reports/audit", async (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
   const { action, limit = 50 } = req.query;
-  let logs = [...IN_MEMORY_AUDIT_LOGS];
-  if (action) {
-    logs = logs.filter(l => (l.action || "").includes(action));
+
+  let dbLogs = [];
+  if (supabase) {
+    try {
+      let query = supabase
+        .from("audit_logs")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(Number(limit));
+      if (orgId && orgId !== "00000000-0000-0000-0000-000000000000") {
+        query = query.or(`organization_id.eq.${orgId},organization_id.is.null`);
+      }
+      if (action) {
+        query = query.ilike("action", `%${action}%`);
+      }
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        dbLogs = data.map(item => ({
+          id: item.id,
+          action: item.action,
+          user_email: item.metadata?.user_email || "anonymous",
+          target_type: item.entity_type || item.metadata?.target_type || null,
+          target_id: item.metadata?.target_id || item.entity_id || null,
+          ip_address: item.metadata?.ip_address || "127.0.0.1",
+          organization_id: item.organization_id,
+          timestamp: item.created_at || new Date().toISOString()
+        }));
+      }
+    } catch (dbErr) {
+      console.warn("Audit logs query note:", dbErr.message);
+    }
   }
+
+  // Merge with in-memory logs (dedup by ID)
+  let memLogs = [...IN_MEMORY_AUDIT_LOGS];
+  if (orgId && orgId !== "00000000-0000-0000-0000-000000000000") {
+    memLogs = memLogs.filter(l => !l.organization_id || l.organization_id === orgId);
+  } else if (orgId === "00000000-0000-0000-0000-000000000000") {
+    memLogs = [];
+  }
+  if (action) {
+    memLogs = memLogs.filter(l => (l.action || "").includes(action));
+  }
+
+  const seenIds = new Set();
+  const merged = [];
+  for (const log of [...dbLogs, ...memLogs]) {
+    if (log.id && !seenIds.has(log.id)) {
+      seenIds.add(log.id);
+      merged.push(log);
+    }
+  }
+
   res.json({
     success: true,
-    totalLogs: logs.length,
-    logs: logs.slice(0, Number(limit))
+    totalLogs: merged.length,
+    logs: merged.slice(0, Number(limit))
   });
 });
 
 // 13. Universal CSV Export: GET /api/erp/reports/export
 app.get("/api/erp/reports/export", async (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { reportType = "students", format = "csv" } = req.query;
 
-  // Log audit event
+  // Log audit event to memory and Supabase public.audit_logs
   await recordAuditLog("erp.report_exported", req.user?.email || "principal@dpsheritage.edu.in", "report", reportType, req);
 
   let csvContent = "";
   if (reportType === "students") {
-    const students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
     csvContent = "Admission No,Roll No,Name,Grade,Section,Gender,Parent Name,Parent Phone,Status\n" +
       students.map(s => `"${s.admissionNo}","${s.rollNo}","${s.name}","${s.grade}","${s.section}","${s.gender}","${s.parentName || ""}","${s.parentPhone || ""}","${s.status}"`).join("\n");
   } else if (reportType === "fees") {
-    const demands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+    const demands = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
     csvContent = "Demand ID,Student Name,Grade,Total Demanded,Paid Amount,Balance,Due Date,Status\n" +
       demands.map(d => `"${d.id}","${d.studentName}","${d.grade}",${d.finalAmount || d.amount},${d.paidAmount || 0},${d.balanceAmount || 0},"${d.dueDate}","${d.status}"`).join("\n");
   } else if (reportType === "attendance") {
-    const students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
     csvContent = "Roll No,Student Name,Grade,Section,Attendance Rate,Parent Phone\n" +
       students.map(s => `"${s.rollNo}","${s.name}","${s.grade}","${s.section}",${s.attendancePercent || 92},"${s.parentPhone || ""}"`).join("\n");
   } else if (reportType === "staff") {
-    const staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+    const staff = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
     csvContent = "Emp ID,Name,Designation,Department,Staff Type,Qualification,Experience,Phone,Email,Status\n" +
       staff.map(s => `"${s.empId}","${s.name}","${s.designation}","${s.department}","${s.staffType || s.role}","${s.qualification || ""}",${s.experienceYears || 0},"${s.phone}","${s.email}","${s.status}"`).join("\n");
   } else {
@@ -19816,14 +19932,17 @@ app.get("/api/erp/reports/export", async (req, res) => {
 
 // 14. Report Presets: GET/POST/DELETE /api/erp/reports/presets
 app.get("/api/erp/reports/presets", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { reportType } = req.query;
   let presets = ERP_REPORT_PRESETS.filter(p => !p.organization_id || p.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") presets = [];
   if (reportType) presets = presets.filter(p => p.reportType === reportType);
   res.json({ success: true, presets });
 });
 
 app.post("/api/erp/reports/presets", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { reportType, presetName, filters } = req.body;
   if (!reportType || !presetName) {
@@ -19842,6 +19961,7 @@ app.post("/api/erp/reports/presets", (req, res) => {
 });
 
 app.delete("/api/erp/reports/presets/:id", (req, res) => {
+  if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const idx = ERP_REPORT_PRESETS.findIndex(p => p.id === req.params.id && p.organization_id === orgId);
   if (idx === -1) {
