@@ -42,22 +42,28 @@ CREATE INDEX IF NOT EXISTS idx_users_org ON public.users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
--- Populate public.users from existing auth.users if not already present
+-- Populate public.users from existing auth.users safely ensuring foreign key integrity
 INSERT INTO public.users (id, email, name, role, organization_id, is_superadmin)
 SELECT 
-    id, 
-    email, 
-    COALESCE(raw_user_meta_data->>'name', split_part(email, '@', 1)),
-    COALESCE(raw_app_meta_data->>'role', raw_user_meta_data->>'role', 'school-admin'),
+    u.id, 
+    u.email, 
+    COALESCE(u.raw_user_meta_data->>'name', split_part(u.email, '@', 1)),
+    COALESCE(u.raw_app_meta_data->>'role', u.raw_user_meta_data->>'role', 'school-admin'),
+    o.id AS organization_id,
+    COALESCE((u.raw_app_meta_data->>'is_superadmin')::boolean, (u.raw_user_meta_data->>'is_superadmin')::boolean, false)
+FROM auth.users u
+LEFT JOIN public.organizations o ON o.id = (
     CASE 
-        WHEN (raw_app_meta_data->>'organization_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' 
-        THEN (raw_app_meta_data->>'organization_id')::uuid 
+        WHEN (u.raw_app_meta_data->>'organization_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' 
+        THEN (u.raw_app_meta_data->>'organization_id')::uuid 
+        WHEN (u.raw_user_meta_data->>'organization_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN (u.raw_user_meta_data->>'organization_id')::uuid
         ELSE NULL 
-    END,
-    COALESCE((raw_app_meta_data->>'is_superadmin')::boolean, (raw_user_meta_data->>'is_superadmin')::boolean, false)
-FROM auth.users
+    END
+)
 ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,
+    organization_id = EXCLUDED.organization_id,
     updated_at = now();
 
 -- -------------------------------------------------------------------------
@@ -230,8 +236,9 @@ CREATE INDEX IF NOT EXISTS idx_books_title ON public.books(title);
 
 -- Mirror existing library_books into books if books is empty
 INSERT INTO public.books (id, organization_id, isbn, title, author, category, publisher, total_copies, available_copies, created_at)
-SELECT id, organization_id, isbn, title, author, category, publisher, total_copies, available_copies, created_at
-FROM public.library_books
+SELECT b.id, b.organization_id, b.isbn, b.title, b.author, b.category, b.publisher, b.total_copies, b.available_copies, b.created_at
+FROM public.library_books b
+INNER JOIN public.organizations o ON o.id = b.organization_id
 ON CONFLICT (id) DO NOTHING;
 
 -- -------------------------------------------------------------------------
@@ -374,7 +381,37 @@ BEGIN
         ])
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS "Service role full access on %I" ON public.%I', t, t);
-        EXECUTE format('CREATE POLICY "Service role full access on %I" ON public.%I FOR ALL USING (true) WITH CHECK (true)', t, t);
+        EXECUTE format('CREATE POLICY "Service role full access on %I" ON public.%I FOR ALL TO service_role USING (true) WITH CHECK (true)', t, t);
+    END LOOP;
+END $$;
+
+-- User Table Specific RLS: SuperAdmin full control, users can view own profile & tenant peers
+DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
+CREATE POLICY "Users can read own profile" ON public.users
+    FOR SELECT TO authenticated
+    USING (id = auth.uid() OR public.is_platform_superadmin() OR (organization_id IS NOT NULL AND organization_id IN (SELECT public.get_user_organization_ids())));
+
+DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
+CREATE POLICY "Users can update own profile" ON public.users
+    FOR UPDATE TO authenticated
+    USING (id = auth.uid() OR public.is_platform_superadmin())
+    WITH CHECK (id = auth.uid() OR public.is_platform_superadmin());
+
+-- Dynamic Tenant Isolation Policies for All Tenant-Owned Tables
+DO $$
+DECLARE
+    t text;
+BEGIN
+    FOR t IN 
+        SELECT unnest(ARRAY[
+            'campuses', 'faculty_deputations', 'student_transfers',
+            'admissions', 'fee_invoices', 'report_cards', 'books',
+            'transport_vehicles', 'transport_stops', 'school_onboarding',
+            'ai_usage_logs', 'ai_settings'
+        ])
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS "Tenant isolation policy on %I" ON public.%I', t, t);
+        EXECUTE format('CREATE POLICY "Tenant isolation policy on %I" ON public.%I FOR ALL TO authenticated USING (public.is_platform_superadmin() OR organization_id IN (SELECT public.get_user_organization_ids())) WITH CHECK (public.is_platform_superadmin() OR organization_id IN (SELECT public.get_user_organization_ids()))', t, t);
     END LOOP;
 END $$;
 
