@@ -27100,8 +27100,8 @@ function checkPlatformAdminRole(req, res) {
 app.use("/api/admin", requireAuth, requireSuperAdmin);
 app.use("/api/superadmin", requireAuth, requireSuperAdmin);
 
-// 1. GET /api/admin/dashboard - Real-time Platform-wide KPIs & SaaS Metrics
-app.get("/api/admin/dashboard", (req, res) => {
+// 1. GET /api/admin/dashboard & GET /api/admin/overview - Real-time Platform-wide KPIs & SaaS Metrics
+app.get(["/api/admin/dashboard", "/api/admin/overview"], (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
 
   const totalOrgs = IN_MEMORY_ORGANIZATIONS.length;
