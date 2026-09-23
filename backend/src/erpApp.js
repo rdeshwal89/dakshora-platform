@@ -6979,7 +6979,8 @@ let ERP_PAYROLL = [
 // =========================================================================
 const PUBLIC_ERP_ENDPOINTS = [
   "/api/erp/admissions/leads/capture",
-  "/api/erp/solutions/comparison"
+  "/api/erp/solutions/comparison",
+  "/api/erp/portal/auth/login"
 ];
 
 app.use("/api/erp", (req, res, next) => {
@@ -22819,6 +22820,175 @@ app.get("/api/erp/timetable/export", (req, res) => {
 // 🎓 SECTION 16: PARENT & STUDENT SELF-SERVICE PORTAL REST SUITE
 // =========================================================================
 
+// Helper: Enforce Teacher or School Administrator Role for Portal Modifications
+function checkPortalTeacherPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "teacher", "faculty", "staff"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. Teacher or administrative role required to review leave applications or assign homework."
+    });
+    return false;
+  }
+  return true;
+}
+
+// Helper: Resolve or insert parent into Supabase public.parents & public.student_parents
+async function resolveOrCreateParentDb(orgId, parentData, studentIdentifier) {
+  if (!supabase || !parentData) return null;
+  try {
+    const studentDbId = await resolveDbStudent(orgId, studentIdentifier);
+    const parentPhone = (parentData.phone || "").trim();
+    const parentEmail = (parentData.email || "").trim().toLowerCase();
+    const parentName = (parentData.name || "Parent/Guardian").trim();
+
+    let parentQuery = supabase.from("parents").select("id").eq("organization_id", orgId);
+    if (parentPhone) {
+      parentQuery = parentQuery.eq("phone", parentPhone);
+    } else if (parentEmail) {
+      parentQuery = parentQuery.eq("email", parentEmail);
+    } else {
+      parentQuery = parentQuery.eq("name", parentName);
+    }
+    const { data: existingParent } = await parentQuery.maybeSingle();
+
+    let parentId = existingParent?.id;
+    if (!parentId) {
+      const { data: newParent, error: insErr } = await supabase
+        .from("parents")
+        .insert([{
+          organization_id: orgId,
+          name: parentName,
+          relation: parentData.relation || "Guardian",
+          phone: parentPhone || null,
+          email: parentEmail || null,
+          address: parentData.address || "Main City"
+        }])
+        .select()
+        .maybeSingle();
+      if (!insErr && newParent) {
+        parentId = newParent.id;
+      }
+    }
+
+    if (parentId && studentDbId) {
+      await supabase
+        .from("student_parents")
+        .upsert([{
+          student_id: studentDbId,
+          parent_id: parentId,
+          is_primary: true
+        }], { onConflict: "student_id,parent_id" });
+    }
+    return parentId;
+  } catch (e) {
+    console.warn("[DB] resolveOrCreateParentDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Record/Upsert student attendance in Supabase public.student_attendance
+async function recordStudentAttendanceStatusDb(orgId, studentIdentifier, dateStr, status, remarks, markedByUserId) {
+  if (!supabase) return null;
+  try {
+    const studentDbId = await resolveOrCreateStudentTransportDbId(orgId, studentIdentifier);
+    if (!studentDbId) return null;
+
+    const { data: session } = await supabase
+      .from("academic_sessions")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("is_current", true)
+      .maybeSingle();
+
+    const sessionId = session?.id || "3e44d6a7-611c-4ed9-a1c6-7ec49145a94c";
+    let validStatus = (status || "present").toLowerCase();
+    if (!["present", "absent", "late", "half_day", "leave"].includes(validStatus)) {
+      validStatus = "present";
+    }
+
+    const isMarkedByUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(markedByUserId);
+
+    const { data, error } = await supabase
+      .from("student_attendance")
+      .upsert([{
+        organization_id: orgId,
+        student_id: studentDbId,
+        academic_session_id: sessionId,
+        attendance_date: dateStr,
+        status: validStatus,
+        remarks: remarks || "",
+        marked_by: isMarkedByUuid ? markedByUserId : null
+      }], { onConflict: "student_id,attendance_date" })
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[DB] recordStudentAttendanceStatusDb error:", error.message);
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn("[DB] recordStudentAttendanceStatusDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Record homework assignment in Supabase public.homework
+async function recordHomeworkAssignmentDb(orgId, hwData) {
+  if (!supabase) return null;
+  try {
+    const { grade, section, subject, title, description, assignedDate, dueDate, attachmentUrl } = hwData;
+    
+    let sectionDbId = null;
+    if (grade && section) {
+      const dbSec = await resolveOrCreateSectionByGrade(orgId, grade, section);
+      if (dbSec) sectionDbId = dbSec.id;
+    }
+
+    let subjectDbId = null;
+    if (subject) {
+      const dbSub = await resolveOrCreateSubject(orgId, subject);
+      if (dbSub) subjectDbId = dbSub;
+    }
+
+    if (!sectionDbId || !subjectDbId) {
+      const { data: anySec } = await supabase.from("sections").select("id").limit(1).maybeSingle();
+      const { data: anySub } = await supabase.from("subjects").select("id").limit(1).maybeSingle();
+      sectionDbId = sectionDbId || anySec?.id;
+      subjectDbId = subjectDbId || anySub?.id;
+    }
+
+    if (!sectionDbId || !subjectDbId) return null;
+
+    const { data: newHw, error } = await supabase
+      .from("homework")
+      .insert([{
+        organization_id: orgId,
+        section_id: sectionDbId,
+        subject_id: subjectDbId,
+        title: title || "Class Assignment",
+        description: description || "",
+        assigned_on: assignedDate || new Date().toISOString().slice(0, 10),
+        due_date: dueDate || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+        attachment_url: attachmentUrl || null
+      }])
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[DB] recordHomeworkAssignmentDb error:", error.message);
+      return null;
+    }
+    return newHw;
+  } catch (e) {
+    console.warn("[DB] recordHomeworkAssignmentDb exception:", e.message);
+    return null;
+  }
+}
+
 // 16a. POST /api/erp/portal/auth/login - Portal Login (Parent Phone, Student Roll No, or Email)
 app.post("/api/erp/portal/auth/login", async (req, res) => {
   try {
@@ -22874,6 +23044,15 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
     const token = `portal_session_${activeStudent.id}_${Date.now()}`;
     await recordAuditLog("portal.login", rawInput, "student_portal", activeStudent.id, req);
 
+    // Asynchronously resolve or persist parent in Supabase public.parents
+    if (supabase) {
+      resolveOrCreateParentDb(
+        activeStudent.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+        guardianInfo,
+        activeStudent.id
+      ).catch(err => console.warn("[Portal Login] Parent DB sync warning:", err.message));
+    }
+
     res.json({
       success: true,
       role,
@@ -22905,22 +23084,24 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
 
 // 16b. GET /api/erp/portal/ward-students - Resolve Linked Wards
 app.get("/api/erp/portal/ward-students", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { parentPhone, parentEmail, studentId } = req.query;
   if (!parentPhone && !parentEmail && !studentId) {
     return res.status(400).json({ success: false, error: "MISSING_PARAM", message: "parentPhone, parentEmail, or studentId is required." });
   }
+  let orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
   let wards = [];
 
   if (parentPhone) {
     const clean = parentPhone.replace(/\D/g, "");
-    wards = ERP_STUDENTS.filter(s => (s.parentPhone || "").replace(/\D/g, "").endsWith(clean));
+    wards = orgStudents.filter(s => (s.parentPhone || "").replace(/\D/g, "").endsWith(clean));
   } else if (parentEmail) {
-    wards = ERP_STUDENTS.filter(s => (s.parentEmail || "").toLowerCase() === parentEmail.toLowerCase());
+    wards = orgStudents.filter(s => (s.parentEmail || "").toLowerCase() === parentEmail.toLowerCase());
   } else if (studentId) {
-    const target = ERP_STUDENTS.find(s => s.id === studentId);
+    const target = orgStudents.find(s => s.id === studentId || s.db_id === studentId);
     if (target && target.parentPhone) {
       const clean = target.parentPhone.replace(/\D/g, "");
-      wards = ERP_STUDENTS.filter(s => (s.parentPhone || "").replace(/\D/g, "").endsWith(clean));
+      wards = orgStudents.filter(s => (s.parentPhone || "").replace(/\D/g, "").endsWith(clean));
     } else if (target) {
       wards = [target];
     }
@@ -22951,8 +23132,9 @@ app.get("/api/erp/portal/ward-students", (req, res) => {
 
 // 16c. GET /api/erp/portal/profile/:studentId - Full Student Bio & Digital ID Badge
 app.get("/api/erp/portal/profile/:studentId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -22999,14 +23181,52 @@ app.get("/api/erp/portal/profile/:studentId", (req, res) => {
 });
 
 // 16d. GET /api/erp/portal/attendance/:studentId - Dynamic Attendance Metrics & Monthly Calendar
-app.get("/api/erp/portal/attendance/:studentId", (req, res) => {
+app.get("/api/erp/portal/attendance/:studentId", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  const studentRecords = ERP_ATTENDANCE.filter(a => (a.studentId || a.student_id) === studentId);
+  let studentRecords = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && (a.studentId === student.id || a.studentId === studentId));
+
+  // Sync with Supabase public.student_attendance if available
+  if (supabase) {
+    try {
+      const studentDbId = await resolveDbStudent(orgId, student.id);
+      if (studentDbId) {
+        const { data: dbRecords } = await supabase
+          .from("student_attendance")
+          .select("*")
+          .eq("organization_id", orgId)
+          .eq("student_id", studentDbId);
+
+        if (dbRecords && dbRecords.length > 0) {
+          dbRecords.forEach(dbr => {
+            const dateStr = dbr.attendance_date;
+            const existing = studentRecords.find(r => (r.attendanceDate || r.date) === dateStr);
+            if (existing) {
+              existing.status = dbr.status;
+              existing.remarks = dbr.remarks || existing.remarks;
+            } else {
+              studentRecords.push({
+                id: dbr.id,
+                studentId: student.id,
+                organization_id: orgId,
+                attendanceDate: dateStr,
+                date: dateStr,
+                status: dbr.status,
+                remarks: dbr.remarks || ""
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("[Portal Attendance] DB sync exception:", e.message);
+    }
+  }
 
   let present = 0, absent = 0, late = 0, leave = 0, halfDay = 0;
   studentRecords.forEach(r => {
@@ -23044,7 +23264,7 @@ app.get("/api/erp/portal/attendance/:studentId", (req, res) => {
 
   res.json({
     success: true,
-    studentId,
+    studentId: student.id,
     studentName: student.name,
     grade: student.grade,
     section: student.section,
@@ -23065,6 +23285,7 @@ app.get("/api/erp/portal/attendance/:studentId", (req, res) => {
 
 // 16e. POST /api/erp/portal/leave-applications - Submit Sick / Casual Leave
 app.post("/api/erp/portal/leave-applications", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId, leaveType = "sick", startDate, endDate, reason, attachmentUrl = "" } = req.body;
   if (!studentId || !startDate || !endDate || !reason) {
     return res.status(400).json({
@@ -23074,7 +23295,7 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
     });
   }
 
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -23089,7 +23310,7 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
 
   const newApp = {
     id: `lap-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
-    organization_id: student.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: orgId,
     student_id: student.id,
     studentId: student.id,
     studentName: student.name,
@@ -23124,8 +23345,9 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
 
 // 16f. GET /api/erp/portal/leave-applications - Fetch Leave Application History
 app.get("/api/erp/portal/leave-applications", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId, status } = req.query;
-  let list = [...ERP_PORTAL_LEAVE_APPLICATIONS];
+  let list = ERP_PORTAL_LEAVE_APPLICATIONS.filter(a => !a.organization_id || a.organization_id === orgId);
 
   if (studentId) {
     list = list.filter(a => (a.studentId || a.student_id) === studentId);
@@ -23143,6 +23365,9 @@ app.get("/api/erp/portal/leave-applications", (req, res) => {
 
 // 16g. PATCH /api/erp/portal/leave-applications/:id/status - Approve or Reject Leave Request
 app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
+  if (!checkPortalTeacherPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const { status, reviewNotes = "", reviewedBy = "Rajeev Malhotra (Class Teacher)" } = req.body;
 
@@ -23150,7 +23375,9 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
     return res.status(400).json({ success: false, error: "INVALID_STATUS", message: "status must be 'approved' or 'rejected'." });
   }
 
-  const appItem = ERP_PORTAL_LEAVE_APPLICATIONS.find(a => a.id === id);
+  const appItem = ERP_PORTAL_LEAVE_APPLICATIONS.find(a => 
+    (!a.organization_id || a.organization_id === orgId) && a.id === id
+  );
   if (!appItem) {
     return res.status(404).json({ success: false, error: "NOT_FOUND", message: `Leave application '${id}' not found.` });
   }
@@ -23161,13 +23388,17 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
   appItem.reviewedAt = new Date().toISOString();
   appItem.updatedAt = new Date().toISOString();
 
-  // If approved, mark attendance records as 'leave'
+  // If approved, mark attendance records as 'leave' and persist to Supabase public.student_attendance
   if (status === "approved") {
     const cur = new Date(appItem.startDate);
     const end = new Date(appItem.endDate);
     while (cur <= end) {
       const dStr = cur.toISOString().split("T")[0];
-      const existing = ERP_ATTENDANCE.find(a => (a.studentId || a.student_id) === appItem.studentId && (a.attendanceDate || a.date) === dStr);
+      const existing = ERP_ATTENDANCE.find(a => 
+        (!a.organization_id || a.organization_id === orgId) && 
+        (a.studentId || a.student_id) === appItem.studentId && 
+        (a.attendanceDate || a.date) === dStr
+      );
       if (existing) {
         existing.status = "leave";
         existing.remarks = `Approved Leave: ${appItem.reason}`;
@@ -23183,9 +23414,20 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
           date: dStr,
           status: "leave",
           remarks: `Approved Leave: ${appItem.reason}`,
-          organization_id: appItem.organization_id
+          organization_id: orgId
         });
       }
+
+      // Persist to Supabase public.student_attendance table
+      await recordStudentAttendanceStatusDb(
+        orgId,
+        appItem.studentId,
+        dStr,
+        "leave",
+        `Approved Leave: ${appItem.reason}`,
+        req.user?.id
+      );
+
       cur.setDate(cur.getDate() + 1);
     }
   }
@@ -23199,10 +23441,32 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
   });
 });
 
+// DELETE /api/erp/portal/leave-applications/:id - Remove Leave Application (Teardown Cleanup)
+app.delete("/api/erp/portal/leave-applications/:id", async (req, res) => {
+  if (!checkPortalTeacherPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = ERP_PORTAL_LEAVE_APPLICATIONS.findIndex(a => 
+    (!a.organization_id || a.organization_id === orgId) && a.id === id
+  );
+
+  if (idx !== -1) {
+    ERP_PORTAL_LEAVE_APPLICATIONS.splice(idx, 1);
+  }
+
+  res.json({
+    success: true,
+    message: "Leave application removed successfully"
+  });
+});
+
 // 16h. GET /api/erp/portal/report-cards/:studentId - Consolidated CBSE Report Cards & Marksheets
 app.get("/api/erp/portal/report-cards/:studentId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -23297,15 +23561,17 @@ app.get("/api/erp/portal/report-cards/:studentId", (req, res) => {
 
 // 16i. GET /api/erp/portal/fees/:studentId - Pending Dues & Fee Receipts Ledger
 app.get("/api/erp/portal/fees/:studentId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   // Filter demands for this student
   let demands = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).filter(d =>
-    d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase())
+    (!d.organization_id || d.organization_id === orgId) &&
+    (d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase()))
   );
 
   // Fallback if no demands
@@ -23313,7 +23579,8 @@ app.get("/api/erp/portal/fees/:studentId", (req, res) => {
     demands = [
       {
         id: `dem-${student.id}-t1`,
-        invoiceNo: `INV-2026-${student.rollNo.slice(-3)}-01`,
+        organization_id: orgId,
+        invoiceNo: `INV-2026-${(student.rollNo || "001").slice(-3)}-01`,
         studentId: student.id,
         studentName: student.name,
         grade: student.grade,
@@ -23335,12 +23602,13 @@ app.get("/api/erp/portal/fees/:studentId", (req, res) => {
   const balance = Math.max(0, totalInvoiced - totalPaid);
 
   const payments = (typeof ERP_FEE_PAYMENTS !== "undefined" ? ERP_FEE_PAYMENTS : []).filter(p =>
-    p.studentId === student.id || (p.studentName || "").toLowerCase().includes(student.name.toLowerCase())
+    (!p.organization_id || p.organization_id === orgId) &&
+    (p.studentId === student.id || (p.studentName || "").toLowerCase().includes(student.name.toLowerCase()))
   );
 
   res.json({
     success: true,
-    studentId,
+    studentId: student.id,
     studentName: student.name,
     summary: {
       totalInvoicedINR: totalInvoiced,
@@ -23358,20 +23626,24 @@ app.get("/api/erp/portal/fees/:studentId", (req, res) => {
 
 // 16j. POST /api/erp/portal/pay-fee - Instant UPI/Card Fee Payment & Official Receipt
 app.post("/api/erp/portal/pay-fee", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId, demandId, amount, paymentMode = "upi", referenceNumber } = req.body;
   if (!studentId) {
     return res.status(400).json({ success: false, error: "MISSING_STUDENT", message: "studentId is required." });
   }
 
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  let demand = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).find(d => d.id === demandId);
+  let demand = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).find(d => 
+    (!d.organization_id || d.organization_id === orgId) && d.id === demandId
+  );
   if (!demand) {
     demand = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).find(
-      d => (d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase())) &&
+      d => (!d.organization_id || d.organization_id === orgId) &&
+           (d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase())) &&
            (d.status === "pending" || d.balanceAmount > 0)
     );
   }
@@ -23394,9 +23666,11 @@ app.post("/api/erp/portal/pay-fee", async (req, res) => {
   student.duesINR = Math.max(0, (student.duesINR || 0) - payAmt);
 
   const receipt = {
+    id: `pay-${Date.now()}`,
     receiptNo,
+    organization_id: orgId,
     demandId: demand?.id || `dem-${Date.now()}`,
-    invoiceNo: demand?.invoiceNo || `INV-2026-ONLINE-${student.rollNo.slice(-3)}`,
+    invoiceNo: demand?.invoiceNo || `INV-2026-ONLINE-${(student.rollNo || "001").slice(-3)}`,
     studentId: student.id,
     studentName: student.name,
     admissionNo: student.admissionNo,
@@ -23411,6 +23685,22 @@ app.post("/api/erp/portal/pay-fee", async (req, res) => {
     schoolName: ERP_MASTER_SETTINGS.school_profile.schoolName,
     affiliationNo: ERP_MASTER_SETTINGS.school_profile.affiliationNo
   };
+
+  // Persist to Supabase public.fee_payments table
+  if (supabase) {
+    try {
+      const dbPayment = await recordDbFeePayment(orgId, {
+        ...receipt,
+        studentFeeId: demand?.db_id,
+        demand
+      });
+      if (dbPayment) {
+        receipt.db_id = dbPayment.id;
+      }
+    } catch (e) {
+      console.warn("[Portal Pay Fee] DB persistence warning:", e.message);
+    }
+  }
 
   if (typeof ERP_FEE_PAYMENTS !== "undefined") {
     ERP_FEE_PAYMENTS.unshift(receipt);
@@ -23428,20 +23718,21 @@ app.post("/api/erp/portal/pay-fee", async (req, res) => {
 
 // 16k. GET /api/erp/portal/homework - Daily Homework Diary & Student Submission Status
 app.get("/api/erp/portal/homework", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId, grade, section } = req.query;
   let targetGrade = grade;
   let targetSection = section;
   let student = null;
 
   if (studentId) {
-    student = ERP_STUDENTS.find(s => s.id === studentId);
+    student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
     if (student) {
       targetGrade = student.grade;
       targetSection = student.section;
     }
   }
 
-  let items = [...ERP_PORTAL_HOMEWORK];
+  let items = ERP_PORTAL_HOMEWORK.filter(h => !h.organization_id || h.organization_id === orgId);
   if (targetGrade) {
     items = items.filter(h => (h.grade || "").toLowerCase() === targetGrade.toLowerCase());
   }
@@ -23473,24 +23764,117 @@ app.get("/api/erp/portal/homework", (req, res) => {
   });
 });
 
-// 16l. POST /api/erp/portal/homework/submit - Student Solution Submission
+// 16l. POST /api/erp/portal/homework - Assign New Class Homework (Teacher/Admin Only)
+app.post("/api/erp/portal/homework", async (req, res) => {
+  if (!checkPortalTeacherPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const {
+    grade,
+    section,
+    subject,
+    title,
+    description = "",
+    dueDate,
+    attachmentUrl = "",
+    attachments = []
+  } = req.body;
+
+  if (!grade || !section || !subject || !title) {
+    return res.status(400).json({
+      success: false,
+      code: "MISSING_FIELDS",
+      message: "grade, section, subject, and title are required to assign homework."
+    });
+  }
+
+  const newHw = {
+    id: `hw-${Date.now().toString().slice(-4)}`,
+    organization_id: orgId,
+    session: "2026-27",
+    grade: grade.trim(),
+    section: section.trim().toUpperCase(),
+    subject: subject.trim(),
+    title: title.trim(),
+    description: description.trim(),
+    assignedDate: new Date().toISOString().slice(0, 10),
+    dueDate: dueDate || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+    assignedBy: req.user?.email || "Teacher",
+    attachments: Array.isArray(attachments) && attachments.length > 0 ? attachments : (attachmentUrl ? [{ name: "Assignment_Doc", url: attachmentUrl }] : []),
+    status: "active",
+    createdAt: new Date().toISOString()
+  };
+
+  // Persist to Supabase public.homework table
+  const dbHw = await recordHomeworkAssignmentDb(orgId, newHw);
+  if (dbHw) {
+    newHw.db_id = dbHw.id;
+  }
+
+  ERP_PORTAL_HOMEWORK.unshift(newHw);
+  await recordAuditLog("portal.homework_assigned", req.user?.email || "teacher", "homework", newHw.id, req);
+
+  res.status(201).json({
+    success: true,
+    message: "Homework assigned successfully",
+    homework: newHw
+  });
+});
+
+// 16m. DELETE /api/erp/portal/homework/:id - Remove Homework Assignment (Teacher/Admin Only)
+app.delete("/api/erp/portal/homework/:id", async (req, res) => {
+  if (!checkPortalTeacherPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = ERP_PORTAL_HOMEWORK.findIndex(h => 
+    (!h.organization_id || h.organization_id === orgId) &&
+    (h.id === id || h.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({
+      success: false,
+      code: "HOMEWORK_NOT_FOUND",
+      message: `Homework '${id}' not found.`
+    });
+  }
+
+  const removed = ERP_PORTAL_HOMEWORK[idx];
+  ERP_PORTAL_HOMEWORK.splice(idx, 1);
+
+  if (removed.db_id && supabase) {
+    await supabase.from("homework").delete().eq("organization_id", orgId).eq("id", removed.db_id);
+  }
+
+  await recordAuditLog("portal.homework_deleted", req.user?.email || "teacher", "homework", removed.id, req);
+
+  res.json({
+    success: true,
+    message: "Homework assignment removed successfully"
+  });
+});
+
+// 16n. POST /api/erp/portal/homework/submit - Student Solution Submission
 app.post("/api/erp/portal/homework/submit", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { homeworkId, studentId, submissionText = "", attachmentUrl = "" } = req.body;
   if (!homeworkId || !studentId) {
     return res.status(400).json({ success: false, error: "MISSING_FIELDS", message: "homeworkId and studentId are required." });
   }
 
-  const hw = ERP_PORTAL_HOMEWORK.find(h => h.id === homeworkId);
+  const hw = ERP_PORTAL_HOMEWORK.find(h => (!h.organization_id || h.organization_id === orgId) && (h.id === homeworkId || h.db_id === homeworkId));
   if (!hw) {
     return res.status(404).json({ success: false, error: "HOMEWORK_NOT_FOUND", message: `Homework '${homeworkId}' not found.` });
   }
 
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && s.studentId === studentId);
+  let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && s.studentId === student.id);
   if (sub) {
     sub.submissionText = submissionText;
     sub.attachmentUrl = attachmentUrl || sub.attachmentUrl;
@@ -23500,9 +23884,9 @@ app.post("/api/erp/portal/homework/submit", async (req, res) => {
   } else {
     sub = {
       id: `sub-hw-${Date.now()}`,
-      organization_id: hw.organization_id,
+      organization_id: orgId,
       homeworkId,
-      studentId,
+      studentId: student.id,
       studentName: student.name,
       submissionText,
       attachmentUrl,
@@ -23527,22 +23911,23 @@ app.post("/api/erp/portal/homework/submit", async (req, res) => {
   });
 });
 
-// 16m. POST /api/erp/portal/homework/acknowledge - Parent Diary Acknowledgment
+// 16o. POST /api/erp/portal/homework/acknowledge - Parent Diary Acknowledgment
 app.post("/api/erp/portal/homework/acknowledge", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { homeworkId, studentId } = req.body;
   if (!homeworkId || !studentId) {
     return res.status(400).json({ success: false, error: "MISSING_FIELDS", message: "homeworkId and studentId are required." });
   }
 
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
-  let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && s.studentId === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && (s.studentId === studentId || (student && s.studentId === student.id)));
 
   if (!sub) {
     sub = {
       id: `sub-hw-${Date.now()}`,
-      organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+      organization_id: orgId,
       homeworkId,
-      studentId,
+      studentId: student ? student.id : studentId,
       studentName: student ? student.name : "Student",
       submissionText: "Verified in physical notebook",
       attachmentUrl: "",
@@ -23568,15 +23953,17 @@ app.post("/api/erp/portal/homework/acknowledge", async (req, res) => {
   });
 });
 
-// 16n. GET /api/erp/portal/timetable/:studentId - Weekly Routine & Live Period Countdown
+// 16p. GET /api/erp/portal/timetable/:studentId - Weekly Routine & Live Period Countdown
 app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   const slots = ERP_TIMETABLE_SLOTS.filter(s =>
+    (!s.organization_id || s.organization_id === orgId) &&
     (s.grade || "").toLowerCase() === (student.grade || "").toLowerCase() &&
     (s.section || "").toLowerCase() === (student.section || "").toLowerCase()
   );
@@ -23617,15 +24004,19 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
   });
 });
 
-// 16o. GET /api/erp/portal/transport/:studentId - Bus Route Card & Live GPS Tracking
+// 16q. GET /api/erp/portal/transport/:studentId - Bus Route Card & Live GPS Tracking
 app.get("/api/erp/portal/transport/:studentId", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  const route = ERP_TRANSPORT.find(t => (t.assignedStudentIds || []).includes(student.id)) || ERP_TRANSPORT[0];
+  const route = ERP_TRANSPORT.find(t => 
+    (!t.organization_id || t.organization_id === orgId) && 
+    ((t.assignedStudentIds || []).includes(student.id) || (t.assignedStudentIds || []).includes(studentId))
+  ) || ERP_TRANSPORT.find(t => !t.organization_id || t.organization_id === orgId) || ERP_TRANSPORT[0];
 
   res.json({
     success: true,
@@ -23634,18 +24025,19 @@ app.get("/api/erp/portal/transport/:studentId", (req, res) => {
     hasAssignedTransport: true,
     transport: {
       ...route,
-      routeNumber: "Route 4",
-      busCode: route.routeNumber,
-      pickupStop: route.stops[0].stopName,
-      pickupTime: route.stops[0].pickupTime,
-      dropTime: route.stops[0].dropTime,
+      routeNumber: route?.routeNumber || "Route 4",
+      busCode: route?.routeNumber || "BUS-04",
+      pickupStop: route?.stops?.[0]?.stopName || "Main Depot Stop",
+      pickupTime: route?.stops?.[0]?.time || route?.stops?.[0]?.pickupTime || "07:00 AM",
+      dropTime: route?.stops?.[route?.stops?.length - 1]?.time || "02:30 PM",
       emergencySosContact: ERP_MASTER_SETTINGS.school_profile.phone
     }
   });
 });
 
-// 16p. GET /api/erp/portal/notices - Circulars & School Emergency Hotline Directory
-app.get("/api/erp/portal/notices", (req, res) => {
+// 16r. GET /api/erp/portal/notices - Circulars & School Emergency Hotline Directory
+app.get("/api/erp/portal/notices", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const notices = [
     {
       id: "not-01",
@@ -23679,6 +24071,34 @@ app.get("/api/erp/portal/notices", (req, res) => {
     }
   ];
 
+  let allNotices = [...notices];
+  if (supabase) {
+    try {
+      const { data: dbNotices } = await supabase
+        .from("notices")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false });
+
+      if (dbNotices && dbNotices.length > 0) {
+        dbNotices.forEach(n => {
+          allNotices.unshift({
+            id: n.id,
+            title: n.title,
+            content: n.body,
+            category: "general",
+            targetAudience: Array.isArray(n.audience) ? n.audience.join(", ") : "all",
+            isUrgent: false,
+            postedBy: "School Administration",
+            postedAt: n.created_at ? new Date(n.created_at).toLocaleDateString("en-IN") : "Recent"
+          });
+        });
+      }
+    } catch (e) {
+      console.warn("[Portal Notices] DB query warning:", e.message);
+    }
+  }
+
   const emergencyHelpline = [
     { department: "Principal / Head of School", contactPerson: "Dr. Meenakshi Sundaram", phone: "+91 11 2613 8900", email: "principal@dpsheritage.edu.in", hours: "08:00 AM - 04:00 PM" },
     { department: "Front Desk & Visitor Concierge", contactPerson: "Kavita Saxena", phone: "+91 98100 00666", email: "reception@dpsheritage.edu.in", hours: "07:30 AM - 05:00 PM" },
@@ -23689,8 +24109,8 @@ app.get("/api/erp/portal/notices", (req, res) => {
 
   res.json({
     success: true,
-    totalNotices: notices.length,
-    notices,
+    totalNotices: allNotices.length,
+    notices: allNotices,
     emergencyHelpline
   });
 });
