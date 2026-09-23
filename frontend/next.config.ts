@@ -6,10 +6,14 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
   async rewrites() {
-    const backendUrl =
+    const rawBackendUrl =
       process.env.BACKEND_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
       (process.env.NODE_ENV === "production" ? "https://dakshora-api.onrender.com" : "http://127.0.0.1:5000");
+    const backendUrl =
+      rawBackendUrl.includes("api.dakshora.in")
+        ? "https://dakshora-api.onrender.com"
+        : rawBackendUrl;
     return [
       {
         source: "/",
