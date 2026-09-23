@@ -20802,8 +20802,211 @@ app.get("/api/erp/audit-logs", (req, res) => {
 // SECTION 15: TIMETABLE & PERIOD SCHEDULING ENGINE
 // =========================================================================
 
+// Map day string to weekday integer (0-6)
+function mapDayOfWeekToWeekday(dayOfWeek) {
+  if (typeof dayOfWeek === 'number') return dayOfWeek;
+  const map = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6
+  };
+  return map[(dayOfWeek || '').toLowerCase()] ?? 1;
+}
+
+// Map periodNumber to default start_time and end_time
+function mapPeriodToTimes(periodNumber) {
+  const p = Number(periodNumber);
+  const bell = ERP_BELL_SCHEDULES.find(b => b.periodNumber === p);
+  if (bell && bell.startTime && bell.endTime) {
+    return {
+      startTime: bell.startTime.length === 5 ? `${bell.startTime}:00` : bell.startTime,
+      endTime: bell.endTime.length === 5 ? `${bell.endTime}:00` : bell.endTime
+    };
+  }
+  const startHours = 8 + Math.floor(p * 0.75);
+  const startMins = (p * 45) % 60;
+  const endHours = 8 + Math.floor((p + 1) * 0.75);
+  const endMins = ((p + 1) * 45) % 60;
+  return {
+    startTime: `${String(startHours).padStart(2, '0')}:${String(startMins).padStart(2, '0')}:00`,
+    endTime: `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}:00`
+  };
+}
+
+// Helper: Role check for timetable administration
+function checkTimetableAdminPrivilege(req, res) {
+  if (!req.user) {
+    res.status(401).json({ success: false, code: "UNAUTHORIZED", message: "Authentication required" });
+    return false;
+  }
+  const role = req.user.role;
+  const isSuperAdmin = req.user.isSuperAdmin || role === "superadmin";
+  const allowed = ["superadmin", "admin", "school-admin", "academic_coordinator", "principal", "management"];
+  if (!isSuperAdmin && !allowed.includes(role)) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School administrative role required to manage timetable routines or assign substitutions."
+    });
+    return false;
+  }
+  return true;
+}
+
+// Helper: Resolve or create class & section in Supabase PostgreSQL
+async function resolveOrCreateSectionByGrade(orgId, grade, sectionName) {
+  if (!grade || !sectionName) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (isUuid.test(sectionName)) return sectionName;
+
+  if (!supabase) return null;
+
+  try {
+    const classId = await resolveOrCreateClass(orgId, grade);
+    if (!classId) return null;
+    return await resolveOrCreateSection(orgId, classId, sectionName);
+  } catch (e) {
+    console.warn("[DB] resolveOrCreateSectionByGrade exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Resolve teacher DB UUID
+async function resolveTimetableTeacherDbId(orgId, teacherId) {
+  if (!teacherId) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (isUuid.test(teacherId)) return teacherId;
+
+  // Check in-memory staff first
+  const sf = ERP_STAFF.find(s => 
+    (!s.organization_id || s.organization_id === orgId) && 
+    (s.id === teacherId || s.empId === teacherId || s.db_id === teacherId)
+  );
+  if (sf && sf.db_id) return sf.db_id;
+
+  if (!supabase) return null;
+
+  try {
+    const { data: dbStf } = await supabase
+      .from("staff")
+      .select("id")
+      .eq("organization_id", orgId)
+      .or(`employee_code.eq.${teacherId},id.eq.${isUuid.test(teacherId) ? teacherId : '00000000-0000-0000-0000-000000000000'}`)
+      .maybeSingle();
+    return dbStf?.id || null;
+  } catch (e) {
+    console.warn("[DB] resolveTimetableTeacherDbId exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Persist timetable slot into public.timetables
+async function recordTimetableSlotDb(orgId, slotData) {
+  if (!slotData) return null;
+  if (!supabase) return null;
+
+  try {
+    const sectionId = await resolveOrCreateSectionByGrade(orgId, slotData.grade, slotData.section);
+    const subjectId = await resolveOrCreateSubject(orgId, slotData.subjectName, slotData.subjectCode);
+    const teacherDbId = await resolveTimetableTeacherDbId(orgId, slotData.teacherId);
+    const weekday = mapDayOfWeekToWeekday(slotData.dayOfWeek);
+    const periodNo = parseInt(slotData.periodNumber, 10) || 1;
+    const { startTime, endTime } = mapPeriodToTimes(periodNo);
+
+    if (!sectionId || !subjectId) {
+      console.warn("[DB] recordTimetableSlotDb missing sectionId or subjectId");
+      return null;
+    }
+
+    const { data: dbSlot, error: insErr } = await supabase
+      .from("timetables")
+      .insert([{
+        organization_id: orgId,
+        section_id: sectionId,
+        subject_id: subjectId,
+        teacher_member_id: teacherDbId || null,
+        weekday,
+        period_no: periodNo,
+        start_time: slotData.startTime || startTime,
+        end_time: slotData.endTime || endTime,
+        room_no: slotData.roomNumber || slotData.roomNo || "Room 101"
+      }])
+      .select()
+      .maybeSingle();
+
+    if (insErr) {
+      console.warn("[DB] recordTimetableSlotDb insert warning:", insErr.message);
+      return null;
+    }
+    return dbSlot;
+  } catch (e) {
+    console.warn("[DB] recordTimetableSlotDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Update timetable slot in public.timetables
+async function updateTimetableSlotDb(orgId, slotId, slotData) {
+  if (!slotId || !supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const memorySlot = ERP_TIMETABLE_SLOTS.find(s => s.id === slotId || s.db_id === slotId);
+  const targetDbId = memorySlot?.db_id || (isUuid.test(slotId) ? slotId : null);
+
+  if (!targetDbId) return null;
+
+  try {
+    const updatePayload = {};
+    if (slotData.periodNumber !== undefined) updatePayload.period_no = parseInt(slotData.periodNumber, 10);
+    if (slotData.dayOfWeek) updatePayload.weekday = mapDayOfWeekToWeekday(slotData.dayOfWeek);
+    if (slotData.roomNumber || slotData.roomNo) updatePayload.room_no = slotData.roomNumber || slotData.roomNo;
+    if (slotData.startTime) updatePayload.start_time = slotData.startTime;
+    if (slotData.endTime) updatePayload.end_time = slotData.endTime;
+
+    if (slotData.teacherId) {
+      const teacherDbId = await resolveTimetableTeacherDbId(orgId, slotData.teacherId);
+      if (teacherDbId) updatePayload.teacher_member_id = teacherDbId;
+    }
+
+    const { data, error } = await supabase
+      .from("timetables")
+      .update(updatePayload)
+      .eq("id", targetDbId)
+      .select();
+
+    return data;
+  } catch (e) {
+    console.warn("[DB] updateTimetableSlotDb exception:", e.message);
+    return null;
+  }
+}
+
+// Helper: Delete timetable slot from public.timetables
+async function deleteTimetableSlotDb(orgId, slotId) {
+  if (!slotId || !supabase) return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const memorySlot = ERP_TIMETABLE_SLOTS.find(s => s.id === slotId || s.db_id === slotId);
+  const targetDbId = memorySlot?.db_id || (isUuid.test(slotId) ? slotId : null);
+
+  if (!targetDbId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("timetables")
+      .delete()
+      .eq("id", targetDbId);
+    return data;
+  } catch (e) {
+    console.warn("[DB] deleteTimetableSlotDb exception:", e.message);
+    return null;
+  }
+}
+
 // 15a. GET /api/erp/timetable/bell-schedule - Daily Period Bell Timings & Live Active Period
-app.get("/api/erp/timetable/bell-schedule", (req, res) => {
+app.get("/api/erp/timetable/bell-schedule", requireAuth, (req, res) => {
   // Calculate current active period based on local time
   const now = new Date();
   const currentHours = now.getHours();
@@ -20845,7 +21048,7 @@ app.get("/api/erp/timetable/bell-schedule", (req, res) => {
 });
 
 // 15b. GET /api/erp/timetable/classes - Query Timetable Slots by Class, Section, and Day
-app.get("/api/erp/timetable/classes", (req, res) => {
+app.get("/api/erp/timetable/classes", requireAuth, (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { grade, section, day, session = "2026-27" } = req.query;
 
@@ -20976,7 +21179,7 @@ function checkTimetableConflicts(slot, excludeId = null) {
 }
 
 // 15c. POST /api/erp/timetable/validate - Dry-Run Conflict Validation
-app.post("/api/erp/timetable/validate", (req, res) => {
+app.post("/api/erp/timetable/validate", requireAuth, (req, res) => {
   const { slot, excludeId } = req.body;
   if (!slot) {
     return res.status(400).json({ success: false, error: "VALIDATION_ERROR", message: "Slot payload is required" });
@@ -20993,7 +21196,9 @@ app.post("/api/erp/timetable/validate", (req, res) => {
 });
 
 // 15d. POST /api/erp/timetable/slots - Create or Update a Timetable Slot with Conflict Enforcement
-app.post("/api/erp/timetable/slots", async (req, res) => {
+app.post("/api/erp/timetable/slots", requireAuth, async (req, res) => {
+  if (!checkTimetableAdminPrivilege(req, res)) return;
+
   const orgId = resolveTenantOrgId(req);
   const {
     id,
@@ -21052,7 +21257,7 @@ app.post("/api/erp/timetable/slots", async (req, res) => {
 
   let slot;
   if (id) {
-    const idx = ERP_TIMETABLE_SLOTS.findIndex(s => s.id === id);
+    const idx = ERP_TIMETABLE_SLOTS.findIndex(s => s.id === id || s.db_id === id);
     if (idx !== -1) {
       ERP_TIMETABLE_SLOTS[idx] = {
         ...ERP_TIMETABLE_SLOTS[idx],
@@ -21061,6 +21266,7 @@ app.post("/api/erp/timetable/slots", async (req, res) => {
         updatedAt: new Date().toISOString()
       };
       slot = ERP_TIMETABLE_SLOTS[idx];
+      await updateTimetableSlotDb(orgId, slot.id, slot);
       await recordAuditLog("erp.timetable_slot_updated", req.user?.email || "admin", "timetable_slot", slot.id, req);
       return res.json({ success: true, message: "Timetable slot updated successfully", slot, warnings });
     }
@@ -21086,6 +21292,12 @@ app.post("/api/erp/timetable/slots", async (req, res) => {
     createdAt: new Date().toISOString()
   };
 
+  // Persist into Supabase public.timetables
+  const dbSlot = await recordTimetableSlotDb(orgId, slot);
+  if (dbSlot) {
+    slot.db_id = dbSlot.id;
+  }
+
   ERP_TIMETABLE_SLOTS.push(slot);
   await recordAuditLog("erp.timetable_slot_created", req.user?.email || "admin", "timetable_slot", slot.id, req);
 
@@ -21098,14 +21310,18 @@ app.post("/api/erp/timetable/slots", async (req, res) => {
 });
 
 // 15e. DELETE /api/erp/timetable/slots/:id - Delete a Timetable Slot
-app.delete("/api/erp/timetable/slots/:id", async (req, res) => {
+app.delete("/api/erp/timetable/slots/:id", requireAuth, async (req, res) => {
+  if (!checkTimetableAdminPrivilege(req, res)) return;
+
+  const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const idx = ERP_TIMETABLE_SLOTS.findIndex(s => s.id === id);
+  const idx = ERP_TIMETABLE_SLOTS.findIndex(s => s.id === id || s.db_id === id);
   if (idx === -1) {
     return res.status(404).json({ success: false, error: "NOT_FOUND", message: `Slot with ID '${id}' not found.` });
   }
 
   const removed = ERP_TIMETABLE_SLOTS.splice(idx, 1)[0];
+  await deleteTimetableSlotDb(orgId, removed.db_id || removed.id);
   await recordAuditLog("erp.timetable_slot_deleted", req.user?.email || "admin", "timetable_slot", id, req);
 
   res.json({
@@ -21116,18 +21332,18 @@ app.delete("/api/erp/timetable/slots/:id", async (req, res) => {
 });
 
 // 15f. GET /api/erp/timetable/teachers/:teacherId - Teacher Weekly Routine, Free Periods, and Workload Analytics
-app.get("/api/erp/timetable/teachers/:teacherId", (req, res) => {
+app.get("/api/erp/timetable/teachers/:teacherId", requireAuth, (req, res) => {
   const { teacherId } = req.params;
   const { session = "2026-27" } = req.query;
 
-  const teacher = ERP_STAFF.find(s => s.id === teacherId);
+  const teacher = ERP_STAFF.find(s => s.id === teacherId || s.empId === teacherId || s.db_id === teacherId);
   if (!teacher) {
     return res.status(404).json({ success: false, error: "NOT_FOUND", message: `Teacher '${teacherId}' not found in faculty roster.` });
   }
 
   const routine = ERP_TIMETABLE_SLOTS.filter(s =>
     s.session === session &&
-    s.teacherId === teacherId
+    (s.teacherId === teacherId || (teacher.id && s.teacherId === teacher.id) || (teacher.db_id && s.teacherId === teacher.db_id))
   );
 
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -21184,7 +21400,7 @@ app.get("/api/erp/timetable/teachers/:teacherId", (req, res) => {
 });
 
 // 15g. GET /api/erp/timetable/rooms - Facilities Catalogue & Occupancy Matrix
-app.get("/api/erp/timetable/rooms", (req, res) => {
+app.get("/api/erp/timetable/rooms", requireAuth, (req, res) => {
   const { type, session = "2026-27" } = req.query;
 
   let rooms = [...ERP_ROOM_RESOURCES];
@@ -21220,7 +21436,7 @@ app.get("/api/erp/timetable/rooms", (req, res) => {
 });
 
 // 15h. GET /api/erp/timetable/substitutions - Substitution Log
-app.get("/api/erp/timetable/substitutions", (req, res) => {
+app.get("/api/erp/timetable/substitutions", requireAuth, (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { date = new Date().toISOString().split("T")[0], status } = req.query;
 
@@ -21241,7 +21457,7 @@ app.get("/api/erp/timetable/substitutions", (req, res) => {
 });
 
 // 15i. GET /api/erp/timetable/substitutions/recommendations - Intelligent Substitute Teacher Recommendation Engine
-app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
+app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, res) => {
   const { date = new Date().toISOString().split("T")[0], teacherId, session = "2026-27" } = req.query;
 
   // Resolve day of week from date
@@ -21253,12 +21469,12 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
   // Find absent/on-leave teachers
   let absentTeachers = [];
   if (teacherId) {
-    const t = ERP_STAFF.find(s => s.id === teacherId);
+    const t = ERP_STAFF.find(s => s.id === teacherId || s.empId === teacherId || s.db_id === teacherId);
     if (t) absentTeachers.push(t);
   } else {
     // Check staff who are on_leave or absent in attendance
     absentTeachers = ERP_STAFF.filter(s =>
-      (s.role === "teacher" || s.staffType === "Teacher") &&
+      (s.role === "teacher" || s.staffType === "Teacher" || (s.designation || "").toLowerCase().includes("teacher") || (s.designation || "").toLowerCase().includes("faculty")) &&
       (s.status === "on_leave" || s.status === "absent")
     );
     // If no teachers found marked absent, provide demonstration with stf-02 (Rajeev Malhotra)
@@ -21274,13 +21490,13 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
     // Find periods absent teacher is scheduled to take today
     let affectedSlots = ERP_TIMETABLE_SLOTS.filter(s =>
       s.session === session &&
-      s.teacherId === absentTeacher.id &&
+      (s.teacherId === absentTeacher.id || s.teacherId === absentTeacher.empId || s.teacherId === absentTeacher.db_id) &&
       s.dayOfWeek === dayOfWeek
     );
     if (affectedSlots.length === 0) {
       affectedSlots = ERP_TIMETABLE_SLOTS.filter(s =>
         s.session === session &&
-        s.teacherId === absentTeacher.id
+        (s.teacherId === absentTeacher.id || s.teacherId === absentTeacher.empId || s.teacherId === absentTeacher.db_id)
       );
     }
 
@@ -21293,7 +21509,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
       const candidates = [];
 
       const eligibleTeachers = ERP_STAFF.filter(s =>
-        (s.role === "teacher" || s.staffType === "Teacher") &&
+        (s.role === "teacher" || s.staffType === "Teacher" || (s.designation || "").toLowerCase().includes("teacher") || (s.designation || "").toLowerCase().includes("faculty")) &&
         s.id !== absentTeacher.id &&
         s.status !== "on_leave"
       );
@@ -21302,7 +21518,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
         // Is candidate free this period?
         const isOccupied = ERP_TIMETABLE_SLOTS.some(s =>
           s.session === session &&
-          s.teacherId === candidate.id &&
+          (s.teacherId === candidate.id || s.teacherId === candidate.empId || s.teacherId === candidate.db_id) &&
           s.dayOfWeek === dayOfWeek &&
           s.periodNumber === slot.periodNumber
         );
@@ -21311,7 +21527,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
           // Calculate today's workload for candidate
           const todayLoad = ERP_TIMETABLE_SLOTS.filter(s =>
             s.session === session &&
-            s.teacherId === candidate.id &&
+            (s.teacherId === candidate.id || s.teacherId === candidate.empId || s.teacherId === candidate.db_id) &&
             s.dayOfWeek === dayOfWeek
           ).length;
 
@@ -21368,7 +21584,9 @@ app.get("/api/erp/timetable/substitutions/recommendations", (req, res) => {
 });
 
 // 15j. POST /api/erp/timetable/substitutions - Assign a Teacher Substitution
-app.post("/api/erp/timetable/substitutions", async (req, res) => {
+app.post("/api/erp/timetable/substitutions", requireAuth, async (req, res) => {
+  if (!checkTimetableAdminPrivilege(req, res)) return;
+
   const orgId = resolveTenantOrgId(req);
   const {
     date = new Date().toISOString().split("T")[0],
@@ -21398,7 +21616,7 @@ app.post("/api/erp/timetable/substitutions", async (req, res) => {
 
   // Validate substitute has no clash
   const subClash = ERP_TIMETABLE_SLOTS.find(s =>
-    s.teacherId === substituteTeacherId &&
+    (s.teacherId === substituteTeacherId || s.teacherName === substituteTeacherName) &&
     (s.dayOfWeek || "").toLowerCase() === (dayOfWeek || "").toLowerCase() &&
     s.periodNumber === numPeriod
   );
@@ -21435,6 +21653,20 @@ app.post("/api/erp/timetable/substitutions", async (req, res) => {
   ERP_SUBSTITUTIONS.unshift(newSub);
   await recordAuditLog("erp.teacher_substituted", req.user?.email || "admin", "teacher_substitution", newSub.id, req);
 
+  // In-app notification for substitute teacher
+  ERP_NOTIFICATIONS.unshift({
+    id: `notif-${Date.now()}`,
+    organization_id: orgId,
+    recipientUserId: substituteTeacherId,
+    recipientRole: "teacher",
+    title: `📋 Substitution Assigned: Period ${numPeriod} (${newSub.grade}-${newSub.section})`,
+    message: `You have been assigned to cover ${newSub.subjectName} for ${newSub.absentTeacherName} during Period ${numPeriod} (${dayOfWeek}, ${date}) in Room ${newSub.roomNumber}.`,
+    type: "timetable",
+    priority: "high",
+    readAt: null,
+    createdAt: new Date().toISOString()
+  });
+
   res.status(201).json({
     success: true,
     message: `Teacher substitution assigned: ${newSub.substituteTeacherName} covering Period ${numPeriod} for ${newSub.absentTeacherName}.`,
@@ -21443,7 +21675,9 @@ app.post("/api/erp/timetable/substitutions", async (req, res) => {
 });
 
 // 15k. PATCH /api/erp/timetable/substitutions/:id - Update Substitution Status
-app.patch("/api/erp/timetable/substitutions/:id", async (req, res) => {
+app.patch("/api/erp/timetable/substitutions/:id", requireAuth, async (req, res) => {
+  if (!checkTimetableAdminPrivilege(req, res)) return;
+
   const { id } = req.params;
   const { status, notes } = req.body;
 
