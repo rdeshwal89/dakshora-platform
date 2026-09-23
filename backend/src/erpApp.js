@@ -7011,6 +7011,8 @@ let ERP_PAYROLL = [
 const PUBLIC_ERP_ENDPOINTS = [
   "/api/erp/admissions/leads/capture",
   "/api/erp/solutions/comparison",
+  "/api/erp/solutions/packages",
+  "/api/erp/solutions/quote",
   "/api/erp/portal/auth/login"
 ];
 
@@ -21827,51 +21829,349 @@ app.post("/api/erp/robotics/competitions/:id/register", async (req, res) => {
 });
 
 // =========================================================================
-// 🧩 PHASE 14 & 15: SOLUTION BUILDER & COMMERCIAL QUOTATION GENERATOR
+// 🧩 14. COMMERCIAL SOLUTION BUILDER & ENTERPRISE QUOTATIONS SUITE (Production Multi-Tenant)
 // =========================================================================
 
-app.post("/api/erp/solutions/quote", (req, res) => {
+// Helper: Enforce Administrative or Trustee Role for Enterprise Proposals & Contracts
+function checkSolutionsAdminPrivilege(req, res) {
+  const role = req.user?.role?.toLowerCase() || "";
+  const allowed = ["superadmin", "school-admin", "admin", "principal", "accountant", "trustee"];
+  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+    res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. School administrative or trustee privilege required to manage enterprise proposals and commercial contracts."
+    });
+    return false;
+  }
+  return true;
+}
+
+let ERP_SOLUTION_PACKAGES = [
+  {
+    id: "pkg-starter",
+    name: "Starter CBSE Foundation",
+    tagline: "Essential core ERP operations for single-shift schools",
+    targetSlab: "Up to 500 Students",
+    baseMonthlyINR: 1500,
+    perStudentMonthlyINR: 12,
+    modules: ["core_erp", "parent_portal", "digital_exams"],
+    features: [
+      "Student & Staff Lifecycle Management",
+      "CBSE CCE Marksheet Generation & Report Cards",
+      "Daily Student & Staff Attendance Tracking",
+      "Basic Fee Demands & Digital Receipts",
+      "Parent Mobile Portal PWA"
+    ]
+  },
+  {
+    id: "pkg-growth",
+    name: "Growth Smart School",
+    tagline: "Full-spectrum automation with online payments & fleet GPS",
+    targetSlab: "500 - 1500 Students",
+    baseMonthlyINR: 2500,
+    perStudentMonthlyINR: 22,
+    modules: ["core_erp", "parent_portal", "transport_gps", "hr_payroll", "admissions_crm", "library_mgmt"],
+    popular: true,
+    features: [
+      "All Starter features included",
+      "Integrated Payment Gateway (UPI, Netbanking, Cards)",
+      "Live Student Bus Tracking & GPS Fleet Geofencing",
+      "Biometric Attendance & Automated Payroll Disbursal",
+      "Admissions Pipeline, Merit Lists & CRM Capture",
+      "Digital Library Barcode & ISBN Circulation"
+    ]
+  },
+  {
+    id: "pkg-ai-flagship",
+    name: "Dakshora AI Flagship Academy",
+    tagline: "State-of-the-art AI Copilot, Robotics Lab & NEP 2020 Holistic Cards",
+    targetSlab: "1000 - 3000 Students",
+    baseMonthlyINR: 4000,
+    perStudentMonthlyINR: 35,
+    modules: ["core_erp", "teacher_ai", "student_suite", "robotics_academy", "school_rag", "parent_portal", "transport_gps", "hr_payroll", "admissions_crm", "library_mgmt"],
+    features: [
+      "All Growth Smart School features included",
+      "Dakshora AI Teacher Co-Pilot (Lesson Plans & Bloom's MCQs)",
+      "NEP 2020 Holistic Progress Card (HPC) & Skill Passport",
+      "ATAL Tinkering Lab (ATL) Hardware Kit Loan System",
+      "School Private RAG Knowledge Assistant & Chatbot",
+      "Automated Multi-Channel Circular Broadcasting (WhatsApp/SMS)"
+    ]
+  },
+  {
+    id: "pkg-enterprise-trust",
+    name: "Enterprise Multi-Campus Trust",
+    tagline: "Centralized governance cockpit for educational trusts & group of schools",
+    targetSlab: "3000+ Students (Multi-Branch)",
+    baseMonthlyINR: 8000,
+    perStudentMonthlyINR: 45,
+    modules: ["core_erp", "teacher_ai", "student_suite", "robotics_academy", "school_rag", "parent_portal", "transport_gps", "hr_payroll", "admissions_crm", "library_mgmt", "digital_exams", "multi_campus"],
+    features: [
+      "All Flagship Academy features across all branches",
+      "Trust Multi-Campus Central Cockpit & Executive KPI Benchmarking",
+      "Inter-Campus Fee Liquidity & Staff Transfer Consolidation",
+      "Custom Whitelabel Subdomain & Dedicated Enterprise SLA",
+      "Dedicated On-site Implementation Engineer & Priority 24x7 Support"
+    ]
+  }
+];
+
+let ERP_SOLUTION_COMPARISON = {
+  categories: [
+    {
+      name: "Core School Administration",
+      features: [
+        { name: "Student Demographic Registry & Multi-field Search", legacyErp: "Basic", openSource: "Yes", dakshora: "Advanced Multi-Tenant SaaS" },
+        { name: "CBSE Holistic Progress Card (NEP 2020 CCE)", legacyErp: "No", openSource: "Manual", dakshora: "Built-in Automated CCE Engine" },
+        { name: "Fees & Payment Gateway Reconciliation", legacyErp: "Semi-automated", openSource: "Add-on", dakshora: "Instant UPI/QR with Zero Reconciliation Lag" }
+      ]
+    },
+    {
+      name: "AI & Innovation Curriculum",
+      features: [
+        { name: "AI Teacher Co-Pilot (Bloom's Taxonomy Lesson Plans)", legacyErp: "None", openSource: "None", dakshora: "Native Gemini 2.0 Integration" },
+        { name: "ATAL Tinkering Lab (ATL) Kit Loan Management", legacyErp: "None", openSource: "None", dakshora: "Complete Hardware Kit Loans & Returns" },
+        { name: "School Private RAG Knowledge Assistant", legacyErp: "None", openSource: "None", dakshora: "Secure Vectorized Institution RAG" }
+      ]
+    },
+    {
+      name: "Security & Architecture",
+      features: [
+        { name: "Role-Based Access Control (RBAC) & Multi-Tenancy", legacyErp: "Single-Tenant VM", openSource: "Role-Based", dakshora: "Cryptographic Supabase RLS & Strict Tenant Org Isolation" },
+        { name: "Two-Factor TOTP Authenticator", legacyErp: "SMS only", openSource: "Optional Plugin", dakshora: "RFC 6238 Standard Authenticator App" },
+        { name: "Audit Trail & Tamper Logging", legacyErp: "Basic Logs", openSource: "Database Logs", dakshora: "PostgreSQL JSONB Audit Trail with Entity Mapping" }
+      ]
+    }
+  ]
+};
+
+const MODULE_PRICING = {
+  core_erp: { name: "Core ERP (Students, Staff, Attendance, Exams, Fees)", perStudentMonthly: 12 },
+  teacher_ai: { name: "Dakshora AI Teacher Co-Pilot (Lesson Plans & MCQs)", perStudentMonthly: 6 },
+  student_suite: { name: "NEP 2020 HPC & Student Skill Passport", perStudentMonthly: 5 },
+  parent_portal: { name: "Parent Mobile Portal & Fee Payments", perStudentMonthly: 3 },
+  robotics_academy: { name: "Dakshora Robotics & STEAM Lab Curriculum", perStudentMonthly: 8 },
+  admissions_crm: { name: "School CRM, Entrance Test & Seat Matrix", perStudentMonthly: 4 },
+  school_rag: { name: "School Private RAG Knowledge Base", perStudentMonthly: 3 },
+  library_mgmt: { name: "Digital Library & ISBN Barcoding", perStudentMonthly: 2 },
+  transport_gps: { name: "Transport Fleet GPS & Live Bus Tracking", perStudentMonthly: 4 },
+  hr_payroll: { name: "HR, Biometrics & Automated Payroll", perStudentMonthly: 3 },
+  digital_exams: { name: "Digital Examinations & Online OMR", perStudentMonthly: 3 },
+  multi_campus: { name: "Trust Multi-Campus Central Cockpit", perStudentMonthly: 5 }
+};
+
+let ERP_SAVED_QUOTES = new Map();
+
+let ERP_PROPOSALS = [
+  {
+    id: "prop-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    quoteId: "QUO-DAK-100201",
+    schoolName: "Delhi Public Heritage School",
+    studentCount: 850,
+    selectedPackage: "pkg-ai-flagship",
+    selectedModules: ["core_erp", "teacher_ai", "student_suite", "robotics_academy", "school_rag", "parent_portal"],
+    billingCycle: "annual",
+    pricing: {
+      basePlatformFeeMonthly: 2500,
+      effectivePerStudentMonthly: 35,
+      discountPercent: 20,
+      monthlyChargeableINR: 25800,
+      annualSubtotalINR: 309600,
+      gstRatePercent: 18,
+      hsnCode: "998314",
+      gstAmountINR: 55728,
+      grandTotalINR: 365328
+    },
+    executiveDiscountINR: 0,
+    status: "approved_by_trustees",
+    preparedBy: "Dr. Arvind Swaminathan (Platform Executive)",
+    created_at: "2026-09-15T10:00:00.000Z",
+    validUntil: "2026-10-15T23:59:59.000Z"
+  }
+];
+
+function generatePrintableCommercialProposalHtml(quotation) {
+  const p = quotation.pricing || {};
+  const inWords = typeof numberToWordsINR === "function" ? numberToWordsINR(p.grandTotalINR || 0) : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Commercial Proposal — ${quotation.quoteId} — Dakshora AI</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; line-height: 1.5; font-size: 13px; margin: 0; padding: 20px; }
+    .header { display: flex; justify-content: space-between; border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 16px; }
+    .brand-title { font-size: 22px; font-weight: 800; color: #1d4ed8; letter-spacing: -0.5px; }
+    .brand-subtitle { font-size: 12px; color: #64748b; font-weight: 500; }
+    .quote-badge { text-align: right; }
+    .quote-id { font-size: 16px; font-weight: 700; color: #0f172a; }
+    .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; margin-bottom: 16px; }
+    .meta-row { font-size: 12px; }
+    .meta-label { color: #64748b; font-weight: 600; width: 120px; display: inline-block; }
+    .section-title { font-size: 14px; font-weight: 700; color: #0f172a; border-left: 4px solid #2563eb; padding-left: 8px; margin: 16px 0 8px 0; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
+    th { background: #f1f5f9; color: #334155; font-weight: 600; text-align: left; padding: 8px 10px; border-bottom: 1px solid #cbd5e1; }
+    td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }
+    .pricing-summary { margin-left: auto; width: 320px; }
+    .pricing-summary td { padding: 4px 8px; }
+    .total-row td { font-weight: 700; font-size: 14px; border-top: 2px solid #0f172a; color: #1d4ed8; }
+    .in-words { font-style: italic; color: #475569; margin-top: 4px; font-size: 11px; }
+    .terms-box { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 10px; font-size: 11px; color: #475569; margin-bottom: 20px; }
+    .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 30px; }
+    .sig-line { border-top: 1px solid #94a3b8; padding-top: 6px; font-size: 11px; text-align: center; color: #475569; }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="brand-title">DAKSHORA AI 2.0</div>
+      <div class="brand-subtitle">Smart School SaaS & Autonomous AI Operating System</div>
+    </div>
+    <div class="quote-badge">
+      <div class="quote-id">${quotation.quoteId}</div>
+      <div style="font-size: 11px; color: #64748b;">Date: ${quotation.date || new Date().toISOString().split("T")[0]}</div>
+      <div style="font-size: 11px; color: #16a34a; font-weight: 600;">Valid Until: ${quotation.validUntil}</div>
+    </div>
+  </div>
+
+  <div class="meta-grid">
+    <div class="meta-row"><span class="meta-label">Client School:</span> <strong>${quotation.schoolName}</strong></div>
+    <div class="meta-row"><span class="meta-label">Enrolled Slab:</span> <strong>${quotation.studentCount} Students</strong></div>
+    <div class="meta-row"><span class="meta-label">Billing Cycle:</span> <strong>${quotation.billingCycle === "annual" ? "Annual Prepayment (20% Savings)" : "Monthly Flexible"}</strong></div>
+    <div class="meta-row"><span class="meta-label">Tax Regime:</span> <strong>GST 18% (HSN: ${p.hsnCode || "998314"})</strong></div>
+  </div>
+
+  <div class="section-title">Itemized Module Scope & Entitlements</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Module / Add-On Feature</th>
+        <th style="text-align: right;">Rate / Student / Month</th>
+        <th style="text-align: right;">Monthly Scope (INR)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${(quotation.itemizedModules || []).map(m => `
+        <tr>
+          <td><strong>${m.name}</strong></td>
+          <td style="text-align: right;">₹${m.ratePerStudentMonthly}</td>
+          <td style="text-align: right;">₹${(m.monthlyTotalINR || 0).toLocaleString("en-IN")}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+
+  <div class="section-title">Commercial Investment Summary</div>
+  <table class="pricing-summary">
+    <tr>
+      <td>Base Platform Fee:</td>
+      <td style="text-align: right;">₹${(p.basePlatformFeeMonthly || 0).toLocaleString("en-IN")} / mo</td>
+    </tr>
+    <tr>
+      <td>Effective Student Rate:</td>
+      <td style="text-align: right;">₹${p.effectivePerStudentMonthly || 0} / student / mo</td>
+    </tr>
+    <tr>
+      <td>Annual Prepay Discount:</td>
+      <td style="text-align: right; color: #16a34a;">-${p.discountPercent || 0}%</td>
+    </tr>
+    <tr>
+      <td>Net Chargeable (Annual Subtotal):</td>
+      <td style="text-align: right;">₹${(p.annualSubtotalINR || 0).toLocaleString("en-IN")}</td>
+    </tr>
+    <tr>
+      <td>Integrated GST (18%):</td>
+      <td style="text-align: right;">₹${(p.gstAmountINR || 0).toLocaleString("en-IN")}</td>
+    </tr>
+    <tr class="total-row">
+      <td>Total Enterprise Investment:</td>
+      <td style="text-align: right;">₹${(p.grandTotalINR || 0).toLocaleString("en-IN")}</td>
+    </tr>
+  </table>
+  <div class="in-words" style="text-align: right;">Amount in Words: <strong>${inWords}</strong></div>
+
+  <div class="section-title">Commercial Terms & Included Services</div>
+  <div class="terms-box">
+    <strong>Payment Terms:</strong> ${quotation.paymentTerms || "100% advance on annual renewal. Net 15 days from invoice issuance."}<br>
+    <strong>Included Implementation & SLA:</strong>
+    <ul>
+      ${(quotation.includedServices || []).map(s => `<li>${s}</li>`).join("")}
+    </ul>
+  </div>
+
+  <div class="sig-grid">
+    <div>
+      <div style="height: 40px;"></div>
+      <div class="sig-line">
+        <strong>Authorized Signatory</strong><br>
+        For and on behalf of ${quotation.schoolName}
+      </div>
+    </div>
+    <div>
+      <div style="height: 40px;"></div>
+      <div class="sig-line">
+        <strong>Enterprise Account Director</strong><br>
+        For and on behalf of DAKSHORA AI Platform
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// 1. Pre-Configured Packages: GET /api/erp/solutions/packages (Public)
+app.get("/api/erp/solutions/packages", (req, res) => {
+  res.json({ success: true, packages: ERP_SOLUTION_PACKAGES });
+});
+
+// 2. Feature Comparison Matrix: GET /api/erp/solutions/comparison (Public)
+app.get("/api/erp/solutions/comparison", (req, res) => {
+  res.json({ success: true, comparison: ERP_SOLUTION_COMPARISON });
+});
+
+// 3. Dynamic Solution Quotation Calculator: POST /api/erp/solutions/quote (Public)
+app.post("/api/erp/solutions/quote", async (req, res) => {
   const {
     schoolName = "Delhi Public Heritage School",
     studentCount = 850,
     selectedModules = ["core_erp", "teacher_ai", "student_suite", "robotics_academy"],
-    billingCycle = "annual"
+    billingCycle = "annual",
+    packageId
   } = req.body;
 
-  const MODULE_PRICING = {
-    core_erp: { name: "Core ERP (Students, Staff, Attendance, Exams, Fees)", perStudentMonthly: 12 },
-    teacher_ai: { name: "Dakshora AI Teacher Co-Pilot (Lesson Plans & MCQs)", perStudentMonthly: 6 },
-    student_suite: { name: "NEP 2020 HPC & Student Skill Passport", perStudentMonthly: 5 },
-    parent_portal: { name: "Parent Mobile Portal & Fee Payments", perStudentMonthly: 3 },
-    robotics_academy: { name: "Dakshora Robotics & STEAM Lab Curriculum", perStudentMonthly: 8 },
-    admissions_crm: { name: "School CRM, Entrance Test & Seat Matrix", perStudentMonthly: 4 },
-    school_rag: { name: "School Private RAG Knowledge Base", perStudentMonthly: 3 },
-    library_mgmt: { name: "Digital Library & ISBN Barcoding", perStudentMonthly: 2 },
-    transport_gps: { name: "Transport Fleet GPS & Live Bus Tracking", perStudentMonthly: 4 },
-    hr_payroll: { name: "HR, Biometrics & Automated Payroll", perStudentMonthly: 3 },
-    digital_exams: { name: "Digital Examinations & Online OMR", perStudentMonthly: 3 },
-    multi_campus: { name: "Trust Multi-Campus Central Cockpit", perStudentMonthly: 5 }
-  };
+  let activeModules = selectedModules;
+  if (packageId) {
+    const pkg = ERP_SOLUTION_PACKAGES.find(p => p.id === packageId);
+    if (pkg) activeModules = pkg.modules;
+  }
 
   let totalPerStudentMonthly = 0;
-  const itemizedModules = (selectedModules || []).map(modKey => {
+  const itemizedModules = (activeModules || []).map(modKey => {
     const info = MODULE_PRICING[modKey] || { name: modKey, perStudentMonthly: 4 };
     totalPerStudentMonthly += info.perStudentMonthly;
     return {
       key: modKey,
       name: info.name,
       ratePerStudentMonthly: info.perStudentMonthly,
-      monthlyTotalINR: info.perStudentMonthly * studentCount
+      monthlyTotalINR: info.perStudentMonthly * Number(studentCount)
     };
   });
 
   const basePlatformFeeMonthly = 2500;
-  const rawMonthlyTotal = basePlatformFeeMonthly + (totalPerStudentMonthly * studentCount);
+  const rawMonthlyTotal = basePlatformFeeMonthly + (totalPerStudentMonthly * Number(studentCount));
 
   // Annual discount: 20% off
   const discountMultiplier = billingCycle === "annual" ? 0.8 : 1.0;
   const discountedMonthly = Math.round(rawMonthlyTotal * discountMultiplier);
-  const annualSubtotal = discountedMonthly * 12;
+  const annualSubtotal = discountedMonthly * (billingCycle === "annual" ? 12 : 1);
 
   // 18% GST (HSN 998314 - IT Software Services)
   const gstRate = 0.18;
@@ -21880,26 +22180,72 @@ app.post("/api/erp/solutions/quote", (req, res) => {
 
   const quoteId = `QUO-DAK-${Date.now().toString().slice(-6)}`;
 
-  res.json({
-    success: true,
-    quotation: {
-      quoteId,
+  const quotation = {
+    quoteId,
+    date: new Date().toISOString().split("T")[0],
+    validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+    schoolName,
+    studentCount: Number(studentCount),
+    packageId: packageId || null,
+    billingCycle,
+    itemizedModules,
+    pricing: {
+      basePlatformFeeMonthly,
+      effectivePerStudentMonthly: totalPerStudentMonthly,
+      discountPercent: billingCycle === "annual" ? 20 : 0,
+      monthlyChargeableINR: discountedMonthly,
+      annualSubtotalINR: annualSubtotal,
+      gstRatePercent: 18,
+      hsnCode: "998314",
+      gstAmountINR: gstAmount,
+      grandTotalINR: grandTotalINR
+    },
+    paymentTerms: "100% advance on annual renewal. Net 15 days from invoice issuance.",
+    includedServices: [
+      "Dedicated Implementation Engineer (On-site / Virtual)",
+      "Zero-Cost Data Migration from Legacy School Software / Excel",
+      "Staff & Teacher Training Certifications",
+      "24x7 Priority WhatsApp & Phone Helpline"
+    ]
+  };
+
+  ERP_SAVED_QUOTES.set(quoteId, quotation);
+
+  if (req.user?.email) {
+    await recordAuditLog("solutions.quote_generated", req.user.email, "solution_quote", quoteId, req);
+  }
+
+  res.json({ success: true, quotation });
+});
+
+// 4. Official Printable A4 Commercial Proposal: GET /api/erp/solutions/quote/:id/print
+app.get("/api/erp/solutions/quote/:id/print", (req, res) => {
+  const quote = ERP_SAVED_QUOTES.get(req.params.id);
+  if (!quote) {
+    // Generate default proposal for quote id
+    const fallbackQuotation = {
+      quoteId: req.params.id,
       date: new Date().toISOString().split("T")[0],
-      validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-      schoolName,
-      studentCount,
-      billingCycle,
-      itemizedModules,
+      validUntil: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+      schoolName: "Delhi Public Heritage School",
+      studentCount: 850,
+      billingCycle: "annual",
+      itemizedModules: [
+        { name: "Core ERP (Students, Staff, Attendance, Exams, Fees)", ratePerStudentMonthly: 12, monthlyTotalINR: 10200 },
+        { name: "Dakshora AI Teacher Co-Pilot", ratePerStudentMonthly: 6, monthlyTotalINR: 5100 },
+        { name: "NEP 2020 HPC & Student Skill Passport", ratePerStudentMonthly: 5, monthlyTotalINR: 4250 },
+        { name: "Dakshora Robotics & STEAM Lab Curriculum", ratePerStudentMonthly: 8, monthlyTotalINR: 6800 }
+      ],
       pricing: {
-        basePlatformFeeMonthly,
-        effectivePerStudentMonthly: totalPerStudentMonthly,
-        discountPercent: billingCycle === "annual" ? 20 : 0,
-        monthlyChargeableINR: discountedMonthly,
-        annualSubtotalINR: annualSubtotal,
+        basePlatformFeeMonthly: 2500,
+        effectivePerStudentMonthly: 31,
+        discountPercent: 20,
+        monthlyChargeableINR: 23080,
+        annualSubtotalINR: 276960,
         gstRatePercent: 18,
         hsnCode: "998314",
-        gstAmountINR: gstAmount,
-        grandTotalINR: grandTotalINR
+        gstAmountINR: 49853,
+        grandTotalINR: 326813
       },
       paymentTerms: "100% advance on annual renewal. Net 15 days from invoice issuance.",
       includedServices: [
@@ -21908,8 +22254,128 @@ app.post("/api/erp/solutions/quote", (req, res) => {
         "Staff & Teacher Training Certifications",
         "24x7 Priority WhatsApp & Phone Helpline"
       ]
-    }
-  });
+    };
+    return res.type("html").send(generatePrintableCommercialProposalHtml(fallbackQuotation));
+  }
+
+  res.type("html").send(generatePrintableCommercialProposalHtml(quote));
+});
+
+// 5. Saved Proposals Directory: GET /api/erp/solutions/proposals
+app.get("/api/erp/solutions/proposals", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { status } = req.query;
+
+  let proposals = ERP_PROPOSALS.filter(p => !p.organization_id || p.organization_id === orgId);
+  if (orgId === "00000000-0000-0000-0000-000000000000") proposals = [];
+
+  if (status && status !== "all") {
+    proposals = proposals.filter(p => p.status === status);
+  }
+
+  res.json({ success: true, proposals, totalCount: proposals.length });
+});
+
+// 6. Save Quotation as Proposal: POST /api/erp/solutions/proposals
+app.post("/api/erp/solutions/proposals", async (req, res) => {
+  if (!checkSolutionsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const { schoolName, studentCount, selectedPackage, selectedModules, billingCycle, pricing, quoteId } = req.body;
+
+  if (!schoolName || !pricing) {
+    return res.status(400).json({ success: false, message: "schoolName and pricing are required" });
+  }
+
+  const newProp = {
+    id: `prop-${Date.now()}`,
+    organization_id: orgId,
+    quoteId: quoteId || `QUO-DAK-${Date.now().toString().slice(-6)}`,
+    schoolName: schoolName.trim(),
+    studentCount: Number(studentCount) || 500,
+    selectedPackage: selectedPackage || "Custom Package",
+    selectedModules: selectedModules || ["core_erp"],
+    billingCycle: billingCycle || "annual",
+    pricing: pricing || {},
+    executiveDiscountINR: 0,
+    status: "draft",
+    preparedBy: req.user?.name || req.user?.email || "Platform Executive",
+    created_at: new Date().toISOString(),
+    validUntil: new Date(Date.now() + 30 * 86400000).toISOString()
+  };
+
+  ERP_PROPOSALS.unshift(newProp);
+  await recordAuditLog("solutions.proposal_created", req.user?.email, "solution_proposal", newProp.id, req);
+
+  res.status(201).json({ success: true, message: "Commercial proposal recorded", proposal: newProp });
+});
+
+// 7. Update Proposal Status: PATCH /api/erp/solutions/proposals/:id/status
+app.patch("/api/erp/solutions/proposals/:id/status", async (req, res) => {
+  if (!checkSolutionsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+
+  if (!prop) {
+    return res.status(404).json({ success: false, message: "Proposal not found" });
+  }
+
+  const { status, comments } = req.body;
+  if (!status) {
+    return res.status(400).json({ success: false, message: "status is required" });
+  }
+
+  prop.status = status;
+  if (comments) prop.comments = comments;
+  prop.updated_at = new Date().toISOString();
+
+  await recordAuditLog("solutions.proposal_status_changed", req.user?.email, "solution_proposal", prop.id, req);
+  res.json({ success: true, message: `Proposal status transitioned to ${status}`, proposal: prop });
+});
+
+// 8. Apply Executive Special Discount: POST /api/erp/solutions/proposals/:id/discount
+app.post("/api/erp/solutions/proposals/:id/discount", async (req, res) => {
+  if (!checkSolutionsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+
+  if (!prop) {
+    return res.status(404).json({ success: false, message: "Proposal not found" });
+  }
+
+  const { executiveDiscountINR = 0, reason } = req.body;
+  const discount = Number(executiveDiscountINR);
+  prop.executiveDiscountINR = discount;
+  prop.discountReason = reason || "Trustee Executive Discretionary Discount";
+
+  // Recompute pricing
+  const annualSubtotal = Math.max(0, (prop.pricing?.annualSubtotalINR || 0) - discount);
+  const gstAmount = Math.round(annualSubtotal * 0.18);
+  const grandTotal = annualSubtotal + gstAmount;
+
+  prop.pricing = {
+    ...prop.pricing,
+    netSubtotalAfterExecutiveDiscountINR: annualSubtotal,
+    gstAmountINR: gstAmount,
+    grandTotalINR: grandTotal
+  };
+
+  await recordAuditLog("solutions.discount_applied", req.user?.email, "solution_proposal", prop.id, req);
+  res.json({ success: true, message: "Executive commercial discount applied", proposal: prop });
+});
+
+// 9. Delete Proposal: DELETE /api/erp/solutions/proposals/:id
+app.delete("/api/erp/solutions/proposals/:id", async (req, res) => {
+  if (!checkSolutionsAdminPrivilege(req, res)) return;
+  const orgId = resolveTenantOrgId(req);
+  const idx = ERP_PROPOSALS.findIndex(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+
+  if (idx === -1) {
+    return res.status(404).json({ success: false, message: "Proposal not found" });
+  }
+
+  ERP_PROPOSALS.splice(idx, 1);
+  await recordAuditLog("solutions.proposal_deleted", req.user?.email, "solution_proposal", req.params.id, req);
+  res.json({ success: true, message: "Proposal archived successfully" });
 });
 
 // =========================================================================
