@@ -113,3 +113,81 @@ ON CONFLICT (id) DO UPDATE SET
   features = EXCLUDED.features,
   modules = EXCLUDED.modules,
   limits = EXCLUDED.limits;
+
+-- Seed Initial Active Subscriptions for Existing Organizations
+INSERT INTO public.saas_subscriptions (
+    id, organization_id, plan_id, status, billing_interval, amount, currency, current_period_start, current_period_end
+)
+SELECT 
+    'sub-' || substr(o.id::text, 1, 8),
+    o.id,
+    CASE 
+        WHEN o.industry IN ('enterprise', 'technology') THEN 'enterprise'
+        ELSE 'growth'
+    END,
+    'active',
+    'month',
+    CASE 
+        WHEN o.industry IN ('enterprise', 'technology') THEN 8999.00
+        ELSE 3999.00
+    END,
+    'INR',
+    NOW(),
+    NOW() + INTERVAL '1 year'
+FROM public.organizations o
+ON CONFLICT (id) DO NOTHING;
+
+-- =========================================================================
+-- 6. Row Level Security (RLS) Policies & Tenant Isolation
+-- =========================================================================
+
+-- Enable RLS on all SaaS Billing tables
+ALTER TABLE public.saas_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.saas_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.saas_entitlement_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.saas_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.saas_webhook_events ENABLE ROW LEVEL SECURITY;
+
+-- Clean existing policies if re-running
+DROP POLICY IF EXISTS "Public can view active plans" ON public.saas_plans;
+DROP POLICY IF EXISTS "Superadmin full access to plans" ON public.saas_plans;
+DROP POLICY IF EXISTS "Superadmin full access to subscriptions" ON public.saas_subscriptions;
+DROP POLICY IF EXISTS "Tenant view own subscription" ON public.saas_subscriptions;
+DROP POLICY IF EXISTS "Superadmin full access to overrides" ON public.saas_entitlement_overrides;
+DROP POLICY IF EXISTS "Tenant view own overrides" ON public.saas_entitlement_overrides;
+DROP POLICY IF EXISTS "Superadmin full access to invoices" ON public.saas_invoices;
+DROP POLICY IF EXISTS "Tenant view own invoices" ON public.saas_invoices;
+DROP POLICY IF EXISTS "Superadmin full access to webhook events" ON public.saas_webhook_events;
+
+-- saas_plans: Public read active plans, SuperAdmin full access
+CREATE POLICY "Public can view active plans" ON public.saas_plans
+    FOR SELECT USING (is_active = true OR public.is_platform_superadmin());
+
+CREATE POLICY "Superadmin full access to plans" ON public.saas_plans
+    FOR ALL USING (public.is_platform_superadmin()) WITH CHECK (public.is_platform_superadmin());
+
+-- saas_subscriptions: SuperAdmin full access, Tenants view own subscription
+CREATE POLICY "Superadmin full access to subscriptions" ON public.saas_subscriptions
+    FOR ALL USING (public.is_platform_superadmin()) WITH CHECK (public.is_platform_superadmin());
+
+CREATE POLICY "Tenant view own subscription" ON public.saas_subscriptions
+    FOR SELECT USING (organization_id IN (SELECT public.get_user_organization_ids()) OR public.is_platform_superadmin());
+
+-- saas_entitlement_overrides: SuperAdmin full access, Tenants view own overrides
+CREATE POLICY "Superadmin full access to overrides" ON public.saas_entitlement_overrides
+    FOR ALL USING (public.is_platform_superadmin()) WITH CHECK (public.is_platform_superadmin());
+
+CREATE POLICY "Tenant view own overrides" ON public.saas_entitlement_overrides
+    FOR SELECT USING (organization_id IN (SELECT public.get_user_organization_ids()) OR public.is_platform_superadmin());
+
+-- saas_invoices: SuperAdmin full access, Tenants view own invoices
+CREATE POLICY "Superadmin full access to invoices" ON public.saas_invoices
+    FOR ALL USING (public.is_platform_superadmin()) WITH CHECK (public.is_platform_superadmin());
+
+CREATE POLICY "Tenant view own invoices" ON public.saas_invoices
+    FOR SELECT USING (organization_id IN (SELECT public.get_user_organization_ids()) OR public.is_platform_superadmin());
+
+-- saas_webhook_events: SuperAdmin full access only
+CREATE POLICY "Superadmin full access to webhook events" ON public.saas_webhook_events
+    FOR ALL USING (public.is_platform_superadmin()) WITH CHECK (public.is_platform_superadmin());
+

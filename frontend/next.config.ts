@@ -15,18 +15,7 @@ const nextConfig: NextConfig = {
         ? "https://dakshora-api.onrender.com"
         : rawBackendUrl;
     return [
-      {
-        source: "/",
-        destination: "/portal/index.html",
-      },
-      {
-        source: "/erp",
-        destination: "/portal/index.html",
-      },
-      {
-        source: "/portal",
-        destination: "/portal/index.html",
-      },
+      // 1. Backend API reverse proxy routes
       {
         source: "/api/erp/:path*",
         destination: `${backendUrl}/api/erp/:path*`,
@@ -56,8 +45,58 @@ const nextConfig: NextConfig = {
         destination: `${backendUrl}/health`,
       },
       {
+        source: "/health/ready",
+        destination: `${backendUrl}/health/ready`,
+      },
+      {
         source: "/health/supabase",
         destination: `${backendUrl}/health/supabase`,
+      },
+
+      // 2. SPA Portal Entry & Sub-routes
+      {
+        source: "/",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/erp/:path*",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/erp",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/portal/:path*",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/portal",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/admin/:path*",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/admin",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/dashboard/:path*",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/dashboard",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/billing/:path*",
+        destination: "/portal/index.html",
+      },
+      {
+        source: "/billing",
+        destination: "/portal/index.html",
       },
     ];
   },

@@ -19,15 +19,20 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 
 async function createSuperAdmin() {
   const args = process.argv.slice(2);
-  const email = args[0] || "superadmin@dakshora.ai";
-  const password = args[1] || "SuperAdmin@2026!";
+  const email = args[0] || process.env.DAKSHORA_SUPER_ADMIN_EMAIL || "superadmin@dakshora.ai";
+  const password = args[1] || process.env.DAKSHORA_SUPER_ADMIN_PASSWORD;
   const name = args[2] || "Dakshora SuperAdmin";
+
+  if (!password) {
+    console.error("❌ ERROR: SuperAdmin password must be provided via DAKSHORA_SUPER_ADMIN_PASSWORD environment variable or argument.");
+    process.exit(1);
+  }
 
   console.log(`\n==============================================`);
   console.log(`⚡ DAKSHORA 2.0 - Creating SuperAdmin Account`);
   console.log(`==============================================`);
   console.log(`📧 Email:    ${email}`);
-  console.log(`🔑 Password: ${password}`);
+  console.log(`🔑 Password: [CONFIGURED SECURELY]`);
   console.log(`👤 Name:     ${name}`);
   console.log(`----------------------------------------------`);
 

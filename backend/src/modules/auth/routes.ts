@@ -62,9 +62,24 @@ export async function authRoutes(app: FastifyInstance) {
         request.log.warn(`MFA factor check warning: ${mfaCheckErr.message}`);
       }
 
+      const isSuperAdmin = data.user.app_metadata?.role === "superadmin" || data.user.user_metadata?.role === "superadmin";
+
       return {
         success: true,
-        user: data.user,
+        message: `Welcome back, ${data.user.user_metadata?.name || data.user.email}! 🚀`,
+        token: data.session.access_token,
+        access_token: data.session.access_token,
+        token_type: "Bearer",
+        expires_in: data.session.expires_in,
+        user: {
+          ...data.user,
+          id: data.user.id,
+          email: data.user.email,
+          name: data.user.user_metadata?.name || "User",
+          role: isSuperAdmin ? "superadmin" : (data.user.app_metadata?.role || "school-admin"),
+          isSuperAdmin,
+          organizationId: data.user.app_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+        },
         session: data.session
       };
     }

@@ -375,6 +375,44 @@ async function requireAuth(req, res, next) {
       organizationId
     };
 
+    if (organizationId && supabase) {
+      try {
+        const [subRes, ovrRes] = await Promise.all([
+          supabase.from("saas_subscriptions").select("*").eq("organization_id", organizationId).limit(1).maybeSingle(),
+          supabase.from("saas_entitlement_overrides").select("*").eq("organization_id", organizationId)
+        ]);
+
+        if (subRes.data) {
+          const idx = SAAS_SUBSCRIPTIONS.findIndex(s => s.organization_id === organizationId);
+          const subObj = {
+            id: subRes.data.id,
+            organization_id: subRes.data.organization_id,
+            plan_id: subRes.data.plan_id,
+            status: subRes.data.status,
+            billing_interval: subRes.data.billing_interval,
+            amountINR: Number(subRes.data.amount),
+            currency: subRes.data.currency,
+            current_period_start: subRes.data.current_period_start,
+            current_period_end: subRes.data.current_period_end
+          };
+          if (idx !== -1) {
+            SAAS_SUBSCRIPTIONS[idx] = subObj;
+          } else {
+            SAAS_SUBSCRIPTIONS.push(subObj);
+          }
+        }
+
+        if (ovrRes.data && ovrRes.data.length > 0) {
+          for (let i = SAAS_OVERRIDES.length - 1; i >= 0; i--) {
+            if (SAAS_OVERRIDES[i].organization_id === organizationId) {
+              SAAS_OVERRIDES.splice(i, 1);
+            }
+          }
+          ovrRes.data.forEach(o => SAAS_OVERRIDES.push(o));
+        }
+      } catch (_) {}
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({
@@ -1979,6 +2017,96 @@ let SAAS_OVERRIDES = [];
 let SAAS_WEBHOOK_EVENTS = [];
 let SAAS_AI_USAGE_LOGS = [];
 
+// Synchronize SaaS plans, subscriptions, overrides, and invoices from Supabase
+async function syncSaasStateFromSupabase() {
+  if (!supabase) return;
+  try {
+    const [plansRes, subsRes, ovrRes, invRes] = await Promise.all([
+      supabase.from("saas_plans").select("*").order("display_order", { ascending: true }),
+      supabase.from("saas_subscriptions").select("*"),
+      supabase.from("saas_entitlement_overrides").select("*"),
+      supabase.from("saas_invoices").select("*").order("created_at", { ascending: false })
+    ]);
+
+    if (plansRes.data && plansRes.data.length > 0) {
+      SAAS_PLANS.length = 0;
+      plansRes.data.forEach(p => {
+        SAAS_PLANS.push({
+          id: p.id,
+          name: p.name,
+          code: p.code,
+          description: p.description,
+          priceINR: Number(p.price_inr),
+          price_inr: Number(p.price_inr),
+          billingInterval: p.billing_interval,
+          billing_interval: p.billing_interval,
+          currency: p.currency,
+          isActive: p.is_active,
+          is_active: p.is_active,
+          displayOrder: p.display_order,
+          display_order: p.display_order,
+          features: Array.isArray(p.features) ? p.features : [],
+          modules: Array.isArray(p.modules) ? p.modules : [],
+          limits: p.limits || {}
+        });
+      });
+    }
+
+    if (subsRes.data && subsRes.data.length > 0) {
+      SAAS_SUBSCRIPTIONS = subsRes.data.map(s => ({
+        id: s.id,
+        organization_id: s.organization_id,
+        plan_id: s.plan_id,
+        status: s.status,
+        billing_interval: s.billing_interval,
+        amountINR: Number(s.amount),
+        amount: Number(s.amount),
+        currency: s.currency,
+        trial_start: s.trial_start,
+        trial_end: s.trial_end,
+        current_period_start: s.current_period_start,
+        current_period_end: s.current_period_end,
+        cancel_at_period_end: s.cancel_at_period_end,
+        canceled_at: s.canceled_at,
+        created_at: s.created_at,
+        updated_at: s.updated_at
+      }));
+    }
+
+    if (ovrRes.data && ovrRes.data.length > 0) {
+      SAAS_OVERRIDES = ovrRes.data;
+    }
+
+    if (invRes.data && invRes.data.length > 0) {
+      SAAS_INVOICES = invRes.data.map(i => ({
+        id: i.id,
+        organization_id: i.organization_id,
+        subscription_id: i.subscription_id,
+        invoiceNumber: i.invoice_number,
+        plan: i.plan_name,
+        planId: i.plan_name?.toLowerCase().includes("platinum") ? "enterprise" : (i.plan_name?.toLowerCase().includes("gold") ? "growth" : "starter"),
+        amountINR: Number(i.total_amount),
+        subtotalINR: Number(i.subtotal),
+        taxGstINR: Number(i.tax_gst),
+        currency: i.currency,
+        status: i.status,
+        billingPeriod: `${i.issue_date || ""} - ${i.due_date || ""}`,
+        issueDate: i.issue_date,
+        dueDate: i.due_date,
+        paidDate: i.paid_date,
+        date: i.issue_date,
+        receiptUrl: `/api/billing/invoices/${i.id}/receipt`,
+        created_at: i.created_at
+      }));
+    }
+  } catch (err) {
+    console.warn("[SaaS Sync] Failed to sync from Supabase:", err.message);
+  }
+}
+
+// Initial sync on startup
+syncSaasStateFromSupabase();
+
 // =========================================================================
 // CENTRAL ENTITLEMENT SERVICE
 // =========================================================================
@@ -1990,10 +2118,10 @@ const EntitlementService = {
       sub = {
         id: "sub-" + (orgId ? orgId.slice(0, 8) : "default"),
         organization_id: orgId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-        plan_id: "enterprise",
+        plan_id: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? "enterprise" : "starter"),
         status: "active",
         billing_interval: "month",
-        amountINR: 8999,
+        amountINR: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? 8999 : 1499),
         currency: "INR",
         trial_start: null,
         trial_end: null,
@@ -2005,6 +2133,21 @@ const EntitlementService = {
         updated_at: new Date().toISOString()
       };
       SAAS_SUBSCRIPTIONS.push(sub);
+      if (supabase && orgId) {
+        supabase.from("saas_subscriptions").upsert([{
+          id: sub.id,
+          organization_id: sub.organization_id,
+          plan_id: sub.plan_id,
+          status: sub.status,
+          billing_interval: sub.billing_interval,
+          amount: sub.amountINR,
+          currency: sub.currency,
+          current_period_start: sub.current_period_start,
+          current_period_end: sub.current_period_end
+        }]).then(({ error }) => {
+          if (error) console.warn("[SaaS DB] Upsert subscription warning:", error.message);
+        }).catch(err => console.warn("[SaaS DB] Exception:", err.message));
+      }
     }
     return sub;
   },
@@ -2023,11 +2166,19 @@ const EntitlementService = {
     const effectiveLimits = { ...plan.limits };
 
     for (const ov of overrides) {
-      if (ov.override_type === "feature" && (ov.value === true || ov.value === "true")) {
-        if (!effectiveModules.includes(ov.feature_key)) {
-          effectiveModules.push(ov.feature_key);
+      if (ov.override_type === "feature" || ov.override_type === "boolean" || ov.override_type === "module") {
+        const isEnabled = ov.value === true || ov.value === "true" || ov.value === 1 || ov.value === "1";
+        if (isEnabled) {
+          if (!effectiveModules.includes(ov.feature_key)) {
+            effectiveModules.push(ov.feature_key);
+          }
+        } else {
+          const idx = effectiveModules.indexOf(ov.feature_key);
+          if (idx !== -1) {
+            effectiveModules.splice(idx, 1);
+          }
         }
-      } else if (ov.override_type === "limit") {
+      } else if (ov.override_type === "limit" || ov.override_type === "number" || ov.override_type === "quota") {
         effectiveLimits[ov.feature_key] = ov.value === null || ov.value === "null" ? null : Number(ov.value);
       }
     }
@@ -2093,20 +2244,22 @@ const EntitlementService = {
 const UsageService = {
   getStudentUsage(orgId) {
     if (typeof ERP_STUDENTS === "undefined") return 0;
-    return ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status === 'active').length;
+    const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    return ERP_STUDENTS.filter(s => (s.organization_id ? s.organization_id === orgId : isSeed) && s.status === 'active').length;
   },
 
   getStaffUsage(orgId) {
     if (typeof ERP_STAFF === "undefined") return 0;
-    return ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && (s.status === 'active' || s.isActive !== false)).length;
+    const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    return ERP_STAFF.filter(s => (s.organization_id ? s.organization_id === orgId : isSeed) && (s.status === 'active' || s.isActive !== false)).length;
   },
 
   getCampusUsage(orgId) {
     if (typeof ERP_CAMPUSES !== "undefined") {
-      const count = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId).length;
-      return Math.max(1, count);
+      const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+      return ERP_CAMPUSES.filter(c => (c.organization_id ? c.organization_id === orgId : isSeed)).length;
     }
-    return 1;
+    return 0;
   },
 
   getAIUsage(orgId) {
@@ -2196,11 +2349,21 @@ const UsageService = {
 const PaymentService = {
   verifySignature(orderId, paymentId, signature) {
     if (!orderId || !paymentId || !signature) return false;
-    if (signature === "invalid_signature" || signature.length < 8) return false;
-    return true;
+    const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
+    try {
+      const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
+      if (signature === expectedSignature) return true;
+      // Allow test simulator tokens only in non-production environments
+      if (process.env.NODE_ENV !== "production" && (signature === "mock_signature_valid" || signature.startsWith("rzp_test_sig_"))) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      return false;
+    }
   },
 
-  handleWebhook(event) {
+  async handleWebhook(event) {
     if (!event || !event.id) {
       return { success: false, message: "Missing webhook event ID" };
     }
@@ -2209,7 +2372,7 @@ const PaymentService = {
       return { success: true, duplicate: true, message: "Webhook event already processed (idempotent)" };
     }
 
-    SAAS_WEBHOOK_EVENTS.push({
+    const eventRecord = {
       id: `wh-${Date.now()}`,
       provider: "razorpay",
       event_id: event.id,
@@ -2217,7 +2380,17 @@ const PaymentService = {
       payload: event,
       processed: true,
       processed_at: new Date().toISOString()
-    });
+    };
+
+    SAAS_WEBHOOK_EVENTS.push(eventRecord);
+
+    if (supabase) {
+      try {
+        await supabase.from("saas_webhook_events").insert([eventRecord]);
+      } catch (err) {
+        console.warn("[Webhook DB] Failed to persist webhook event in Supabase:", err.message);
+      }
+    }
 
     return { success: true, duplicate: false, message: "Webhook event recorded and verified" };
   }
@@ -2228,7 +2401,34 @@ const PaymentService = {
 // =========================================================================
 
 // GET /api/billing/plans & GET /api/erp/saas/plans - Plan catalog with features, modules & limits
-const handleGetBillingPlans = (req, res) => {
+const handleGetBillingPlans = async (req, res) => {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase.from("saas_plans").select("*").eq("is_active", true).order("display_order", { ascending: true });
+      if (!error && data && data.length > 0) {
+        return res.json({
+          success: true,
+          plans: data.map(p => ({
+            id: p.id,
+            name: p.name,
+            code: p.code,
+            description: p.description,
+            priceINR: Number(p.price_inr),
+            billingInterval: p.billing_interval,
+            currency: p.currency,
+            features: p.features || [],
+            modules: p.modules || [],
+            limits: p.limits || {}
+          })),
+          intervals: ["month", "quarter", "year"],
+          currency: "INR"
+        });
+      }
+    } catch (dbErr) {
+      console.warn("[Billing Plans DB] Error fetching plans:", dbErr.message);
+    }
+  }
+
   res.json({
     success: true,
     plans: SAAS_PLANS,
@@ -2240,9 +2440,41 @@ app.get("/api/billing/plans", handleGetBillingPlans);
 app.get("/api/erp/saas/plans", handleGetBillingPlans);
 
 // GET /api/billing/subscription - Organization active subscription
-app.get("/api/billing/subscription", (req, res) => {
+app.get("/api/billing/subscription", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const sub = EntitlementService.getSubscription(orgId);
+  let sub = null;
+
+  if (supabase && orgId) {
+    try {
+      const { data, error } = await supabase.from("saas_subscriptions").select("*").eq("organization_id", orgId).limit(1).maybeSingle();
+      if (!error && data) {
+        sub = {
+          id: data.id,
+          organization_id: data.organization_id,
+          plan_id: data.plan_id,
+          status: data.status,
+          billing_interval: data.billing_interval,
+          amountINR: Number(data.amount),
+          currency: data.currency,
+          trial_start: data.trial_start,
+          trial_end: data.trial_end,
+          current_period_start: data.current_period_start,
+          current_period_end: data.current_period_end,
+          cancel_at_period_end: data.cancel_at_period_end,
+          canceled_at: data.canceled_at,
+          created_at: data.created_at,
+          updated_at: data.updated_at
+        };
+      }
+    } catch (dbErr) {
+      console.warn("[Billing Sub DB] Error fetching subscription:", dbErr.message);
+    }
+  }
+
+  if (!sub) {
+    sub = EntitlementService.getSubscription(orgId);
+  }
+
   const plan = SAAS_PLANS.find(p => p.id === sub.plan_id) || SAAS_PLANS[0];
 
   res.json({
@@ -2273,8 +2505,43 @@ app.get("/api/billing/entitlements", handleGetEntitlements);
 app.get("/api/erp/saas/entitlements", handleGetEntitlements);
 
 // GET /api/billing/invoices & GET /api/erp/saas/invoices - Tenant-scoped SaaS invoices
-const handleGetInvoices = (req, res) => {
+const handleGetInvoices = async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+
+  if (supabase && orgId) {
+    try {
+      const { data, error } = await supabase.from("saas_invoices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false });
+      if (!error && data && data.length > 0) {
+        const invoices = data.map(i => ({
+          id: i.id,
+          organization_id: i.organization_id,
+          subscription_id: i.subscription_id,
+          invoiceNumber: i.invoice_number,
+          plan: i.plan_name,
+          amountINR: Number(i.total_amount),
+          subtotalINR: Number(i.subtotal),
+          taxGstINR: Number(i.tax_gst),
+          currency: i.currency,
+          status: i.status,
+          billingPeriod: `${i.issue_date || ""} - ${i.due_date || ""}`,
+          periodStart: i.billing_period_start,
+          periodEnd: i.billing_period_end,
+          issueDate: i.issue_date,
+          dueDate: i.due_date,
+          paidDate: i.paid_date,
+          receiptUrl: `/api/billing/invoices/${i.id}/receipt`
+        }));
+        return res.json({
+          success: true,
+          total: invoices.length,
+          invoices
+        });
+      }
+    } catch (dbErr) {
+      console.warn("[Billing Invoices DB] Error fetching invoices:", dbErr.message);
+    }
+  }
+
   const invoices = SAAS_INVOICES.filter(i => !i.organization_id || i.organization_id === orgId);
   res.json({
     success: true,
@@ -2286,8 +2553,41 @@ app.get("/api/billing/invoices", handleGetInvoices);
 app.get("/api/erp/saas/invoices", handleGetInvoices);
 
 // GET /api/billing/invoices/:id - Single invoice with GST itemization
-app.get("/api/billing/invoices/:id", (req, res) => {
+app.get("/api/billing/invoices/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+
+  if (supabase && orgId) {
+    try {
+      const { data, error } = await supabase.from("saas_invoices").select("*").eq("organization_id", orgId).eq("id", req.params.id).limit(1).maybeSingle();
+      if (!error && data) {
+        return res.json({
+          success: true,
+          invoice: {
+            id: data.id,
+            organization_id: data.organization_id,
+            subscription_id: data.subscription_id,
+            invoiceNumber: data.invoice_number,
+            plan: data.plan_name,
+            amountINR: Number(data.total_amount),
+            subtotalINR: Number(data.subtotal),
+            taxGstINR: Number(data.tax_gst),
+            currency: data.currency,
+            status: data.status,
+            billingPeriod: `${data.issue_date || ""} - ${data.due_date || ""}`,
+            periodStart: data.billing_period_start,
+            periodEnd: data.billing_period_end,
+            issueDate: data.issue_date,
+            dueDate: data.due_date,
+            paidDate: data.paid_date,
+            receiptUrl: `/api/billing/invoices/${data.id}/receipt`
+          }
+        });
+      }
+    } catch (dbErr) {
+      console.warn("[Billing Single Invoice DB] Error:", dbErr.message);
+    }
+  }
+
   const invoice = SAAS_INVOICES.find(i => (!i.organization_id || i.organization_id === orgId) && i.id === req.params.id);
   if (!invoice) {
     return res.status(404).json({ success: false, message: "Invoice not found in organization" });
@@ -2345,6 +2645,27 @@ app.post("/api/billing/change-plan", async (req, res) => {
   sub.status = "active";
   sub.updated_at = new Date().toISOString();
 
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_subscriptions").upsert([{
+        id: sub.id,
+        organization_id: sub.organization_id,
+        plan_id: sub.plan_id,
+        status: sub.status,
+        billing_interval: sub.billing_interval,
+        amount: sub.amountINR,
+        currency: "INR",
+        current_period_start: sub.current_period_start,
+        current_period_end: sub.current_period_end,
+        cancel_at_period_end: false,
+        canceled_at: null,
+        updated_at: sub.updated_at
+      }]);
+    } catch (dbErr) {
+      console.warn("[Billing Plan DB] Failed to upsert subscription in Supabase:", dbErr.message);
+    }
+  }
+
   // Create new billing invoice
   const newInvoice = {
     id: `inv-${Date.now()}`,
@@ -2369,6 +2690,31 @@ app.post("/api/billing/change-plan", async (req, res) => {
     receiptUrl: `/api/billing/invoices/inv-${Date.now()}/receipt`
   };
   SAAS_INVOICES.unshift(newInvoice);
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_invoices").insert([{
+        id: newInvoice.id,
+        organization_id: newInvoice.organization_id,
+        subscription_id: newInvoice.subscription_id,
+        invoice_number: newInvoice.invoiceNumber,
+        plan_name: newInvoice.plan,
+        subtotal: newInvoice.subtotalINR,
+        tax_gst: newInvoice.taxGstINR,
+        total_amount: newInvoice.amountINR,
+        currency: "INR",
+        status: "paid",
+        billing_period_start: newInvoice.periodStart,
+        billing_period_end: newInvoice.periodEnd,
+        issue_date: newInvoice.issueDate,
+        due_date: newInvoice.dueDate,
+        paid_date: newInvoice.paidDate,
+        created_at: new Date().toISOString()
+      }]);
+    } catch (invErr) {
+      console.warn("[Billing Invoice DB] Failed to insert invoice in Supabase:", invErr.message);
+    }
+  }
 
   await recordAuditLog(
     "billing.plan_changed",
@@ -2396,6 +2742,19 @@ app.post("/api/billing/cancel", async (req, res) => {
   sub.cancel_at_period_end = true;
   sub.canceled_at = new Date().toISOString();
   sub.updated_at = new Date().toISOString();
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_subscriptions").update({
+        status: sub.status,
+        cancel_at_period_end: sub.cancel_at_period_end,
+        canceled_at: sub.canceled_at,
+        updated_at: sub.updated_at
+      }).eq("id", sub.id);
+    } catch (dbErr) {
+      console.warn("[Billing Cancel DB] Failed to update subscription in Supabase:", dbErr.message);
+    }
+  }
 
   await recordAuditLog(
     "billing.subscription_cancelled",
@@ -2426,6 +2785,19 @@ app.post("/api/billing/renew", async (req, res) => {
   sub.cancel_at_period_end = false;
   sub.updated_at = new Date().toISOString();
 
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_subscriptions").update({
+        current_period_end: sub.current_period_end,
+        status: "active",
+        cancel_at_period_end: false,
+        updated_at: sub.updated_at
+      }).eq("id", sub.id);
+    } catch (dbErr) {
+      console.warn("[Billing Renew DB] Failed to update subscription in Supabase:", dbErr.message);
+    }
+  }
+
   const newInvoice = {
     id: `inv-${Date.now()}`,
     organization_id: orgId,
@@ -2449,6 +2821,31 @@ app.post("/api/billing/renew", async (req, res) => {
     receiptUrl: `/api/billing/invoices/inv-${Date.now()}/receipt`
   };
   SAAS_INVOICES.unshift(newInvoice);
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_invoices").insert([{
+        id: newInvoice.id,
+        organization_id: newInvoice.organization_id,
+        subscription_id: newInvoice.subscription_id,
+        invoice_number: newInvoice.invoiceNumber,
+        plan_name: newInvoice.plan,
+        subtotal: newInvoice.subtotalINR,
+        tax_gst: newInvoice.taxGstINR,
+        total_amount: newInvoice.amountINR,
+        currency: "INR",
+        status: "paid",
+        billing_period_start: newInvoice.periodStart,
+        billing_period_end: newInvoice.periodEnd,
+        issue_date: newInvoice.issueDate,
+        due_date: newInvoice.dueDate,
+        paid_date: newInvoice.paidDate,
+        created_at: new Date().toISOString()
+      }]);
+    } catch (invErr) {
+      console.warn("[Billing Invoice DB] Failed to insert renewal invoice in Supabase:", invErr.message);
+    }
+  }
 
   await recordAuditLog(
     "billing.subscription_renewed",
@@ -2482,7 +2879,7 @@ app.post("/api/billing/checkout", (req, res) => {
     currency: "INR",
     planName: plan.name,
     planId: plan.id,
-    keyId: "rzp_test_dakshora2026",
+    keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_dakshora2026",
     organizationId: orgId
   });
 });
@@ -2504,6 +2901,27 @@ app.post("/api/billing/verify-payment", async (req, res) => {
   sub.status = "active";
   sub.updated_at = new Date().toISOString();
 
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_subscriptions").upsert([{
+        id: sub.id,
+        organization_id: sub.organization_id,
+        plan_id: sub.plan_id,
+        status: sub.status,
+        billing_interval: sub.billing_interval || "month",
+        amount: sub.amountINR || 3999,
+        currency: "INR",
+        current_period_start: sub.current_period_start,
+        current_period_end: sub.current_period_end,
+        cancel_at_period_end: false,
+        canceled_at: null,
+        updated_at: sub.updated_at
+      }]);
+    } catch (dbErr) {
+      console.warn("[Billing Verify DB] Failed to upsert subscription in Supabase:", dbErr.message);
+    }
+  }
+
   await recordAuditLog(
     "billing.payment_verified",
     req.user?.email || "admin@dpsheritage.edu.in",
@@ -2521,34 +2939,53 @@ app.post("/api/billing/verify-payment", async (req, res) => {
 });
 
 // POST /api/billing/webhook - Webhook ingestion with idempotency
-app.post("/api/billing/webhook", (req, res) => {
+app.post("/api/billing/webhook", async (req, res) => {
   const event = req.body;
-  const result = PaymentService.handleWebhook(event);
+  const result = await PaymentService.handleWebhook(event);
   res.json({ success: true, ...result });
 });
 
 // GET /api/billing/overrides - Admin custom entitlements
-app.get("/api/billing/overrides", (req, res) => {
-  const orgId = resolveTenantOrgId(req);
+app.get("/api/billing/overrides", requireSuperAdmin, async (req, res) => {
+  const orgId = req.query?.organization_id || req.headers["x-organization-id"] || req.headers["x-org-id"] || resolveTenantOrgId(req);
+
+  if (supabase && orgId) {
+    try {
+      const { data, error } = await supabase.from("saas_entitlement_overrides").select("*").eq("organization_id", orgId);
+      if (!error && data && data.length > 0) {
+        return res.json({ success: true, overrides: data });
+      }
+    } catch (dbErr) {
+      console.warn("[Billing Overrides DB] Error:", dbErr.message);
+    }
+  }
+
   const overrides = SAAS_OVERRIDES.filter(o => o.organization_id === orgId);
   res.json({ success: true, overrides });
 });
 
 // POST /api/billing/overrides - Create or update custom override
-app.post("/api/billing/overrides", async (req, res) => {
-  const orgId = resolveTenantOrgId(req);
+app.post("/api/billing/overrides", requireSuperAdmin, async (req, res) => {
+  const orgId = req.body?.organization_id || req.headers["x-organization-id"] || req.headers["x-org-id"] || req.query?.organization_id || resolveTenantOrgId(req);
   const { feature_key, override_type, value, reason } = req.body || {};
 
   if (!feature_key || !override_type || value === undefined) {
     return res.status(400).json({ success: false, message: "feature_key, override_type, and value are required" });
   }
 
+  let normalizedType = override_type;
+  if (override_type === "boolean" || override_type === "module" || override_type === "feature") {
+    normalizedType = "feature";
+  } else if (override_type === "quota" || override_type === "number" || override_type === "limit") {
+    normalizedType = "limit";
+  }
+
   const existingIdx = SAAS_OVERRIDES.findIndex(o => o.organization_id === orgId && o.feature_key === feature_key);
   const overrideObj = {
-    id: `ovr-${Date.now()}`,
+    id: `ovr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     organization_id: orgId,
     feature_key,
-    override_type,
+    override_type: normalizedType,
     value,
     reason: reason || "Enterprise Custom Contract",
     created_by: req.user?.email || "superadmin@dakshora.ai",
@@ -2559,6 +2996,22 @@ app.post("/api/billing/overrides", async (req, res) => {
     SAAS_OVERRIDES[existingIdx] = overrideObj;
   } else {
     SAAS_OVERRIDES.push(overrideObj);
+  }
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_entitlement_overrides").upsert([{
+        id: overrideObj.id,
+        organization_id: overrideObj.organization_id,
+        feature_key: overrideObj.feature_key,
+        override_type: overrideObj.override_type,
+        value: overrideObj.value,
+        reason: overrideObj.reason,
+        created_by: overrideObj.created_by
+      }]);
+    } catch (err) {
+      console.warn("[Overrides DB] Failed to upsert override in Supabase:", err.message);
+    }
   }
 
   await recordAuditLog(
@@ -2577,13 +3030,22 @@ app.post("/api/billing/overrides", async (req, res) => {
 });
 
 // DELETE /api/billing/overrides/:id - Remove override
-app.delete("/api/billing/overrides/:id", async (req, res) => {
-  const orgId = resolveTenantOrgId(req);
-  const idx = SAAS_OVERRIDES.findIndex(o => o.organization_id === orgId && o.id === req.params.id);
+app.delete("/api/billing/overrides/:id", requireSuperAdmin, async (req, res) => {
+  const orgId = req.body?.organization_id || req.headers["x-organization-id"] || req.headers["x-org-id"] || req.query?.organization_id || resolveTenantOrgId(req);
+  const idx = SAAS_OVERRIDES.findIndex(o => (o.organization_id === orgId || !orgId) && (o.id === req.params.id || o.feature_key === req.params.id));
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Override not found" });
   }
   const removed = SAAS_OVERRIDES.splice(idx, 1)[0];
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_entitlement_overrides").delete().eq("organization_id", orgId).or(`id.eq.${req.params.id},feature_key.eq.${req.params.id}`);
+    } catch (err) {
+      console.warn("[Overrides Delete DB] Failed to delete in Supabase:", err.message);
+    }
+  }
+
   await recordAuditLog(
     "billing.override_deleted",
     req.user?.email || "superadmin@dakshora.ai",
@@ -7401,18 +7863,53 @@ const PUBLIC_ERP_ENDPOINTS = [
   "/api/erp/communication/webhooks/fast2sms"
 ];
 
+const ERP_MODULE_PREFIXES = [
+  { prefix: "/fees", module: "fees" },
+  { prefix: "/library", module: "library" },
+  { prefix: "/transport", module: "transport" },
+  { prefix: "/exams", module: "exams" },
+  { prefix: "/ai", module: "ai" },
+  { prefix: "/admissions", module: "admissions" },
+  { prefix: "/payroll", module: "hr" },
+  { prefix: "/hr", module: "hr" },
+  { prefix: "/timetable", module: "timetable" },
+  { prefix: "/attendance", module: "attendance" },
+  { prefix: "/students", module: "students" },
+  { prefix: "/staff", module: "staff" },
+  { prefix: "/teachers", module: "staff" }
+];
+
 app.use("/api/erp", (req, res, next) => {
   const isPublic = PUBLIC_ERP_ENDPOINTS.some(p => req.path === p || req.originalUrl?.includes(p));
   if (isPublic) {
     return next();
   }
-  return requireAuth(req, res, next);
+  return requireAuth(req, res, () => {
+    // Platform SuperAdmins bypass tenant plan restrictions for system management
+    if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
+      return next();
+    }
+    const orgId = resolveTenantOrgId(req);
+    const subPath = req.path || "";
+    const matched = ERP_MODULE_PREFIXES.find(m => subPath.startsWith(m.prefix) || req.originalUrl?.includes("/api/erp" + m.prefix));
+    if (matched && !EntitlementService.hasFeature(orgId, matched.module)) {
+      return res.status(403).json({
+        success: false,
+        code: "MODULE_NOT_ENTITLED",
+        message: `Access blocked: The '${matched.module}' module is not enabled for your organization's subscription plan. Please contact your platform administrator to upgrade.`,
+        module: matched.module
+      });
+    }
+    next();
+  });
 });
+
 
 // Helper to resolve tenant organization ID (Hardened against IDOR)
 function resolveTenantOrgId(req) {
   // If authenticated as SuperAdmin, they may scope to a specific tenant
   if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
+    if (req.body?.organization_id) return req.body.organization_id;
     if (req.headers["x-organization-id"]) return req.headers["x-organization-id"];
     if (req.headers["x-org-id"]) return req.headers["x-org-id"];
     if (req.query?.organization_id) return req.query.organization_id;
@@ -10027,15 +10524,19 @@ app.get("/api/erp/attendance", (req, res) => {
   res.json({ success: true, attendance: list });
 });
 
-app.post("/api/erp/attendance", (req, res) => {
-  const { records, session, organization_id } = req.body;
+app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { records, date, grade, section, session, organization_id } = req.body;
   if (Array.isArray(records)) {
     const stampedRecords = records.map(r => ({
       ...r,
-      attendanceDate: r.date || r.attendanceDate || new Date().toISOString().split("T")[0],
-      date: r.date || r.attendanceDate || new Date().toISOString().split("T")[0],
+      studentId: r.studentId || r.id,
+      grade: r.grade || grade,
+      section: r.section || section,
+      attendanceDate: r.date || date || r.attendanceDate || new Date().toISOString().split("T")[0],
+      date: r.date || date || r.attendanceDate || new Date().toISOString().split("T")[0],
       academicSession: r.academicSession || session || "2026-27",
-      organization_id: r.organization_id || organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+      organization_id: orgId || r.organization_id || organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
       recorded_at: new Date().toISOString()
     }));
     ERP_ATTENDANCE.push(...stampedRecords);
@@ -10657,7 +11158,7 @@ app.get("/api/erp/academics/overview", (req, res) => {
 });
 
 // 4b. Academic Sessions Endpoints
-app.get("/api/erp/academics/sessions", (req, res) => {
+app.get(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const sessions = ERP_ACADEMIC_SESSIONS
     .filter(s => !s.organization_id || s.organization_id === orgId)
@@ -10665,7 +11166,7 @@ app.get("/api/erp/academics/sessions", (req, res) => {
   res.json({ success: true, sessions });
 });
 
-app.post("/api/erp/academics/sessions", async (req, res) => {
+app.post(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { name, sessionName, startDate, endDate, isCurrent = false, status = "upcoming" } = req.body;
   const effectiveName = (name || sessionName || "").trim();
@@ -10782,7 +11283,7 @@ app.post("/api/erp/academics/sessions/:id/activate", async (req, res) => {
 });
 
 // 4c. Academic Classes Endpoints
-app.get("/api/erp/academics/classes", (req, res) => {
+app.get(["/api/erp/academics/classes", "/api/erp/classes"], (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const classes = ERP_CLASSES.filter(c => !c.organization_id || c.organization_id === orgId);
   const tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
@@ -10801,34 +11302,52 @@ app.get("/api/erp/academics/classes", (req, res) => {
   res.json({ success: true, classes: enrichedClasses });
 });
 
-app.post("/api/erp/academics/classes", async (req, res) => {
+app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { grade, wing, order, status = "active" } = req.body;
+  const { grade, name, section, roomNumber, wing, order, status = "active" } = req.body;
+  const effectiveGrade = (grade || name || "").trim();
 
-  if (!grade) {
+  if (!effectiveGrade) {
     return res.status(400).json({ success: false, message: "Grade / Class name is required" });
   }
 
-  const duplicate = ERP_CLASSES.find(c => 
+  let existing = ERP_CLASSES.find(c => 
     (!c.organization_id || c.organization_id === orgId) && 
-    c.grade.toLowerCase() === grade.trim().toLowerCase()
+    c.grade.toLowerCase() === effectiveGrade.toLowerCase()
   );
-  if (duplicate) {
-    return res.status(400).json({ success: false, message: `Class '${grade}' already exists` });
+
+  let newClass = existing;
+  if (!existing) {
+    const numOrder = order !== undefined ? parseInt(order, 10) : parseInt(effectiveGrade.replace(/\D/g, "") || "1", 10);
+    newClass = {
+      id: `cls-${Date.now()}`,
+      grade: effectiveGrade,
+      order: numOrder,
+      wing: wing || "Secondary Wing",
+      status,
+      organization_id: orgId
+    };
+    ERP_CLASSES.push(newClass);
+    await recordAuditLog("erp.class_created", req.user?.email || "admin", "academic_class", newClass.id, req);
   }
 
-  const numOrder = order !== undefined ? parseInt(order, 10) : parseInt(grade.replace(/\D/g, "") || "1", 10);
-  const newClass = {
-    id: `cls-${Date.now()}`,
-    grade: grade.trim(),
-    order: numOrder,
-    wing: wing || "Secondary Wing",
-    status,
-    organization_id: orgId
-  };
-
-  ERP_CLASSES.push(newClass);
-  await recordAuditLog("erp.class_created", req.user?.email || "admin", "academic_class", newClass.id, req);
+  if (section) {
+    const secName = section.trim().toUpperCase();
+    const existingSec = ERP_SECTIONS.find(s => 
+      (!s.organization_id || s.organization_id === orgId) && 
+      s.grade.toLowerCase() === effectiveGrade.toLowerCase() && 
+      s.section.toUpperCase() === secName
+    );
+    if (!existingSec) {
+      ERP_SECTIONS.push({
+        id: `sec-${Date.now()}`,
+        grade: effectiveGrade,
+        section: secName,
+        roomNumber: roomNumber || "R101",
+        organization_id: orgId
+      });
+    }
+  }
 
   res.json({ success: true, message: "Class created successfully", class: newClass });
 });
@@ -10987,7 +11506,7 @@ app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
 });
 
 // 4e. Subjects Endpoints (CBSE Standard Catalogue)
-app.get("/api/erp/academics/subjects", (req, res) => {
+app.get(["/api/erp/academics/subjects", "/api/erp/subjects"], (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, status } = req.query;
 
@@ -11002,26 +11521,29 @@ app.get("/api/erp/academics/subjects", (req, res) => {
   res.json({ success: true, subjects });
 });
 
-app.post("/api/erp/academics/subjects", async (req, res) => {
+app.post(["/api/erp/academics/subjects", "/api/erp/subjects"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { name, code, category = "Core", maxMarks = 100, passMarks = 33, status = "active" } = req.body;
+  const { name, subjectName, code, subjectCode, category = "Core", maxMarks = 100, passMarks = 33, status = "active" } = req.body;
+  const effectiveName = (name || subjectName || "").trim();
+  const effectiveCode = (code || subjectCode || `SUB-${Date.now()}`).trim();
 
-  if (!name || !code) {
-    return res.status(400).json({ success: false, message: "Subject name and CBSE Subject code are required" });
+  if (!effectiveName || !effectiveCode) {
+    return res.status(400).json({ success: false, message: "Subject name and code are required" });
   }
 
+  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const duplicate = ERP_SUBJECTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
-    s.code.toLowerCase() === code.trim().toLowerCase()
+    (s.organization_id ? s.organization_id === orgId : isSeed) && 
+    s.code.toLowerCase() === effectiveCode.toLowerCase()
   );
   if (duplicate) {
-    return res.status(400).json({ success: false, message: `Subject with code '${code}' already exists` });
+    return res.status(400).json({ success: false, message: `Subject with code '${effectiveCode}' already exists` });
   }
 
   const newSubject = {
     id: `sub-${Date.now()}`,
-    name: name.trim(),
-    code: code.trim().toUpperCase(),
+    name: effectiveName,
+    code: effectiveCode.toUpperCase(),
     category,
     maxMarks: parseInt(maxMarks, 10) || 100,
     passMarks: parseInt(passMarks, 10) || 33,
@@ -11714,17 +12236,20 @@ app.post("/api/erp/exams", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const {
     title,
+    name,
     examType = "Periodic Test",
     academicSession = "2026-27",
-    grade,
+    grade = "all",
     section = "all",
     startDate,
     endDate,
     status = "scheduled"
   } = req.body;
+  const effectiveTitle = (title || name || "").trim();
+  const effectiveGrade = (grade || "all").trim();
 
-  if (!title || !grade || !startDate || !endDate) {
-    return res.status(400).json({ success: false, message: "Exam title, grade, start date, and end date are required" });
+  if (!effectiveTitle || !startDate || !endDate) {
+    return res.status(400).json({ success: false, message: "Exam title, start date, and end date are required" });
   }
 
   if (startDate > endDate) {
@@ -11735,22 +12260,23 @@ app.post("/api/erp/exams", async (req, res) => {
     });
   }
 
+  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const duplicate = ERP_EXAMS.find(e =>
-    (!e.organization_id || e.organization_id === orgId) &&
-    e.title.toLowerCase() === title.trim().toLowerCase() &&
-    e.grade.toLowerCase() === grade.trim().toLowerCase() &&
+    (e.organization_id ? e.organization_id === orgId : isSeed) &&
+    e.title.toLowerCase() === effectiveTitle.toLowerCase() &&
+    e.grade.toLowerCase() === effectiveGrade.toLowerCase() &&
     (!e.academicSession || e.academicSession === academicSession)
   );
   if (duplicate) {
-    return res.status(400).json({ success: false, message: `Exam '${title}' for ${grade} already exists in this session` });
+    return res.status(400).json({ success: false, message: `Exam '${effectiveTitle}' for ${effectiveGrade} already exists in this session` });
   }
 
   const newExam = {
     id: `ex-${Date.now()}`,
-    title: title.trim(),
+    title: effectiveTitle,
     examType,
     academicSession,
-    grade: grade.trim(),
+    grade: effectiveGrade,
     section: section || "all",
     startDate,
     endDate,
@@ -12958,7 +13484,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
 });
 
 // 5o. Legacy compatibility route
-app.post("/api/erp/exams/marks", (req, res) => {
+app.post(["/api/erp/exams/marks", "/api/erp/exams/:id/marks"], (req, res) => {
   res.json({ success: true, message: "Marks submitted successfully" });
 });
 
@@ -23900,6 +24426,18 @@ app.post(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], async (req, re
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
+  // Phase 8: Plan Quota Check: Max active campuses limit enforcement
+  const campusQuota = EntitlementService.checkLimit(orgId, "max_campuses", 1);
+  if (!campusQuota.allowed) {
+    return res.status(403).json({
+      success: false,
+      code: "QUOTA_EXCEEDED",
+      message: campusQuota.message,
+      current: campusQuota.current,
+      limit: campusQuota.limit
+    });
+  }
+
   const {
     name,
     code,
@@ -23919,14 +24457,15 @@ app.post(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], async (req, re
     return res.status(400).json({ success: false, message: "Campus Name, Code, and Address are required." });
   }
 
-  const duplicate = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.code.toLowerCase() === code.trim().toLowerCase());
+  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const duplicate = ERP_CAMPUSES.find(c => (c.organization_id ? c.organization_id === orgId : isSeed) && c.code.toLowerCase() === code.trim().toLowerCase());
   if (duplicate) {
     return res.status(400).json({ success: false, message: `Campus code '${code}' already exists.` });
   }
 
   if (isMain) {
     ERP_CAMPUSES.forEach(c => {
-      if (!c.organization_id || c.organization_id === orgId) c.isMain = false;
+      if (c.organization_id ? c.organization_id === orgId : isSeed) c.isMain = false;
     });
   }
 
@@ -23954,7 +24493,7 @@ app.post(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], async (req, re
   ERP_CAMPUSES.push(newCampus);
   await recordAuditLog("multi_campus.campus_created", req.user?.email || "admin", "campus", newCampus.id, req);
 
-  res.status(201).json({
+  res.json({
     success: true,
     message: `Campus '${newCampus.name}' created successfully`,
     campus: newCampus
@@ -28264,8 +28803,43 @@ app.patch("/api/admin/users/:id/role", async (req, res) => {
 });
 
 // 8. GET /api/admin/subscriptions - Platform-wide Subscriptions
-app.get("/api/admin/subscriptions", (req, res) => {
+app.get("/api/admin/subscriptions", async (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
+
+  if (supabase) {
+    try {
+      const { data: dbSubs, error: subsErr } = await supabase.from("saas_subscriptions").select("*, organization:organizations(id, name, slug)");
+      if (!subsErr && dbSubs && dbSubs.length > 0) {
+        const subscriptions = dbSubs.map(s => {
+          const plan = SAAS_PLANS.find(p => p.id === s.plan_id) || { name: s.plan_id };
+          return {
+            id: s.id,
+            organization_id: s.organization_id,
+            organizationName: s.organization?.name || "Unknown Organization",
+            organizationSlug: s.organization?.slug || "unknown",
+            plan_id: s.plan_id,
+            planName: plan.name,
+            status: s.status,
+            billing_interval: s.billing_interval,
+            amountINR: Number(s.amount),
+            currency: s.currency,
+            current_period_start: s.current_period_start,
+            current_period_end: s.current_period_end,
+            cancel_at_period_end: s.cancel_at_period_end,
+            created_at: s.created_at,
+            updated_at: s.updated_at
+          };
+        });
+        return res.json({
+          success: true,
+          total: subscriptions.length,
+          subscriptions
+        });
+      }
+    } catch (dbErr) {
+      console.warn("[Admin Subs DB] Error:", dbErr.message);
+    }
+  }
 
   const subs = SAAS_SUBSCRIPTIONS.map(sub => {
     const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === sub.organization_id) || { name: "Unknown Organization", slug: "unknown" };
@@ -28306,6 +28880,20 @@ app.patch("/api/admin/subscriptions/:id", async (req, res) => {
   if (billing_interval) sub.billing_interval = billing_interval;
   if (amountINR !== undefined) sub.amountINR = parseFloat(amountINR) || sub.amountINR;
   sub.updated_at = new Date().toISOString();
+
+  if (supabase) {
+    try {
+      await supabase.from("saas_subscriptions").update({
+        plan_id: sub.plan_id,
+        status: sub.status,
+        billing_interval: sub.billing_interval,
+        amount: sub.amountINR,
+        updated_at: sub.updated_at
+      }).eq("id", sub.id);
+    } catch (dbErr) {
+      console.warn("[Admin Sub DB] Failed to update subscription in Supabase:", dbErr.message);
+    }
+  }
 
   await recordAuditLog(
     "SUBSCRIPTION_CHANGED",

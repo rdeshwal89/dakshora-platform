@@ -20,6 +20,7 @@ const envSchema = z.object({
   // Razorpay Payment Gateway
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
 
   // SMS Gateway (Fast2SMS & Twilio)
   FAST2SMS_API_KEY: z.string().optional(),
