@@ -42,6 +42,44 @@ CREATE INDEX IF NOT EXISTS idx_users_org ON public.users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
+-- -------------------------------------------------------------------------
+-- PRE-FLIGHT VALIDATION: Strict Tenant Relational Integrity Assertion
+-- Aborts immediately if ANY tenant-scoped user has an unmapped organization
+-- Guarantees NO tenant user is ever silently assigned a NULL organization_id
+-- -------------------------------------------------------------------------
+DO $$
+DECLARE
+    orphan_tenant_count INTEGER;
+    orphan_user_list TEXT;
+BEGIN
+    SELECT count(*), string_agg(u.email || ' (' || COALESCE(u.raw_app_meta_data->>'role', u.raw_user_meta_data->>'role', 'unknown') || ')', ', ')
+    INTO orphan_tenant_count, orphan_user_list
+    FROM auth.users u
+    LEFT JOIN public.organizations o ON o.id = (
+        CASE 
+            WHEN (u.raw_app_meta_data->>'organization_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' 
+            THEN (u.raw_app_meta_data->>'organization_id')::uuid 
+            WHEN (u.raw_user_meta_data->>'organization_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (u.raw_user_meta_data->>'organization_id')::uuid
+            ELSE NULL 
+        END
+    )
+    WHERE 
+        -- Exclude platform SuperAdmins (SuperAdmins legitimately have organization_id IS NULL)
+        NOT (
+            COALESCE((u.raw_app_meta_data->>'is_superadmin')::boolean, (u.raw_user_meta_data->>'is_superadmin')::boolean, false) = true
+            OR LOWER(COALESCE(u.raw_app_meta_data->>'role', u.raw_user_meta_data->>'role', '')) = 'superadmin'
+        )
+        -- Tenant user must have a valid existing organization in public.organizations
+        AND o.id IS NULL;
+
+    IF orphan_tenant_count > 0 THEN
+        RAISE EXCEPTION 'MIGRATION 025 ABORTED: Found % tenant user(s) without a valid existing organization: %. Tenant users must NOT be silently assigned NULL organization_id. Fix user metadata before running migration.', 
+            orphan_tenant_count, orphan_user_list;
+    END IF;
+    RAISE NOTICE 'Pre-flight check passed: All tenant users reference valid, existing organizations.';
+END $$;
+
 -- Populate public.users from existing auth.users safely ensuring foreign key integrity
 INSERT INTO public.users (id, email, name, role, organization_id, is_superadmin)
 SELECT 
