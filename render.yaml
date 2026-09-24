@@ -24,3 +24,37 @@ services:
         sync: false
       - key: SUPERADMIN_PASSWORD
         sync: false
+      # Razorpay Payment Gateway
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      # Fast2SMS DLT SMS Gateway
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: FAST2SMS_SENDER_ID
+        value: DKSHRA
+      - key: FAST2SMS_ENTITY_ID
+        sync: false
+      # Twilio Multi-Channel SMS & WhatsApp
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      # SMTP Email Relay
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        value: "Dakshora ERP <no-reply@dakshora.co.in>"
+      - key: SMTP_SECURE
+        value: "false"
