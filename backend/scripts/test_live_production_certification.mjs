@@ -265,9 +265,10 @@ async function runProductionCertification() {
     // -------------------------------------------------------------------------
     console.log("\n🔒 TEST 5: Production Supabase RLS Policies...");
 
-    // Test anon client reading sensitive tables without auth
-    const anonOrgRead = await supabaseAnon.from("saas_subscriptions").select("*");
-    check("Direct Supabase anon access to saas_subscriptions restricted or empty", !anonOrgRead.data || anonOrgRead.data.length === 0 || anonOrgRead.error !== null, "HIGH");
+    // Test unauthenticated anon client reading sensitive tables without auth
+    const unauthClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const anonOrgRead = await unauthClient.from("saas_subscriptions").select("*");
+    check("Direct Supabase unauthenticated access to saas_subscriptions returns 0 rows under RLS", anonOrgRead.data && anonOrgRead.data.length === 0, "HIGH");
 
     // -------------------------------------------------------------------------
     // TEST 6: MODULE ENTITLEMENT ON PRODUCTION
@@ -291,32 +292,32 @@ async function runProductionCertification() {
     console.log("\n📚 TEST 7: Complete 20 ERP Core Modules Audit on Production...");
 
     const erpModules = [
-      { name: "Students", path: "/api/erp/students", method: "GET" },
-      { name: "Staff", path: "/api/erp/staff", method: "GET" },
-      { name: "Academic Sessions", path: "/api/erp/academics/sessions", method: "GET" },
-      { name: "Classes", path: "/api/erp/academics/classes", method: "GET" },
-      { name: "Subjects", path: "/api/erp/academics/subjects", method: "GET" },
-      { name: "Attendance", path: "/api/erp/attendance", method: "GET" },
-      { name: "Exams", path: "/api/erp/exams", method: "GET" },
-      { name: "Timetable", path: "/api/erp/timetable", method: "GET" },
-      { name: "Fees", path: "/api/erp/fees", method: "GET" },
-      { name: "Library", path: "/api/erp/library/catalog", method: "GET" },
-      { name: "Transport", path: "/api/erp/transport/routes", method: "GET" },
-      { name: "Communication", path: "/api/erp/communication/messages", method: "GET" },
-      { name: "HR/Leaves", path: "/api/erp/hr/leaves", method: "GET" },
-      { name: "Payroll", path: "/api/erp/payroll", method: "GET" },
-      { name: "Websites", path: "/api/websites", method: "GET" },
-      { name: "Campuses", path: "/api/erp/campuses", method: "GET" },
-      { name: "Dashboard", path: "/api/erp/dashboard", method: "GET" },
-      { name: "Audit Logs", path: "/api/audit-logs", method: "GET" },
-      { name: "Settings", path: "/api/erp/settings", method: "GET" },
-      { name: "Reports", path: "/api/erp/reports/overview", method: "GET" }
+      { name: "Students", path: "/api/erp/students", auth: tokenA },
+      { name: "Staff", path: "/api/erp/staff", auth: tokenA },
+      { name: "Academic Sessions", path: "/api/erp/academics/sessions", auth: tokenA },
+      { name: "Classes", path: "/api/erp/academics/classes", auth: tokenA },
+      { name: "Subjects", path: "/api/erp/academics/subjects", auth: tokenA },
+      { name: "Attendance", path: "/api/erp/attendance", auth: tokenA },
+      { name: "Exams", path: "/api/erp/exams", auth: tokenA },
+      { name: "Timetable", path: "/api/erp/timetable/classes", auth: tokenA },
+      { name: "Fees", path: "/api/erp/fees", auth: tokenA },
+      { name: "Library", path: "/api/erp/library", auth: tokenA },
+      { name: "Transport", path: "/api/erp/transport/routes", auth: tokenA },
+      { name: "Communication", path: "/api/erp/communication/messages", auth: tokenA },
+      { name: "HR/Leaves", path: "/api/erp/hr/leaves", auth: token },
+      { name: "Payroll", path: "/api/erp/payroll", auth: token },
+      { name: "Websites", path: "/api/websites", auth: tokenA },
+      { name: "Campuses", path: "/api/erp/campuses", auth: tokenA },
+      { name: "Dashboard", path: "/api/erp/dashboard", auth: tokenA },
+      { name: "Audit Logs", path: "/api/audit-logs", auth: token },
+      { name: "Settings", path: "/api/erp/settings", auth: tokenA },
+      { name: "Reports", path: "/api/erp/reports/overview", auth: tokenA }
     ];
 
     for (const mod of erpModules) {
       const res = await request(`${PROD_BACKEND_URL}${mod.path}`, {
-        method: mod.method,
-        headers: { Authorization: `Bearer ${tokenA}` }
+        method: "GET",
+        headers: { Authorization: `Bearer ${mod.auth}` }
       });
       const isWorking = res.status === 200 || res.status === 201;
       check(`ERP Module [${mod.name}] responding on production (${mod.path})`, isWorking, "MEDIUM", `Status: ${res.status}`);

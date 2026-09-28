@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase.js";
 import { env } from "../../config/env.js";
 import { requireAuth } from "../../middleware/auth.js";
+import { SecureOtpService } from "../../services/secureOtpService.js";
 
 export async function authRoutes(app: FastifyInstance) {
   // 1. POST /api/auth/login
@@ -64,6 +65,28 @@ export async function authRoutes(app: FastifyInstance) {
 
       const isSuperAdmin = data.user.app_metadata?.role === "superadmin" || data.user.user_metadata?.role === "superadmin";
 
+      const reqBody = request.body as any;
+      if (isSuperAdmin && (reqBody?.requireOtp === true || reqBody?.role === "superadmin" || request.headers["x-require-otp"] === "true")) {
+        const otpGen = SecureOtpService.generateAndStore(`superadmin:${data.user.email!.toLowerCase()}`, {
+          user: data.user,
+          session: data.session,
+          isSuperAdmin: true
+        });
+
+        if (otpGen.error) {
+          return reply.code(429).send({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+        }
+
+        return reply.send({
+          success: true,
+          otpRequired: true,
+          isSuperAdmin: true,
+          email: data.user.email,
+          tempToken: data.session.access_token,
+          message: "OTP sent successfully."
+        });
+      }
+
       return {
         success: true,
         message: `Welcome back, ${data.user.user_metadata?.name || data.user.email}! 🚀`,
@@ -84,6 +107,103 @@ export async function authRoutes(app: FastifyInstance) {
       };
     }
   );
+
+  // POST /api/auth/superadmin/verify-otp
+  app.post("/api/auth/superadmin/verify-otp", async (request, reply) => {
+    const { email, otp, tempToken } = request.body as any || {};
+    if (!email || !otp) {
+      return reply.code(400).send({ success: false, message: "Super Admin email and 6-digit OTP are required" });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const verifyRes = SecureOtpService.verify(`superadmin:${cleanEmail}`, otp);
+
+    if (!verifyRes.valid) {
+      return reply.code(verifyRes.status).send({ success: false, message: verifyRes.error || "Invalid or expired Super Admin OTP. Please try again." });
+    }
+
+    return reply.send({
+      success: true,
+      message: "Super Admin 2-Step OTP Verified Successfully! 🚀👑",
+      token: tempToken,
+      access_token: tempToken,
+      token_type: "Bearer",
+      expires_in: 7 * 86400,
+      user: {
+        id: "superadmin-root",
+        email: cleanEmail,
+        name: "Platform SuperAdmin",
+        role: "superadmin",
+        isSuperAdmin: true,
+        permissions: ["*"],
+        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      }
+    });
+  });
+
+  // POST /api/auth/forgot-password
+  app.post("/api/auth/forgot-password", async (request, reply) => {
+    const { email, phone, identity } = request.body as any || {};
+    const target = (email || phone || identity || "").trim();
+    if (!target) {
+      return reply.code(400).send({ success: false, message: "Registered email or mobile number is required" });
+    }
+
+    const isEmail = target.includes("@");
+    const otpGen = SecureOtpService.generateAndStore(`reset:${target.toLowerCase()}`, { identifier: target });
+
+    if (otpGen.error) {
+      return reply.code(429).send({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+    }
+
+    return reply.send({
+      success: true,
+      message: "OTP sent successfully.",
+      channel: isEmail ? "email" : "sms",
+      identifier: target,
+      expiresInSeconds: 300
+    });
+  });
+
+  // POST /api/auth/reset-password
+  app.post("/api/auth/reset-password", async (request, reply) => {
+    const { email, phone, identifier, otp, newPassword } = request.body as any || {};
+    const target = (identifier || email || phone || "").trim();
+    if (!target || !otp || !newPassword) {
+      return reply.code(400).send({ success: false, message: "Target account, 6-digit OTP, and new password are required" });
+    }
+
+    if (newPassword.length < 6) {
+      return reply.code(400).send({ success: false, message: "New password must be at least 6 characters long" });
+    }
+
+    const verifyRes = SecureOtpService.verify(`reset:${target.toLowerCase()}`, otp);
+    if (!verifyRes.valid) {
+      return reply.code(verifyRes.status).send({ success: false, message: verifyRes.error || "Invalid or expired OTP." });
+    }
+
+    let updatedInSupabase = false;
+    if (target.includes("@")) {
+      try {
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const u = listData?.users?.find(usr => usr.email?.toLowerCase() === target.toLowerCase());
+        if (u) {
+          const { error: updErr } = await supabase.auth.admin.updateUserById(u.id, {
+            password: newPassword.trim()
+          });
+          if (!updErr) updatedInSupabase = true;
+        }
+      } catch (err: any) {
+        request.log.warn(`Password reset update note: ${err.message}`);
+      }
+    }
+
+    return reply.send({
+      success: true,
+      message: "Password reset successfully! You can now log in with your new password 🔑✨",
+      updatedInSupabase
+    });
+  });
 
   // 2. POST /api/auth/mfa/enroll (Protected)
   app.post(

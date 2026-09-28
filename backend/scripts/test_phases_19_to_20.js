@@ -271,11 +271,11 @@ async function runPhases19And20Tests() {
       body: JSON.stringify({ phone: parentPhone, channel: 'sms' })
     });
     const otpSendData = await otpSendRes.json();
-    const sentOtp = otpSendData.devOtp || '123456';
+    const sentOtp = process.env.DEV_TEST_OTP || '784920';
     assert(
-      'Persona 4.1: Parent Mobile OTP Send (SMS/WhatsApp Gateway)',
-      otpSendRes.status === 200 && otpSendData.success,
-      `Channel: ${otpSendData.channel}, Phone: ${otpSendData.phone}`
+      'Persona 4.1: Parent Mobile OTP Send (Zero DEV OTP Exposure)',
+      otpSendRes.status === 200 && otpSendData.success && otpSendData.devOtp === undefined,
+      `Channel: ${otpSendData.channel}, DevOtp exposed: ${Boolean(otpSendData.devOtp)}`
     );
 
     // 4.2 Mobile OTP Verify

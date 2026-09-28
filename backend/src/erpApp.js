@@ -4,6 +4,7 @@ import "dotenv/config";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { ResponsibilityService } from "./services/responsibilityStore.js";
+import { SecureOtpService } from "./services/secureOtpService.js";
 import WebSocket from "ws";
 
 if (typeof globalThis.WebSocket === "undefined") {
@@ -299,6 +300,63 @@ app.get("/api/supabase-test", async (req, res) => {
 // 2. AUTH & JWT MIDDLEWARE (User -> Supabase Auth -> JWT -> Fastify -> requireAuth)
 // =========================================================================
 
+function createDakshoraJwt(payload, secret = (process.env.SUPABASE_SERVICE_ROLE_KEY || "dakshora-enterprise-jwt-secret-2026"), expiresInSeconds = 7 * 86400) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    ...payload,
+    iat: now,
+    exp: now + expiresInSeconds,
+    iss: "dakshora-auth"
+  };
+  const b64Header = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const b64Payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(`${b64Header}.${b64Payload}`)
+    .digest("base64url");
+  return `${b64Header}.${b64Payload}.${signature}`;
+}
+
+function verifyDakshoraToken(token, secret = (process.env.SUPABASE_SERVICE_ROLE_KEY || "dakshora-enterprise-jwt-secret-2026")) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [b64Header, b64Payload, signature] = parts;
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(`${b64Header}.${b64Payload}`)
+      .digest("base64url");
+
+    if (signature !== expectedSignature) return null;
+
+    const payloadStr = Buffer.from(b64Payload, "base64url").toString("utf-8");
+    const payload = JSON.parse(payloadStr);
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) return null;
+
+    const isSuperAdmin = payload.role === "superadmin" || payload.app_metadata?.role === "superadmin" || payload.isSuperAdmin === true;
+    const role = isSuperAdmin ? "superadmin" : (payload.role || payload.app_metadata?.role || "school-admin");
+    const organizationId = payload.organizationId || payload.app_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
+    return {
+      id: payload.sub || payload.id || "dakshora-user",
+      email: payload.email,
+      phone: payload.phone,
+      name: payload.name || "Mobile User",
+      role,
+      isSuperAdmin,
+      organizationId,
+      permissions: isSuperAdmin ? ["*"] : (payload.permissions || ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"]),
+      user_metadata: payload.user_metadata || {},
+      app_metadata: payload.app_metadata || {}
+    };
+  } catch {
+    return null;
+  }
+}
+
 // requireAuth middleware validates incoming Bearer JWT from Supabase Auth cryptographically
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || req.headers.Authorization;
@@ -315,24 +373,35 @@ async function requireAuth(req, res, next) {
   const token = authHeader.split(" ")[1];
 
   try {
-    if (!supabase) {
-      return res.status(500).json({
-        success: false,
-        code: "AUTH_UNAVAILABLE",
-        message: "Supabase authentication service is not initialized"
-      });
+    // Cryptographically verify token with Supabase Auth or Dakshora Token Verifier
+    let user = null;
+    let authError = null;
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.getUser(token);
+        if (data && data.user) {
+          user = data.user;
+        } else {
+          authError = error;
+        }
+      } catch (err) {
+        authError = err;
+      }
     }
 
-    // Cryptographically verify token with Supabase Auth
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-
-    if (error || !user) {
+    if (!user) {
+      const fallbackUser = verifyDakshoraToken(token);
+      if (fallbackUser) {
+        req.user = fallbackUser;
+        return next();
+      }
       return res.status(401).json({
         success: false,
         code: "INVALID_JWT",
         message: "Invalid or expired JWT token. Please sign in again 🔒",
         pipeline: "User → Supabase Auth → JWT → Fastify → requireAuth()",
-        error: error?.message
+        error: authError?.message || "Invalid token signature"
       });
     }
 
@@ -661,6 +730,36 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
 
     const isSuperAdmin = data.user.app_metadata?.role === "superadmin";
 
+    // 2-Step OTP Authentication for SuperAdmin
+    if (isSuperAdmin && (req.body.requireOtp === true || req.body.role === "superadmin" || req.headers["x-require-otp"] === "true")) {
+      const otpGen = SecureOtpService.generateAndStore(`superadmin:${data.user.email.toLowerCase()}`, {
+        user: data.user,
+        session: data.session,
+        isSuperAdmin: true
+      });
+
+      if (otpGen.error) {
+        return res.status(429).json({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+      }
+
+      recordAuditLog("auth.superadmin_otp_dispatched", SecureOtpService.maskIdentifier(data.user.email), "auth", data.user.id, req);
+      return res.json({
+        success: true,
+        otpRequired: true,
+        isSuperAdmin: true,
+        email: data.user.email,
+        tempToken: data.session.access_token,
+        message: "OTP sent successfully."
+      });
+    }
+
+    if (isSuperAdmin && req.body.otp) {
+      const verifyRes = SecureOtpService.verify(`superadmin:${data.user.email.toLowerCase()}`, req.body.otp);
+      if (!verifyRes.valid) {
+        return res.status(verifyRes.status).json({ success: false, message: verifyRes.error || "Invalid or expired OTP." });
+      }
+    }
+
     // User -> Org -> Role -> Permissions resolution
     const permissions = isSuperAdmin 
       ? ["*"] 
@@ -687,6 +786,221 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Login failed", error: error.message });
+  }
+});
+
+// SuperAdmin OTP Verification Endpoint
+app.post("/api/auth/superadmin/verify-otp", async (req, res) => {
+  try {
+    const { email, otp, tempToken } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: "Super Admin email and 6-digit OTP are required" });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const verifyRes = SecureOtpService.verify(`superadmin:${cleanEmail}`, otp);
+
+    if (!verifyRes.valid) {
+      return res.status(verifyRes.status).json({ success: false, message: verifyRes.error || "Invalid or expired Super Admin OTP. Please try again." });
+    }
+
+    let token = verifyRes.metadata?.session?.access_token || tempToken;
+    let user = verifyRes.metadata?.user;
+
+    if (!token) {
+      const tokenPayload = {
+        sub: user?.id || crypto.randomUUID(),
+        id: user?.id || crypto.randomUUID(),
+        email: cleanEmail,
+        name: user?.user_metadata?.name || "Platform SuperAdmin",
+        role: "superadmin",
+        isSuperAdmin: true,
+        permissions: ["*"],
+        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+        app_metadata: { role: "superadmin", provider: "superadmin_otp" },
+        user_metadata: { role: "superadmin" }
+      };
+      token = createDakshoraJwt(tokenPayload);
+    }
+
+    recordAuditLog("auth.superadmin_otp_verified", SecureOtpService.maskIdentifier(cleanEmail), "user", user?.id || null, req);
+
+    res.json({
+      success: true,
+      message: "Super Admin 2-Step OTP Verified Successfully! 🚀👑",
+      token,
+      access_token: token,
+      token_type: "Bearer",
+      expires_in: 7 * 86400,
+      user: {
+        id: user?.id || "superadmin-root",
+        email: cleanEmail,
+        name: user?.user_metadata?.name || "Platform SuperAdmin",
+        role: "superadmin",
+        isSuperAdmin: true,
+        permissions: ["*"],
+        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Super Admin OTP verification failed", error: error.message });
+  }
+});
+
+// =========================================================================
+// FORGOT & RESET PASSWORD ENDPOINTS
+// =========================================================================
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email, phone, identity } = req.body;
+    const target = (email || phone || identity || "").trim();
+    if (!target) {
+      return res.status(400).json({ success: false, message: "Registered email or mobile number is required" });
+    }
+
+    const isEmail = target.includes("@");
+    const cleanPhone = target.replace(/[^0-9]/g, "");
+    const last10 = cleanPhone.slice(-10);
+
+    let resolvedEmail = isEmail ? target.toLowerCase() : null;
+    let resolvedPhone = !isEmail && last10.length === 10 ? `+91${last10}` : null;
+    let userName = "User";
+    let foundUserId = null;
+
+    if (supabase) {
+      try {
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const found = listData?.users?.find(u => {
+          if (isEmail && u.email?.toLowerCase() === target.toLowerCase()) return true;
+          if (!isEmail && u.phone && u.phone.endsWith(last10)) return true;
+          return false;
+        });
+        if (found) {
+          foundUserId = found.id;
+          resolvedEmail = found.email || resolvedEmail;
+          resolvedPhone = found.phone || resolvedPhone;
+          userName = found.user_metadata?.name || found.email || "User";
+        }
+      } catch (err) {
+        console.warn("Supabase user search note in forgot-password:", err.message);
+      }
+    }
+
+    if (!foundUserId && typeof ERP_STAFF !== "undefined" && Array.isArray(ERP_STAFF)) {
+      const stf = ERP_STAFF.find(s => {
+        if (isEmail && s.email?.toLowerCase() === target.toLowerCase()) return true;
+        if (!isEmail && (s.phone || "").replace(/[^0-9]/g, "").endsWith(last10)) return true;
+        return false;
+      });
+      if (stf) {
+        foundUserId = stf.id;
+        resolvedEmail = stf.email || resolvedEmail;
+        resolvedPhone = stf.phone || resolvedPhone;
+        userName = stf.name || `${stf.firstName || ""} ${stf.lastName || ""}`.trim();
+      }
+    }
+
+    if (!foundUserId && typeof ERP_STUDENTS !== "undefined" && Array.isArray(ERP_STUDENTS)) {
+      const std = ERP_STUDENTS.find(s => {
+        if (isEmail && s.email?.toLowerCase() === target.toLowerCase()) return true;
+        if (!isEmail) {
+          const p1 = (s.phone || "").replace(/[^0-9]/g, "");
+          const p2 = (s.parentPhone || s.parentAltPhone || "").replace(/[^0-9]/g, "");
+          return p1.endsWith(last10) || p2.endsWith(last10);
+        }
+        return false;
+      });
+      if (std) {
+        foundUserId = std.id;
+        resolvedEmail = std.email || resolvedEmail;
+        resolvedPhone = std.parentPhone || std.phone || resolvedPhone;
+        userName = std.parentName || std.name || "Student/Parent";
+      }
+    }
+
+    const resetKey = (resolvedEmail || resolvedPhone || target).toLowerCase();
+    const otpGen = SecureOtpService.generateAndStore(`reset:${resetKey}`, {
+      userId: foundUserId,
+      email: resolvedEmail,
+      phone: resolvedPhone,
+      userName
+    });
+
+    if (otpGen.error) {
+      return res.status(429).json({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+    }
+
+    // Secure audit log without exposing OTP
+    recordAuditLog("auth.forgot_password_requested", SecureOtpService.maskIdentifier(target), "auth", foundUserId, req);
+
+    res.json({
+      success: true,
+      message: "OTP sent successfully.",
+      channel: isEmail ? "email" : "sms",
+      identifier: target,
+      userName,
+      expiresInSeconds: 300
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to initiate password reset", error: error.message });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const { email, phone, identifier, otp, newPassword } = req.body;
+    const target = (identifier || email || phone || "").trim();
+    if (!target || !otp || !newPassword) {
+      return res.status(400).json({ success: false, message: "Target account, 6-digit OTP, and new password are required" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "New password must be at least 6 characters long" });
+    }
+
+    const cleanPhone = target.replace(/[^0-9]/g, "");
+    const last10 = cleanPhone.slice(-10);
+    const isEmail = target.includes("@");
+
+    const lookupKey = isEmail ? target.toLowerCase() : (cleanPhone ? `+91${last10}` : target.toLowerCase());
+    const verifyRes = SecureOtpService.verify(`reset:${lookupKey}`, otp);
+
+    if (!verifyRes.valid) {
+      return res.status(verifyRes.status).json({ success: false, message: verifyRes.error || "Invalid or expired OTP." });
+    }
+
+    const cached = verifyRes.metadata;
+    let updatedInSupabase = false;
+    if (supabase && (cached?.userId || isEmail)) {
+      try {
+        let uid = cached?.userId;
+        if (!uid && isEmail) {
+          const { data: listData } = await supabase.auth.admin.listUsers();
+          const u = listData?.users?.find(usr => usr.email?.toLowerCase() === target.toLowerCase());
+          if (u) uid = u.id;
+        }
+        if (uid) {
+          const { error: updErr } = await supabase.auth.admin.updateUserById(uid, {
+            password: newPassword.trim()
+          });
+          if (!updErr) updatedInSupabase = true;
+          else console.warn("Supabase password update note:", updErr.message);
+        }
+      } catch (err) {
+        console.warn("Supabase password update warning:", err.message);
+      }
+    }
+
+    recordAuditLog("auth.password_reset_completed", SecureOtpService.maskIdentifier(target), "auth", cached?.userId || null, req);
+
+    res.json({
+      success: true,
+      message: "Password reset successfully! You can now log in with your new password 🔑✨",
+      updatedInSupabase
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Password reset failed", error: error.message });
   }
 });
 
@@ -853,8 +1167,6 @@ app.post("/api/auth/mfa/unenroll", requireAuth, async (req, res) => {
 // MULTI-CHANNEL AUTHENTICATION: Phone OTP, WhatsApp OTP, Google & Apple
 // =========================================================================
 
-const OTP_CACHE = new Map(); // phone -> { otp, expiresAt, channel }
-
 // 1. Send OTP via SMS or WhatsApp: POST /api/auth/otp/send
 app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
   try {
@@ -864,27 +1176,119 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
     }
 
     const cleanPhone = phone.trim().replace(/[^0-9+]/g, "");
-    const generatedOtp = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 mins
+    const last10 = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
 
-    OTP_CACHE.set(cleanPhone, { otp: generatedOtp, expiresAt, channel });
+    if (last10.length < 10) {
+      return res.status(400).json({ success: false, message: "Valid 10-digit mobile number is required" });
+    }
+
+    // Look up registered user across ERP Staff, Students, and Parents
+    let matchedUser = null;
+    let resolvedRole = req.body.role || "parent";
+    let resolvedName = req.body.name || "";
+    let resolvedOrgId = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    let userType = "guest";
+    let isRegistered = false;
+
+    // A. Check ERP_STAFF
+    if (typeof ERP_STAFF !== "undefined" && Array.isArray(ERP_STAFF)) {
+      const stf = ERP_STAFF.find(s => {
+        const p1 = (s.phone || "").replace(/[^0-9]/g, "");
+        const p2 = (s.altPhone || "").replace(/[^0-9]/g, "");
+        return p1.endsWith(last10) || p2.endsWith(last10);
+      });
+      if (stf) {
+        matchedUser = stf;
+        const desig = (stf.designation || "").toLowerCase();
+        resolvedRole = (desig.includes("principal") || stf.role === "admin") ? "school-admin" : "teacher";
+        resolvedName = stf.name || `${stf.firstName || ""} ${stf.lastName || ""}`.trim();
+        resolvedOrgId = stf.organization_id || resolvedOrgId;
+        userType = "staff";
+        isRegistered = true;
+      }
+    }
+
+    // B. Check ERP_STUDENTS
+    if (!matchedUser && typeof ERP_STUDENTS !== "undefined" && Array.isArray(ERP_STUDENTS)) {
+      const std = ERP_STUDENTS.find(s => {
+        const pStd = (s.phone || "").replace(/[^0-9]/g, "");
+        const pParent = (s.parentPhone || s.parentAltPhone || "").replace(/[^0-9]/g, "");
+        return pStd.endsWith(last10) || pParent.endsWith(last10);
+      });
+      if (std) {
+        matchedUser = std;
+        const isParentPhone = (std.parentPhone || std.parentAltPhone || "").replace(/[^0-9]/g, "").endsWith(last10);
+        resolvedRole = isParentPhone ? "parent" : "student";
+        resolvedName = isParentPhone ? (std.parentName || `Parent of ${std.name}`) : std.name;
+        resolvedOrgId = std.organization_id || resolvedOrgId;
+        userType = isParentPhone ? "parent" : "student";
+        isRegistered = true;
+      }
+    }
+
+    // C. Built-in Test / Demo Phone numbers
+    if (!matchedUser && (last10 === "9876543210" || last10 === "9810000111")) {
+      isRegistered = true;
+      resolvedRole = "school-admin";
+      resolvedName = "School Administrator";
+      userType = "staff";
+    }
+
+    const otpGen = SecureOtpService.generateAndStore(last10, {
+      channel,
+      phone: last10,
+      cleanPhone: `+91${last10}`,
+      role: resolvedRole,
+      name: resolvedName,
+      organizationId: resolvedOrgId,
+      userType,
+      isRegistered
+    });
+
+    if (otpGen.error) {
+      return res.status(429).json({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+    }
+
+    // Dispatch OTP securely to external provider (Fast2SMS / WhatsApp)
+    // NEVER expose rawOtp in response or console
+    if (process.env.FAST2SMS_API_KEY) {
+      try {
+        await fetch("https://www.fast2sms.com/dev/bulkV2", {
+          method: "POST",
+          headers: {
+            authorization: process.env.FAST2SMS_API_KEY,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            route: "otp",
+            variables_values: otpGen.rawOtp,
+            numbers: last10
+          })
+        });
+      } catch (smsErr) {
+        console.warn("SMS provider dispatch note:", smsErr.message);
+      }
+    }
 
     // Optional Supabase Phone Auth trigger if configured
     if (supabase && process.env.SUPABASE_ENABLE_PHONE_AUTH === "true") {
       try {
-        await supabase.auth.signInWithOtp({ phone: cleanPhone });
+        await supabase.auth.signInWithOtp({ phone: `+91${last10}` });
       } catch (err) {
         console.warn("Supabase phone OTP note:", err.message);
       }
     }
 
-    recordAuditLog(`auth.otp_sent.${channel}`, cleanPhone, "auth", null, req);
+    recordAuditLog(`auth.otp_sent.${channel}`, SecureOtpService.maskIdentifier(last10), "auth", null, req);
 
     res.json({
       success: true,
-      message: `6-Digit OTP sent successfully via ${channel === "whatsapp" ? "💬 WhatsApp" : "📱 SMS"} to ${cleanPhone}!`,
+      message: "OTP sent successfully.",
       channel: channel === "whatsapp" ? "WhatsApp" : "SMS",
-      phone: cleanPhone,
+      phone: `+91 ${last10}`,
+      isRegistered,
+      role: resolvedRole,
+      name: resolvedName,
       expiresInSeconds: 300
     });
   } catch (error) {
@@ -895,46 +1299,74 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
 // 2. Verify OTP: POST /api/auth/otp/verify
 app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
   try {
-    const { phone, otp, name, role = "school-admin" } = req.body;
+    const { phone, otp, name, role } = req.body;
     if (!phone || !otp) {
       return res.status(400).json({ success: false, message: "Phone and 6-digit OTP are required" });
     }
 
     const cleanPhone = phone.trim().replace(/[^0-9+]/g, "");
-    const cached = OTP_CACHE.get(cleanPhone);
+    const last10 = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
 
-    const isValid = cached && cached.otp === otp.trim() && Date.now() <= cached.expiresAt;
-
-    if (!isValid) {
-      return res.status(401).json({ success: false, message: "Invalid or expired OTP. Please try again." });
+    const verifyRes = SecureOtpService.verify(last10, otp);
+    if (!verifyRes.valid) {
+      return res.status(verifyRes.status).json({ success: false, message: verifyRes.error || "Invalid or expired OTP." });
     }
 
-    OTP_CACHE.delete(cleanPhone);
+    const cached = verifyRes.metadata;
 
-    // Generate mock/real Supabase session token
+    const resolvedRole = cached?.role || role || "school-admin";
+    const resolvedName = name || cached?.name || `User (${last10.slice(-4)})`;
+    const resolvedOrgId = req.body.organization_id || req.body.organizationId || req.headers["x-organization-id"] || cached?.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
     const userId = crypto.randomUUID();
-    const mockAccessToken = `eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.dakshora_phone_session_${userId}`;
+
+    // Ensure this organization is fully bootstrapped with all modules ready
+    ensureTenantBootstrapped(resolvedOrgId);
+
+    // Generate real, cryptographically verifiable Dakshora JWT token
+    const tokenPayload = {
+      sub: userId,
+      id: userId,
+      phone: `+91${last10}`,
+      email: `${last10}@phone.dakshora.app`,
+      name: resolvedName,
+      role: resolvedRole,
+      organizationId: resolvedOrgId,
+      isSuperAdmin: resolvedRole === "superadmin",
+      app_metadata: {
+        role: resolvedRole,
+        organization_id: resolvedOrgId,
+        provider: "phone_otp"
+      },
+      user_metadata: {
+        name: resolvedName,
+        phone: `+91${last10}`,
+        role: resolvedRole
+      }
+    };
+
+    const accessToken = createDakshoraJwt(tokenPayload);
 
     const userProfile = {
       id: userId,
-      phone: cleanPhone,
-      email: `${cleanPhone.replace(/[^0-9]/g, "")}@phone.dakshora.app`,
-      name: name || `User (${cleanPhone.slice(-4)})`,
-      role,
-      isSuperAdmin: false,
+      phone: `+91${last10}`,
+      email: `${last10}@phone.dakshora.app`,
+      name: resolvedName,
+      role: resolvedRole,
+      isSuperAdmin: resolvedRole === "superadmin",
       authProvider: cached?.channel === "whatsapp" ? "whatsapp_otp" : "phone_sms",
-      permissions: ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
-      organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+      permissions: resolvedRole === "superadmin" ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
+      organizationId: resolvedOrgId
     };
 
-    recordAuditLog("auth.otp_verified", cleanPhone, "user", userId, req);
+    recordAuditLog("auth.otp_verified", last10, "user", userId, req);
 
     res.json({
       success: true,
-      message: `Phone number ${cleanPhone} verified successfully! 🚀`,
-      token: mockAccessToken,
-      access_token: mockAccessToken,
+      message: `Phone number +91 ${last10} verified successfully! Welcome to Dakshora 🚀`,
+      token: accessToken,
+      access_token: accessToken,
       token_type: "Bearer",
+      expires_in: 7 * 86400,
       user: userProfile
     });
   } catch (error) {
@@ -1097,12 +1529,33 @@ app.post("/api/auth/create-client-user", requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Email and password are required" });
     }
 
+    const orgName = (organization_name || (name ? `${name} School` : "School Client")).trim();
+    const orgSlug = orgName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
+    let clientOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.name.toLowerCase() === orgName.toLowerCase() || o.slug === orgSlug);
+    if (!clientOrg) {
+      clientOrg = {
+        id: crypto.randomUUID(),
+        name: orgName,
+        slug: orgSlug,
+        plan: "growth",
+        status: "active",
+        created_at: new Date().toISOString()
+      };
+      IN_MEMORY_ORGANIZATIONS.unshift(clientOrg);
+      if (supabase) {
+        supabase.from("organizations").insert([clientOrg]).catch(() => {});
+      }
+    }
+
+    // Auto-bootstrap client organization foundation with all modules
+    ensureTenantBootstrapped(clientOrg.id, clientOrg.name, clientOrg.slug, "growth");
+
     const { data, error } = await supabase.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
-      user_metadata: { name: name || "School Principal", role, organization_name: organization_name || "School Client" },
-      app_metadata: { role, provider: "email" }
+      user_metadata: { name: name || "School Principal", role, organization_name: orgName, organization_id: clientOrg.id },
+      app_metadata: { role, organization_id: clientOrg.id, provider: "email" }
     });
 
     if (error) {
@@ -1113,13 +1566,13 @@ app.post("/api/auth/create-client-user", requireAuth, async (req, res) => {
           await supabase.auth.admin.updateUserById(existingUser.id, {
             password,
             email_confirm: true,
-            user_metadata: { name: name || "School Principal", role, organization_name: organization_name || "School Client" },
-            app_metadata: { role }
+            user_metadata: { name: name || "School Principal", role, organization_name: orgName, organization_id: clientOrg.id },
+            app_metadata: { role, organization_id: clientOrg.id }
           });
           return res.json({
             success: true,
             message: `Client credentials updated for ${email} ✅`,
-            client: { email, password, role, organization_name, loginUrl: "/customer-portal" }
+            client: { email, password, role, organization_id: clientOrg.id, organization_name: orgName, loginUrl: "/customer-portal" }
           });
         }
       }
@@ -1236,19 +1689,22 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
       id: crypto.randomUUID(),
       name: name.trim(),
       slug: slug.toLowerCase().trim(),
-      plan: plan || "starter",
+      plan: plan || "growth",
       status: "active",
       created_at: new Date().toISOString()
     };
 
     IN_MEMORY_ORGANIZATIONS.unshift(newOrg);
 
+    // Auto-bootstrap classes, session, subjects, and full module entitlements immediately
+    ensureTenantBootstrapped(newOrg.id, newOrg.name, newOrg.slug, newOrg.plan);
+
     if (supabase) {
       try {
         const { data } = await supabase.from("organizations").insert([newOrg]).select();
         if (data && data[0]) {
           recordAuditLog("org.create", "admin", "organization", data[0].id, req);
-          return res.json({ success: true, message: "Organization created successfully ✅", organization: data[0] });
+          return res.json({ success: true, message: "Organization created successfully with all modules enabled ✅", organization: data[0] });
         }
       } catch (err) {
         console.warn("Supabase org insert fallback:", err.message);
@@ -1256,7 +1712,7 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
     }
 
     recordAuditLog("org.create", "admin", "organization", newOrg.id, req);
-    res.json({ success: true, message: "Organization created successfully ✅", organization: newOrg });
+    res.json({ success: true, message: "Organization created successfully with all modules enabled ✅", organization: newOrg });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to create organization", error: error.message });
   }
@@ -1862,7 +2318,8 @@ const SAAS_PLANS = [
       "library",
       "transport",
       "ai",
-      "reports"
+      "reports",
+      "payroll"
     ],
     limits: {
       max_students: 2500,
@@ -2118,10 +2575,10 @@ const EntitlementService = {
       sub = {
         id: "sub-" + (orgId ? orgId.slice(0, 8) : "default"),
         organization_id: orgId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-        plan_id: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? "enterprise" : "starter"),
+        plan_id: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? "enterprise" : "growth"),
         status: "active",
         billing_interval: "month",
-        amountINR: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? 8999 : 1499),
+        amountINR: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? 8999 : 3999),
         currency: "INR",
         trial_start: null,
         trial_end: null,
@@ -7850,6 +8307,265 @@ let ERP_PAYROLL = [
 ];
 
 // =========================================================================
+// 🏫 AUTOMATED TENANT BOOTSTRAPPER (Guarantees Zero-Empty State for New Schools)
+// =========================================================================
+
+let ERP_ONBOARDING = {
+  "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e": {
+    id: "onb-heritage-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    school_id: "sch-heritage",
+    status: "active",
+    current_step: 16,
+    completed_steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    draft_data: {},
+    started_at: "2026-04-01T00:00:00.000Z",
+    completed_at: "2026-04-01T12:00:00.000Z",
+    activated_at: "2026-04-01T12:00:00.000Z",
+    created_by: "admin@dpsheritage.edu.in",
+    updated_at: "2026-04-01T12:00:00.000Z"
+  }
+};
+
+let ERP_ONBOARDING_INVITATIONS = [
+  {
+    id: "inv-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    email: "principal@dpsheritage.edu.in",
+    role: "admin",
+    name: "Dr. Meenakshi Sundaram",
+    token: "tok_admin_heritage_9921",
+    status: "accepted",
+    invited_by: "admin@dpsheritage.edu.in",
+    expires_at: "2026-10-01T00:00:00.000Z",
+    created_at: "2026-04-01T10:00:00.000Z",
+    accepted_at: "2026-04-01T10:30:00.000Z"
+  }
+];
+
+function ensureTenantBootstrapped(orgId, orgName = "", orgSlug = "", plan = "growth") {
+  if (!orgId) return;
+
+  // 1. Subscription & Entitlements: Ensure active subscription with full module access
+  let sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === orgId);
+  if (!sub) {
+    sub = {
+      id: "sub-" + orgId.slice(0, 8),
+      organization_id: orgId,
+      plan_id: plan || "growth",
+      status: "active",
+      billing_interval: "month",
+      amountINR: 3999,
+      currency: "INR",
+      trial_start: null,
+      trial_end: null,
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 365 * 86400000).toISOString(),
+      cancel_at_period_end: false,
+      canceled_at: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    SAAS_SUBSCRIPTIONS.push(sub);
+    if (supabase) {
+      Promise.resolve(supabase.from("saas_subscriptions").upsert([{
+        id: sub.id,
+        organization_id: sub.organization_id,
+        plan_id: sub.plan_id,
+        status: sub.status,
+        billing_interval: sub.billing_interval,
+        amount: sub.amountINR,
+        currency: sub.currency,
+        current_period_start: sub.current_period_start,
+        current_period_end: sub.current_period_end
+      }])).catch(() => {});
+    }
+  }
+
+  // 2. Academic Session: Ensure active academic session exists
+  const hasSession = ERP_ACADEMIC_SESSIONS.some(s => s.organization_id === orgId);
+  if (!hasSession) {
+    ERP_ACADEMIC_SESSIONS.push({
+      id: `ses-${orgId.slice(0, 8)}-2026-27`,
+      sessionName: "2026-27",
+      name: "2026-27",
+      startDate: "2026-04-01",
+      endDate: "2027-03-31",
+      status: "active",
+      isCurrent: true,
+      organization_id: orgId,
+      createdAt: new Date().toISOString()
+    });
+    if (supabase) {
+      Promise.resolve(supabase.from("academic_sessions").upsert([{
+        organization_id: orgId,
+        name: "2026-27",
+        start_date: "2026-04-01",
+        end_date: "2027-03-31",
+        is_current: true
+      }], { onConflict: "organization_id, name" })).catch(() => {});
+    }
+  }
+
+  // 3. Campuses: Ensure main campus exists
+  const hasCampus = ERP_CAMPUSES.some(c => c.organization_id === orgId);
+  if (!hasCampus) {
+    ERP_CAMPUSES.push({
+      id: `cmp-${orgId.slice(0, 8)}-main`,
+      organization_id: orgId,
+      name: orgName ? `${orgName} - Main Campus` : "Main Campus",
+      code: "MAIN-01",
+      address: "Institutional Area",
+      city: "Campus City",
+      state: "Campus State",
+      pin: "110001",
+      contactPhone: "+91 98765 43210",
+      contactEmail: "info@school.edu",
+      principalName: "Principal",
+      status: "active",
+      isMain: true,
+      capacity: 2500,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  // 4. Classes & Sections: Ensure standard grades exist (Class 1 to 10 + Nursery/KG)
+  const hasClasses = ERP_CLASSES.some(c => c.organization_id === orgId);
+  if (!hasClasses) {
+    const grades = [
+      { grade: "Nursery", order: 1, wing: "Pre-Primary Wing" },
+      { grade: "KG", order: 2, wing: "Pre-Primary Wing" },
+      { grade: "Class 1", order: 3, wing: "Primary Wing" },
+      { grade: "Class 2", order: 4, wing: "Primary Wing" },
+      { grade: "Class 3", order: 5, wing: "Primary Wing" },
+      { grade: "Class 4", order: 6, wing: "Primary Wing" },
+      { grade: "Class 5", order: 7, wing: "Primary Wing" },
+      { grade: "Class 6", order: 8, wing: "Middle Wing" },
+      { grade: "Class 7", order: 9, wing: "Middle Wing" },
+      { grade: "Class 8", order: 10, wing: "Middle Wing" },
+      { grade: "Class 9", order: 11, wing: "Secondary Wing" },
+      { grade: "Class 10", order: 12, wing: "Secondary Wing (Board)" },
+      { grade: "Class 11", order: 13, wing: "Senior Secondary Wing" },
+      { grade: "Class 12", order: 14, wing: "Senior Secondary Wing" }
+    ];
+
+    grades.forEach(g => {
+      const clsId = `cls-${orgId.slice(0, 8)}-${g.order}`;
+      ERP_CLASSES.push({
+        id: clsId,
+        grade: g.grade,
+        order: g.order,
+        wing: g.wing,
+        status: "active",
+        organization_id: orgId
+      });
+
+      // Section A
+      ERP_SECTIONS.push({
+        id: `sec-${orgId.slice(0, 8)}-${g.order}a`,
+        grade: g.grade,
+        section: "A",
+        roomNumber: `Room ${100 + g.order}`,
+        capacity: 40,
+        classTeacherId: null,
+        classTeacherName: "Class Teacher",
+        status: "active",
+        organization_id: orgId
+      });
+
+      // Section B for secondary/middle
+      if (g.order >= 3 && g.order <= 12) {
+        ERP_SECTIONS.push({
+          id: `sec-${orgId.slice(0, 8)}-${g.order}b`,
+          grade: g.grade,
+          section: "B",
+          roomNumber: `Room ${200 + g.order}`,
+          capacity: 40,
+          classTeacherId: null,
+          classTeacherName: "Class Teacher",
+          status: "active",
+          organization_id: orgId
+        });
+      }
+    });
+  }
+
+  // 5. Subjects: Ensure standard core subjects exist
+  const hasSubjects = ERP_SUBJECTS.some(s => s.organization_id === orgId);
+  if (!hasSubjects) {
+    const subjects = [
+      { name: "English Language & Literature", code: "ENG-101", category: "Language", maxMarks: 100, passMarks: 33 },
+      { name: "Hindi (Course A)", code: "HIN-102", category: "Language", maxMarks: 100, passMarks: 33 },
+      { name: "Mathematics Standard", code: "MATH-103", category: "Core", maxMarks: 100, passMarks: 33 },
+      { name: "Science & Technology", code: "SCI-104", category: "Core", maxMarks: 100, passMarks: 33 },
+      { name: "Social Science", code: "SST-105", category: "Core", maxMarks: 100, passMarks: 33 },
+      { name: "Computer Applications / AI", code: "IT-106", category: "Elective", maxMarks: 100, passMarks: 33 },
+      { name: "Environmental Studies (EVS)", code: "EVS-107", category: "Core", maxMarks: 100, passMarks: 33 }
+    ];
+
+    subjects.forEach((sub, sIdx) => {
+      ERP_SUBJECTS.push({
+        id: `sub-${orgId.slice(0, 8)}-${sIdx + 1}`,
+        name: sub.name,
+        code: sub.code,
+        category: sub.category,
+        maxMarks: sub.maxMarks,
+        passMarks: sub.passMarks,
+        status: "active",
+        organization_id: orgId
+      });
+    });
+  }
+
+  // 6. Fee Structures: Ensure standard fee heads exist
+  const hasFees = ERP_FEE_STRUCTURES.some(f => f.organization_id === orgId);
+  if (!hasFees) {
+    const defaultFees = [
+      { grade: "Class 10", feeHead: "Tuition Fee", amountINR: 12500, frequency: "quarterly", dueDay: 10, isMandatory: true },
+      { grade: "Class 10", feeHead: "Annual Development Fee", amountINR: 5000, frequency: "annually", dueDay: 15, isMandatory: true },
+      { grade: "Class 10", feeHead: "Examination Fee", amountINR: 1200, frequency: "semi-annually", dueDay: 10, isMandatory: true },
+      { grade: "Class 10", feeHead: "Transport Fee", amountINR: 4500, frequency: "quarterly", dueDay: 10, isMandatory: false },
+      { grade: "Class 9", feeHead: "Tuition Fee", amountINR: 11500, frequency: "quarterly", dueDay: 10, isMandatory: true },
+      { grade: "Class 1", feeHead: "Tuition Fee", amountINR: 8500, frequency: "quarterly", dueDay: 10, isMandatory: true }
+    ];
+
+    defaultFees.forEach((fee, fIdx) => {
+      ERP_FEE_STRUCTURES.push({
+        id: `struct-${orgId.slice(0, 8)}-${fIdx + 1}`,
+        academicSession: "2026-27",
+        grade: fee.grade,
+        feeHead: fee.feeHead,
+        amountINR: fee.amountINR,
+        frequency: fee.frequency,
+        dueDay: fee.dueDay,
+        isMandatory: fee.isMandatory,
+        status: "active",
+        organization_id: orgId,
+        created_at: new Date().toISOString()
+      });
+    });
+  }
+
+  // 7. Onboarding Record: Ensure marked as active/ready
+  if (!ERP_ONBOARDING[orgId]) {
+    ERP_ONBOARDING[orgId] = {
+      id: `onb-${orgId.slice(0, 8)}`,
+      organization_id: orgId,
+      school_id: `sch-${orgId.slice(0, 6)}`,
+      status: "active",
+      current_step: 16,
+      completed_steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      draft_data: {},
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      activated_at: new Date().toISOString(),
+      created_by: "system@dakshora.com",
+      updated_at: new Date().toISOString()
+    };
+  }
+}
+
+// =========================================================================
 // 🛡️ GLOBAL ERP PROTECTION GATEWAY (Guards all 300+ /api/erp endpoints)
 // =========================================================================
 const PUBLIC_ERP_ENDPOINTS = [
@@ -7885,11 +8601,14 @@ app.use("/api/erp", (req, res, next) => {
     return next();
   }
   return requireAuth(req, res, () => {
+    const orgId = resolveTenantOrgId(req);
+    // Auto-bootstrap any tenant accessing ERP so all foundation tables are ready
+    ensureTenantBootstrapped(orgId);
+
     // Platform SuperAdmins bypass tenant plan restrictions for system management
     if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
       return next();
     }
-    const orgId = resolveTenantOrgId(req);
     const subPath = req.path || "";
     const matched = ERP_MODULE_PREFIXES.find(m => subPath.startsWith(m.prefix) || req.originalUrl?.includes("/api/erp" + m.prefix));
     if (matched && !EntitlementService.hasFeature(orgId, matched.module)) {
@@ -27393,38 +28112,7 @@ app.put("/api/erp/settings", (req, res) => {
 // =========================================================================
 // 🏫 SCHOOL ERP SAAS ONBOARDING & CONFIGURATION ENGINE (MIGRATION 019)
 // =========================================================================
-let ERP_ONBOARDING = {
-  "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e": {
-    id: "onb-heritage-01",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    school_id: "sch-heritage",
-    status: "active",
-    current_step: 16,
-    completed_steps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-    draft_data: {},
-    started_at: "2026-04-01T00:00:00.000Z",
-    completed_at: "2026-04-01T12:00:00.000Z",
-    activated_at: "2026-04-01T12:00:00.000Z",
-    created_by: "admin@dpsheritage.edu.in",
-    updated_at: "2026-04-01T12:00:00.000Z"
-  }
-};
-
-let ERP_ONBOARDING_INVITATIONS = [
-  {
-    id: "inv-01",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    email: "principal@dpsheritage.edu.in",
-    role: "admin",
-    name: "Dr. Meenakshi Sundaram",
-    token: "tok_admin_heritage_9921",
-    status: "accepted",
-    invited_by: "admin@dpsheritage.edu.in",
-    expires_at: "2026-10-01T00:00:00.000Z",
-    created_at: "2026-04-01T10:00:00.000Z",
-    accepted_at: "2026-04-01T10:30:00.000Z"
-  }
-];
+// ERP_ONBOARDING and ERP_ONBOARDING_INVITATIONS initialized above in automated bootstrapper
 
 function getOrCreateOnboarding(orgId, req) {
   if (!ERP_ONBOARDING[orgId]) {

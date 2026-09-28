@@ -18,6 +18,48 @@ declare module "fastify" {
   }
 }
 
+import crypto from "crypto";
+
+export function verifyDakshoraToken(token: string) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [b64Header, b64Payload, signature] = parts;
+    const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || "dakshora-enterprise-jwt-secret-2026";
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(`${b64Header}.${b64Payload}`)
+      .digest("base64url");
+
+    if (signature !== expectedSignature) return null;
+
+    const payloadStr = Buffer.from(b64Payload, "base64url").toString("utf-8");
+    const payload = JSON.parse(payloadStr);
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) return null;
+
+    const isSuperAdmin = payload.role === "superadmin" || payload.app_metadata?.role === "superadmin" || payload.isSuperAdmin === true;
+    const role = isSuperAdmin ? "superadmin" : (payload.role || payload.app_metadata?.role || "school-admin");
+    const organizationId = payload.organizationId || payload.app_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
+    return {
+      id: payload.sub || payload.id || "dakshora-user",
+      email: payload.email,
+      phone: payload.phone,
+      name: payload.name || "Mobile User",
+      role,
+      isSuperAdmin,
+      organizationId,
+      permissions: isSuperAdmin ? ["*"] : (payload.permissions || ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"]),
+      user_metadata: payload.user_metadata || {},
+      app_metadata: payload.app_metadata || {}
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply
@@ -39,6 +81,11 @@ export async function requireAuth(
   } = await supabase.auth.getUser(token);
 
   if (error || !user) {
+    const dakshoraUser = verifyDakshoraToken(token);
+    if (dakshoraUser) {
+      request.user = dakshoraUser;
+      return;
+    }
     return reply.code(401).send({
       success: false,
       error: "Invalid or expired authentication token"
