@@ -1005,6 +1005,204 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 // =========================================================================
+// INSTITUTIONAL REGISTRATION FLOW (NAME, EMAIL, MOBILE, PASSWORD, DUAL OTP)
+// =========================================================================
+
+app.post("/api/auth/register/send-otp", async (req, res) => {
+  try {
+    const { name, email, phone, schoolName, password, confirmPassword } = req.body || {};
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({ success: false, message: "Full Name, Email, Mobile number, and Password are required." });
+    }
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPhone = String(phone).replace(/\D/g, "").slice(-10);
+
+    if (!cleanEmail.includes("@")) {
+      return res.status(400).json({ success: false, message: "Please provide a valid institutional email address." });
+    }
+    if (cleanPhone.length !== 10) {
+      return res.status(400).json({ success: false, message: "Please provide a valid 10-digit mobile number." });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters long." });
+    }
+    if (confirmPassword && password !== confirmPassword) {
+      return res.status(400).json({ success: false, message: "Password and Confirm Password do not match." });
+    }
+
+    if (supabase) {
+      try {
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const existing = listData?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
+        if (existing) {
+          return res.status(409).json({ success: false, message: "An institutional account with this email already exists. Please log in." });
+        }
+      } catch (err) {
+        console.warn("Supabase user check note:", err.message);
+      }
+    }
+
+    const registrationData = {
+      name: name.trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
+      schoolName: (schoolName || `${name.trim()}'s Academy`).trim(),
+      password
+    };
+
+    const otpGen = SecureOtpService.generateAndStore(`register:${cleanEmail}`, registrationData);
+    SecureOtpService.generateAndStore(`register:${cleanPhone}`, registrationData);
+
+    if (otpGen.error) {
+      return res.status(429).json({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+    }
+
+    recordAuditLog("auth.registration_otp_sent", SecureOtpService.maskIdentifier(cleanEmail), "auth", null, req);
+
+    return res.json({
+      success: true,
+      message: `Verification OTP dispatched to ${cleanEmail} and +91 ${cleanPhone}.`,
+      expiresInSeconds: 300,
+      identifier: cleanEmail
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to dispatch registration OTP", error: error.message });
+  }
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { name, email, phone, schoolName, password, otp } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: "Email and 6-digit OTP verification code are required." });
+    }
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanPhone = String(phone || "").replace(/\D/g, "").slice(-10);
+
+    let verifyRes = SecureOtpService.verify(`register:${cleanEmail}`, otp);
+    if (!verifyRes.valid && cleanPhone) {
+      verifyRes = SecureOtpService.verify(`register:${cleanPhone}`, otp);
+    }
+
+    if (!verifyRes.valid) {
+      return res.status(verifyRes.status || 400).json({ success: false, message: verifyRes.error || "Invalid or expired OTP code." });
+    }
+
+    const regData = verifyRes.metadata || {};
+    const finalName = name || regData.name || "School Administrator";
+    const finalSchoolName = (schoolName || regData.schoolName || `${finalName} Public School`).trim();
+    const finalPassword = password || regData.password;
+    const finalPhone = cleanPhone || regData.phone;
+
+    // 1. Create or resolve Organization Tenant
+    const orgSlug = finalSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
+    let clientOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.name.toLowerCase() === finalSchoolName.toLowerCase() || o.slug === orgSlug);
+    if (!clientOrg) {
+      clientOrg = {
+        id: crypto.randomUUID(),
+        name: finalSchoolName,
+        slug: orgSlug,
+        plan: "growth",
+        status: "active",
+        created_at: new Date().toISOString()
+      };
+      IN_MEMORY_ORGANIZATIONS.unshift(clientOrg);
+      if (supabase) {
+        supabase.from("organizations").insert([clientOrg]).catch(() => {});
+      }
+    }
+
+    // 2. Auto-bootstrap tenant modules & subscription
+    ensureTenantBootstrapped(clientOrg.id, clientOrg.name, clientOrg.slug, "growth");
+
+    // 3. Create or update user in Supabase Auth
+    let createdUserId = crypto.randomUUID();
+    let authToken = null;
+    let authUser = null;
+
+    if (supabase) {
+      try {
+        const { data: newUser, error: createErr } = await supabase.auth.admin.createUser({
+          email: cleanEmail,
+          password: finalPassword,
+          email_confirm: true,
+          phone: finalPhone ? `+91${finalPhone}` : undefined,
+          phone_confirm: !!finalPhone,
+          user_metadata: {
+            name: finalName,
+            role: "school-admin",
+            organization_name: clientOrg.name,
+            organization_id: clientOrg.id,
+            phone: finalPhone
+          },
+          app_metadata: {
+            role: "school-admin",
+            organization_id: clientOrg.id,
+            provider: "email"
+          }
+        });
+
+        if (createErr) {
+          console.warn("Supabase createUser warning:", createErr.message);
+        } else if (newUser?.user) {
+          createdUserId = newUser.user.id;
+        }
+
+        const { data: signData } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: finalPassword
+        });
+        if (signData?.session?.access_token) {
+          authToken = signData.session.access_token;
+          authUser = signData.user;
+        }
+      } catch (sbErr) {
+        console.warn("Supabase auth integration note in register:", sbErr.message);
+      }
+    }
+
+    if (!authToken) {
+      const tokenPayload = {
+        sub: createdUserId,
+        id: createdUserId,
+        email: cleanEmail,
+        name: finalName,
+        role: "school-admin",
+        organizationId: clientOrg.id,
+        organization_name: clientOrg.name,
+        permissions: ["websites.view", "websites.edit", "leads.view", "leads.create", "cms.view", "cms.edit", "media.upload", "billing.view", "students.view", "students.edit", "attendance.view", "attendance.mark", "exams.view", "exams.edit", "fees.view", "fees.collect"]
+      };
+      authToken = createDakshoraJwt(tokenPayload);
+    }
+
+    const returnUser = {
+      id: authUser?.id || createdUserId,
+      email: cleanEmail,
+      name: finalName,
+      role: "school-admin",
+      organizationId: clientOrg.id,
+      organization_id: clientOrg.id,
+      organizationName: clientOrg.name,
+      schoolName: clientOrg.name,
+      phone: finalPhone
+    };
+
+    recordAuditLog("user.registered", cleanEmail, "user", returnUser.id, req);
+
+    return res.json({
+      success: true,
+      message: `Registration successful! Welcome to DAKSHORA 2.0, ${finalName}! 🏫🚀`,
+      token: authToken,
+      access_token: authToken,
+      user: returnUser,
+      organization: clientOrg
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Registration failed", error: error.message });
+  }
+});
+
+// =========================================================================
 // TWO-FACTOR AUTHENTICATION (TOTP / MFA)
 // =========================================================================
 
