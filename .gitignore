@@ -40,3 +40,7 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Android binaries
+android-build/
+*.zip
