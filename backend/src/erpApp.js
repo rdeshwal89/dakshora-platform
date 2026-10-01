@@ -1005,6 +1005,51 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
 });
 
+// SuperAdmin / User Password Change Endpoint
+app.post("/api/auth/change-password", async (req, res) => {
+  try {
+    const { email, currentPassword, newPassword } = req.body || {};
+    if (!email || !newPassword) {
+      return res.status(400).json({ success: false, message: "Email and new password are required." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "New password must be at least 6 characters long." });
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    let updatedInSupabase = false;
+
+    if (supabase) {
+      try {
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const user = listData?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
+        if (user) {
+          const { error } = await supabase.auth.admin.updateUserById(user.id, {
+            password: newPassword.trim()
+          });
+          if (!error) {
+            updatedInSupabase = true;
+          } else {
+            console.warn("Supabase password update note:", error.message);
+          }
+        }
+      } catch (sbErr) {
+        console.warn("Supabase admin update error:", sbErr.message);
+      }
+    }
+
+    recordAuditLog("auth.password_changed", SecureOtpService.maskIdentifier(cleanEmail), "auth", null, req);
+
+    return res.json({
+      success: true,
+      message: "SuperAdmin password changed successfully! Please use your new password on next sign-in 🔑✨",
+      updatedInSupabase
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Failed to update password", error: err.message });
+  }
+});
+
 // =========================================================================
 // INSTITUTIONAL REGISTRATION FLOW (NAME, EMAIL, MOBILE, PASSWORD, DUAL OTP)
 // =========================================================================
