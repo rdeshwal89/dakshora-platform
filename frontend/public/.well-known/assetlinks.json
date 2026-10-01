@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "in.co.dakshora.erp",
+      "sha256_cert_fingerprints": [
+        "14:6D:E9:7D:0F:52:AB:E0:48:CB:0F:78:2D:07:95:67:EE:7C:1E:83:B3:98:8C:FA:31:07:D9:D3:C5:94:CE:0E"
+      ]
+    }
+  }
+]

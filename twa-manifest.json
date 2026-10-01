@@ -1,0 +1,36 @@
+{
+  "packageId": "in.co.dakshora.erp",
+  "host": "www.dakshora.co.in",
+  "name": "Dakshora ERP: School & Parent",
+  "launcherName": "Dakshora ERP",
+  "themeColor": "#0B0F19",
+  "navigationColor": "#0B0F19",
+  "backgroundColor": "#0B0F19",
+  "enableNotifications": true,
+  "startUrl": "/portal",
+  "iconUrl": "https://www.dakshora.co.in/icon-512.png",
+  "maskableIconUrl": "https://www.dakshora.co.in/icon-maskable-512.png",
+  "appVersionName": "2.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "School Portal Login",
+      "shortName": "Portal",
+      "url": "/portal",
+      "chosenIconUrl": "https://www.dakshora.co.in/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://www.dakshora.co.in/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {
+    "playBilling": {
+      "enabled": false
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "orientation": "portrait-primary"
+}

@@ -53,7 +53,17 @@ const nextConfig: NextConfig = {
         destination: `${backendUrl}/health/supabase`,
       },
 
-      // 2. SPA Portal Entry & Sub-routes
+      // 2. Legal & Policy Pages
+      {
+        source: "/privacy-policy",
+        destination: "/privacy-policy.html",
+      },
+      {
+        source: "/privacy",
+        destination: "/privacy-policy.html",
+      },
+
+      // 3. SPA Portal Entry & Sub-routes
       {
         source: "/",
         destination: "/portal/index.html",
