@@ -1,50 +1,27 @@
 {
-  "name": "Dakshora ERP: School & Parent",
-  "short_name": "Dakshora ERP",
+  "name": "DAKSHORA - School Digital Solution Platform",
+  "short_name": "DAKSHORA",
   "description": "One Digital Platform for the Complete School Ecosystem. NEP 2020 Holistic Progress Card, AI Teacher Co-Pilot, 30-sec Attendance, and Admissions CRM.",
-  "start_url": "/portal",
+  "start_url": "/",
   "scope": "/",
-  "id": "/portal",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#0B0F19",
-  "theme_color": "#0B0F19",
+  "theme_color": "#06B6D4",
   "lang": "en-IN",
   "categories": ["education", "productivity", "management"],
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/logo.svg",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/logo.svg",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-maskable-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshot-desktop.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "Dakshora ERP Enterprise Dashboard"
-    },
-    {
-      "src": "/screenshot-mobile.png",
-      "sizes": "720x1280",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Dakshora ERP Mobile App Portal"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ],
   "shortcuts": [
@@ -53,14 +30,14 @@
       "short_name": "Portal",
       "description": "Log into Dakshora School ERP",
       "url": "/portal",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
     },
     {
       "name": "Admissions & CRM",
       "short_name": "Admissions",
       "description": "Access School Admissions Desk",
       "url": "/portal",
-      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
     }
   ]
 }

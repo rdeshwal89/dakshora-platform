@@ -6,9 +6,7 @@ const STATIC_ASSETS = [
   '/portal/index.html',
   '/offline.html',
   '/manifest.webmanifest',
-  '/logo.svg',
-  '/icon-192.png',
-  '/icon-512.png'
+  '/logo.svg'
 ];
 
 self.addEventListener('install', (event) => {
