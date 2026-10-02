@@ -142,15 +142,27 @@ CREATE TABLE IF NOT EXISTS public.organization_members (
     created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Safely add role column if missing
 ALTER TABLE public.organization_members ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'school-admin';
 ALTER TABLE public.organization_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
+
+-- Drop NOT NULL on legacy role_id so modern role strings can be used without restriction (fixes ERROR 23502)
+ALTER TABLE public.organization_members ALTER COLUMN role_id DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_org_members_org ON public.organization_members(organization_id);
 CREATE INDEX IF NOT EXISTS idx_org_members_user ON public.organization_members(user_id);
 
--- Backfill organization_members from public.users safely
-INSERT INTO public.organization_members (organization_id, user_id, role)
-SELECT u.organization_id, u.id, u.role
+-- Backfill organization_members from public.users safely with role_id mapped
+INSERT INTO public.organization_members (organization_id, user_id, role, role_id)
+SELECT 
+    u.organization_id, 
+    u.id, 
+    u.role,
+    COALESCE(
+        (SELECT r.id FROM public.roles r WHERE r.name = 'super_admin' AND u.role = 'superadmin' LIMIT 1),
+        (SELECT r.id FROM public.roles r WHERE r.name = 'client_admin' AND u.role IN ('school-admin', 'principal') LIMIT 1),
+        (SELECT r.id FROM public.roles r WHERE r.name = 'staff' LIMIT 1)
+    ) AS role_id
 FROM public.users u
 WHERE u.organization_id IS NOT NULL
   AND NOT EXISTS (
