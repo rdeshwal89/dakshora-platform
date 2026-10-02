@@ -1,6 +1,6 @@
 import "dotenv/config";
 import http from "http";
-import { buildApp } from "../src/app.js";
+import { buildApp } from "../src/app.ts";
 
 async function testSuite() {
   console.log("==========================================================================");
