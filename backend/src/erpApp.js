@@ -458,6 +458,19 @@ async function requireAuth(req, res, next) {
       organizationId
     };
 
+    // Multi-Tenant Security: Block access if the school tenant is deactivated/suspended
+    if (!isSuperAdmin && organizationId) {
+      const tenantOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.id === organizationId);
+      if (tenantOrg && (tenantOrg.status === 'suspended' || tenantOrg.status === 'deactivated' || tenantOrg.status === 'archived')) {
+        return res.status(403).json({
+          success: false,
+          code: "TENANT_DEACTIVATED",
+          message: `Access Suspended: School '${tenantOrg.name}' has been deactivated by Dakshora Platform Administration. Please contact administration for assistance.`,
+          status: tenantOrg.status
+        });
+      }
+    }
+
     if (organizationId && supabase) {
       try {
         const [subRes, ovrRes] = await Promise.all([
@@ -30117,11 +30130,12 @@ app.get("/api/admin/organizations/:id", (req, res) => {
   });
 });
 
-// 4. PATCH /api/admin/organizations/:id/status - Update Organization Status
-app.patch("/api/admin/organizations/:id/status", async (req, res) => {
+// 4. PATCH /api/admin/organizations/:id/status - Update Organization Status (Activate/Deactivate/Suspend/Archive)
+app.patch(["/api/admin/organizations/:id/status", "/api/organizations/:id/status"], async (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
 
-  const { status } = req.body || {};
+  let { status } = req.body || {};
+  if (status === "deactivated") status = "suspended";
   const allowed = ["active", "trial", "suspended", "cancelled", "archived"];
   if (!status || !allowed.includes(status.toLowerCase())) {
     return res.status(400).json({ success: false, message: `Status must be one of: ${allowed.join(', ')}` });
@@ -30136,17 +30150,117 @@ app.patch("/api/admin/organizations/:id/status", async (req, res) => {
   org.status = status.toLowerCase();
   org.updated_at = new Date().toISOString();
 
+  // Sync status to Supabase PostgreSQL
+  if (supabase) {
+    try {
+      await supabase.from("organizations").update({ status: org.status, updated_at: org.updated_at }).eq("id", org.id);
+    } catch (e) {
+      console.warn("Supabase organization status sync note:", e.message);
+    }
+  }
+
   await recordAuditLog(
     "ORGANIZATION_STATUS_CHANGED",
     req.user?.email || "superadmin@dakshora.ai",
     "organization",
-    `Changed from ${oldStatus} to ${org.status}`,
+    `Changed '${org.name}' status from ${oldStatus} to ${org.status}`,
     req
   );
 
   res.json({
     success: true,
-    message: `Organization '${org.name}' status changed to '${org.status}' ✅`,
+    message: `School '${org.name}' is now ${org.status.toUpperCase()} ✅`,
+    organization: org
+  });
+});
+
+// 4b. PUT /api/admin/organizations/:id - Update Organization Details
+app.put(["/api/admin/organizations/:id", "/api/organizations/:id"], async (req, res) => {
+  if (!checkPlatformAdminRole(req, res)) return;
+
+  const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === req.params.id);
+  if (!org) {
+    return res.status(404).json({ success: false, message: "Organization not found" });
+  }
+
+  const { name, plan, board, contact_email, contact_phone, city, state, mrr_inr, status } = req.body || {};
+
+  if (name) org.name = name;
+  if (plan) org.plan = plan;
+  if (board) org.board = board;
+  if (contact_email) org.contact_email = contact_email;
+  if (contact_phone) org.contact_phone = contact_phone;
+  if (city) org.city = city;
+  if (state) org.state = state;
+  if (mrr_inr !== undefined) org.mrr_inr = Number(mrr_inr);
+  if (status) org.status = status === "deactivated" ? "suspended" : status;
+  org.updated_at = new Date().toISOString();
+
+  if (supabase) {
+    try {
+      await supabase.from("organizations").update({
+        name: org.name,
+        plan: org.plan,
+        board: org.board,
+        contact_email: org.contact_email,
+        contact_phone: org.contact_phone,
+        city: org.city,
+        state: org.state,
+        mrr_inr: org.mrr_inr,
+        status: org.status,
+        updated_at: org.updated_at
+      }).eq("id", org.id);
+    } catch (e) {
+      console.warn("Supabase organization details sync note:", e.message);
+    }
+  }
+
+  await recordAuditLog(
+    "ORGANIZATION_DETAILS_UPDATED",
+    req.user?.email || "superadmin@dakshora.ai",
+    "organization",
+    `Updated details for '${org.name}'`,
+    req
+  );
+
+  res.json({
+    success: true,
+    message: `School tenant '${org.name}' updated successfully ✅`,
+    organization: org
+  });
+});
+
+// 4c. DELETE /api/admin/organizations/:id - Deactivate / Archive Organization
+app.delete(["/api/admin/organizations/:id", "/api/organizations/:id"], async (req, res) => {
+  if (!checkPlatformAdminRole(req, res)) return;
+
+  const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === req.params.id);
+  if (!org) {
+    return res.status(404).json({ success: false, message: "Organization not found" });
+  }
+
+  org.status = "archived";
+  org.updated_at = new Date().toISOString();
+
+  if (supabase) {
+    try {
+      await supabase.from("organizations").update({ status: "archived", updated_at: org.updated_at }).eq("id", org.id);
+    } catch (e) {
+      console.warn("Supabase organization archive note:", e.message);
+    }
+  }
+
+  await recordAuditLog(
+    "ORGANIZATION_ARCHIVED",
+    req.user?.email || "superadmin@dakshora.ai",
+    "organization",
+    `Archived / Deactivated organization '${org.name}'`,
+    req
+  );
+
+  res.json({
+    success: true,
+    message: `School tenant '${org.name}' has been archived and access deactivated 🔒`,
     organization: org
   });
 });
