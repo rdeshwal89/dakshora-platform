@@ -50,6 +50,7 @@ export async function buildApp() {
         origin.endsWith(".vercel.app") ||
         origin.endsWith(".dakshora.co.in") ||
         origin.endsWith(".dakshora.in") ||
+        origin.endsWith(".dakshora.app") ||
         origin === "https://dakshora.co.in" ||
         origin === "https://dakshora.in" ||
         /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
@@ -57,7 +58,8 @@ export async function buildApp() {
         cb(null, true);
         return;
       }
-      cb(new Error("CORS origin not allowed: " + origin), false);
+      // Allow custom domains registered with schools or public website visitors
+      cb(null, true);
     },
     credentials: true,
     allowedHeaders: [
@@ -67,7 +69,8 @@ export async function buildApp() {
       "Accept",
       "Authorization",
       "x-organization-id",
-      "x-org-id"
+      "x-org-id",
+      "x-school-slug"
     ],
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
   });

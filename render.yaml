@@ -2,7 +2,7 @@ services:
   - type: web
     name: dakshora-api
     runtime: node
-    plan: free
+    plan: starter # Render $7/month Starter plan for 24/7 always-on service with zero cold start
     region: singapore
     buildCommand: npm install && npm run build
     startCommand: npm start

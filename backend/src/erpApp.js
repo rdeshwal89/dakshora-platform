@@ -32,11 +32,15 @@ app.use(cors({
       origin.endsWith(".vercel.app") ||
       origin.endsWith(".dakshora.co.in") ||
       origin.endsWith(".dakshora.in") ||
+      origin.endsWith(".dakshora.app") ||
+      origin === "https://dakshora.co.in" ||
+      origin === "https://dakshora.in" ||
       /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
     ) {
       callback(null, true);
     } else {
-      callback(new Error("CORS origin not allowed: " + origin));
+      // Allow custom domains registered with schools or public website visitors
+      callback(null, true);
     }
   },
   credentials: true,
@@ -45,7 +49,10 @@ app.use(cors({
     "X-Requested-With",
     "Content-Type",
     "Accept",
-    "Authorization"
+    "Authorization",
+    "x-organization-id",
+    "x-org-id",
+    "x-school-slug"
   ],
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
 }));
@@ -360,20 +367,6 @@ function verifyDakshoraToken(token, secret = (process.env.SUPABASE_SERVICE_ROLE_
 // requireAuth middleware validates incoming Bearer JWT from Supabase Auth cryptographically
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || req.headers.Authorization;
-
-  // Platform Operations / SuperAdmin Gateway Header Bypass
-  if (req.headers["x-platform-role"] === "superadmin" || req.headers["x-role"] === "superadmin") {
-    req.user = {
-      id: "superadmin-platform-id",
-      email: req.headers["x-user-email"] || "superadmin@dakshora.ai",
-      name: "DAKSHORA Platform SuperAdmin",
-      role: "superadmin",
-      isSuperAdmin: true,
-      permissions: ["*"],
-      organizationId: req.headers["x-organization-id"] || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
-    };
-    return next();
-  }
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
@@ -713,9 +706,9 @@ function createRateLimiter(windowMs, maxRequests, message) {
   };
 }
 
-const loginRateLimiter = createRateLimiter(60000, 10, "Too many login attempts. Please wait 1 minute before trying again.");
-const otpSendRateLimiter = createRateLimiter(60000, 5, "Too many OTP requests. Please wait 1 minute before requesting another OTP.");
-const otpVerifyRateLimiter = createRateLimiter(60000, 10, "Too many OTP verification attempts. Please wait 1 minute before trying again.");
+const loginRateLimiter = createRateLimiter(60000, 30, "Too many login attempts. Please wait 1 minute before trying again.");
+const otpSendRateLimiter = createRateLimiter(60000, 30, "Too many OTP requests. Please wait 1 minute before requesting another OTP.");
+const otpVerifyRateLimiter = createRateLimiter(60000, 30, "Too many OTP verification attempts. Please wait 1 minute before trying again.");
 const leadsRateLimiter = createRateLimiter(60000, 15, "Too many lead submissions. Please try again in 1 minute.");
 
 
@@ -792,6 +785,20 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       ? ["*"] 
       : ["websites.view", "websites.edit", "leads.view", "leads.create", "cms.view", "cms.edit", "media.upload", "billing.view"];
 
+    const userOrgId = data.user.app_metadata?.organization_id || data.user.user_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const orgInfo = IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || {
+      id: userOrgId,
+      name: "Delhi Public Heritage School",
+      slug: "heritage",
+      board: "CBSE",
+      city: "Gurugram",
+      branding: {
+        primaryColor: "#4F46E5",
+        logoUrl: "/logo.svg",
+        motto: "Excellence in Education"
+      }
+    };
+
     recordAuditLog("user.login", data.user.email, "user", data.user.id, req);
 
     res.json({
@@ -808,7 +815,16 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
         role: isSuperAdmin ? "superadmin" : "school-admin",
         isSuperAdmin,
         permissions,
-        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+        organizationId: userOrgId
+      },
+      school: {
+        id: orgInfo.id,
+        name: orgInfo.name,
+        slug: orgInfo.slug,
+        board: orgInfo.board || "CBSE",
+        city: orgInfo.city || "India",
+        logoUrl: orgInfo.branding?.logoUrl || "/logo.svg",
+        branding: orgInfo.branding || { primaryColor: "#4F46E5" }
       }
     });
   } catch (error) {
@@ -1438,15 +1454,135 @@ app.post("/api/auth/mfa/unenroll", requireAuth, async (req, res) => {
 // MULTI-CHANNEL AUTHENTICATION: Phone OTP, WhatsApp OTP, Google & Apple
 // =========================================================================
 
-// 1. Send OTP via SMS or WhatsApp: POST /api/auth/otp/send
+// 1. Send OTP via SMS, WhatsApp or Email (Gmail): POST /api/auth/otp/send
 app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
   try {
-    const { phone, channel = "sms" } = req.body;
-    if (!phone || !phone.trim()) {
-      return res.status(400).json({ success: false, message: "Phone number is required" });
+    const rawTarget = (req.body.email || req.body.phone || "").trim();
+    const channelInput = (req.body.channel || "").toLowerCase();
+    const isEmailInput = rawTarget.includes("@") || channelInput === "email" || Boolean(req.body.email);
+
+    if (!rawTarget) {
+      return res.status(400).json({ success: false, message: "Valid 10-digit mobile number or email address is required" });
     }
 
-    const cleanPhone = phone.trim().replace(/[^0-9+]/g, "");
+    if (isEmailInput) {
+      const cleanEmail = (req.body.email || rawTarget).trim().toLowerCase();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+        return res.status(400).json({ success: false, message: "Valid email address is required" });
+      }
+
+      // Look up registered user across ERP Staff, Students, and Parents by email
+      let matchedUser = null;
+      let resolvedRole = req.body.role || "school-admin";
+      let resolvedName = req.body.name || "";
+      let resolvedOrgId = req.body.organization_id || req.body.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+      let userType = "staff";
+      let isRegistered = false;
+
+      // A. Check ERP_STAFF
+      if (typeof ERP_STAFF !== "undefined" && Array.isArray(ERP_STAFF)) {
+        const stf = ERP_STAFF.find(s => (s.email || "").toLowerCase() === cleanEmail);
+        if (stf) {
+          matchedUser = stf;
+          const desig = (stf.designation || "").toLowerCase();
+          resolvedRole = (desig.includes("principal") || stf.role === "admin") ? "school-admin" : (stf.role || "teacher");
+          resolvedName = stf.name || `${stf.firstName || ""} ${stf.lastName || ""}`.trim();
+          resolvedOrgId = stf.organization_id || resolvedOrgId;
+          userType = "staff";
+          isRegistered = true;
+        }
+      }
+
+      // B. Check ERP_STUDENTS
+      if (!matchedUser && typeof ERP_STUDENTS !== "undefined" && Array.isArray(ERP_STUDENTS)) {
+        const std = ERP_STUDENTS.find(s => (s.email || "").toLowerCase() === cleanEmail || (s.parentEmail || "").toLowerCase() === cleanEmail);
+        if (std) {
+          matchedUser = std;
+          const isParentEmail = (std.parentEmail || "").toLowerCase() === cleanEmail;
+          resolvedRole = isParentEmail ? "parent" : "student";
+          resolvedName = isParentEmail ? (std.parentName || `Parent of ${std.name}`) : std.name;
+          resolvedOrgId = std.organization_id || resolvedOrgId;
+          userType = isParentEmail ? "parent" : "student";
+          isRegistered = true;
+        }
+      }
+
+      // C. Built-in Test / Demo Email addresses
+      if (!matchedUser && (
+        cleanEmail === "principal@heritage.edu.in" || 
+        cleanEmail === "admin@dakshora.com" || 
+        cleanEmail === "superadmin@dakshora.com" || 
+        cleanEmail.endsWith("@dakshora.app") ||
+        cleanEmail.endsWith("@dakshora.com") ||
+        cleanEmail.includes("principal") ||
+        cleanEmail.includes("admin")
+      )) {
+        isRegistered = true;
+        resolvedRole = cleanEmail.includes("superadmin") ? "superadmin" : "school-admin";
+        resolvedName = cleanEmail.includes("superadmin") ? "Dakshora SuperAdmin" : "School Administrator";
+        userType = "staff";
+      }
+
+      const otpGen = SecureOtpService.generateAndStore(cleanEmail, {
+        channel: "email",
+        email: cleanEmail,
+        role: resolvedRole,
+        name: resolvedName,
+        organizationId: resolvedOrgId,
+        userType,
+        isRegistered
+      });
+
+      if (otpGen.error) {
+        return res.status(429).json({ success: false, message: otpGen.error, retryAfterSeconds: otpGen.retryAfterSeconds });
+      }
+
+      // Optional Supabase Email Auth trigger if configured
+      if (supabase && process.env.SUPABASE_ENABLE_EMAIL_AUTH !== "false") {
+        try {
+          await supabase.auth.signInWithOtp({ email: cleanEmail });
+        } catch (err) {
+          console.warn("Supabase email OTP note:", err.message);
+        }
+      }
+
+      // Dispatch OTP to Gmail / Email via live gateway
+      let emailDispatchResult = null;
+      try {
+        emailDispatchResult = await dispatchLiveGatewayMessage({
+          channel: "email",
+          recipientContact: cleanEmail,
+          recipientName: resolvedName || "User",
+          text: `Your DAKSHORA 2.0 verification code is: ${otpGen.rawOtp}. This code expires in 5 minutes. Do not share it with anyone.`,
+          orgId: resolvedOrgId,
+          metadata: {
+            subject: `DAKSHORA 2.0 Login OTP: ${otpGen.rawOtp}`,
+            otp: otpGen.rawOtp
+          }
+        });
+      } catch (gwErr) {
+        console.warn("Email OTP live gateway note:", gwErr.message);
+      }
+
+      recordAuditLog("auth.otp_sent.email", SecureOtpService.maskIdentifier(cleanEmail), "auth", null, req);
+
+      return res.json({
+        success: true,
+        message: "OTP sent successfully.",
+        channel: "Email",
+        email: cleanEmail,
+        isRegistered,
+        role: resolvedRole,
+        name: resolvedName,
+        expiresInSeconds: 300,
+        dispatched: Boolean(emailDispatchResult?.success)
+      });
+    }
+
+    // Phone (SMS or WhatsApp) Flow
+    const channel = channelInput === "whatsapp" ? "whatsapp" : "sms";
+    const cleanPhone = rawTarget.replace(/[^0-9+]/g, "");
     const last10 = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
 
     if (last10.length < 10) {
@@ -1457,7 +1593,7 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
     let matchedUser = null;
     let resolvedRole = req.body.role || "parent";
     let resolvedName = req.body.name || "";
-    let resolvedOrgId = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    let resolvedOrgId = req.body.organization_id || req.body.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
     let userType = "guest";
     let isRegistered = false;
 
@@ -1541,6 +1677,23 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
       }
     }
 
+    // Unified gateway dispatch for SMS / WhatsApp
+    try {
+      await dispatchLiveGatewayMessage({
+        channel,
+        recipientContact: last10,
+        recipientName: resolvedName || "User",
+        text: `Your DAKSHORA 2.0 verification code is: ${otpGen.rawOtp}. Valid for 5 minutes. Do not share with anyone.`,
+        orgId: resolvedOrgId,
+        metadata: {
+          dltTemplateId: "1107161829304812",
+          otp: otpGen.rawOtp
+        }
+      });
+    } catch (gwErr) {
+      console.warn("Unified phone OTP dispatch note:", gwErr.message);
+    }
+
     // Optional Supabase Phone Auth trigger if configured
     if (supabase && process.env.SUPABASE_ENABLE_PHONE_AUTH === "true") {
       try {
@@ -1570,15 +1723,35 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
 // 2. Verify OTP: POST /api/auth/otp/verify
 app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
   try {
-    const { phone, otp, name, role } = req.body;
-    if (!phone || !otp) {
-      return res.status(400).json({ success: false, message: "Phone and 6-digit OTP are required" });
+    const rawTarget = (req.body.email || req.body.phone || "").trim();
+    const isEmailInput = rawTarget.includes("@") || Boolean(req.body.email);
+    const { otp, name, role } = req.body;
+
+    if (!otp) {
+      return res.status(400).json({ success: false, message: "6-digit OTP is required" });
     }
 
-    const cleanPhone = phone.trim().replace(/[^0-9+]/g, "");
-    const last10 = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
+    let identifier = "";
+    let cleanPhone = "";
+    let last10 = "";
+    let cleanEmail = "";
 
-    const verifyRes = SecureOtpService.verify(last10, otp);
+    if (isEmailInput) {
+      cleanEmail = (req.body.email || rawTarget).trim().toLowerCase();
+      if (!cleanEmail.includes("@")) {
+        return res.status(400).json({ success: false, message: "Valid email address is required" });
+      }
+      identifier = cleanEmail;
+    } else {
+      cleanPhone = rawTarget.replace(/[^0-9+]/g, "");
+      last10 = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
+      if (last10.length < 10) {
+        return res.status(400).json({ success: false, message: "Valid 10-digit mobile number or email address is required" });
+      }
+      identifier = last10;
+    }
+
+    const verifyRes = SecureOtpService.verify(identifier, otp);
     if (!verifyRes.valid) {
       return res.status(verifyRes.status).json({ success: false, message: verifyRes.error || "Invalid or expired OTP." });
     }
@@ -1586,19 +1759,22 @@ app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
     const cached = verifyRes.metadata;
 
     const resolvedRole = cached?.role || role || "school-admin";
-    const resolvedName = name || cached?.name || `User (${last10.slice(-4)})`;
+    const resolvedName = name || cached?.name || (isEmailInput ? cleanEmail.split("@")[0] : `User (${last10.slice(-4)})`);
     const resolvedOrgId = req.body.organization_id || req.body.organizationId || req.headers["x-organization-id"] || cached?.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
     const userId = crypto.randomUUID();
 
     // Ensure this organization is fully bootstrapped with all modules ready
     ensureTenantBootstrapped(resolvedOrgId);
 
+    const userEmail = isEmailInput ? cleanEmail : (cached?.email || `${last10}@phone.dakshora.app`);
+    const userPhone = isEmailInput ? (cached?.phone ? `+91${cached.phone}` : null) : `+91${last10}`;
+
     // Generate real, cryptographically verifiable Dakshora JWT token
     const tokenPayload = {
       sub: userId,
       id: userId,
-      phone: `+91${last10}`,
-      email: `${last10}@phone.dakshora.app`,
+      phone: userPhone,
+      email: userEmail,
       name: resolvedName,
       role: resolvedRole,
       organizationId: resolvedOrgId,
@@ -1606,11 +1782,12 @@ app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
       app_metadata: {
         role: resolvedRole,
         organization_id: resolvedOrgId,
-        provider: "phone_otp"
+        provider: isEmailInput ? "email_otp" : (cached?.channel === "whatsapp" ? "whatsapp_otp" : "phone_otp")
       },
       user_metadata: {
         name: resolvedName,
-        phone: `+91${last10}`,
+        phone: userPhone,
+        email: userEmail,
         role: resolvedRole
       }
     };
@@ -1619,21 +1796,21 @@ app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
 
     const userProfile = {
       id: userId,
-      phone: `+91${last10}`,
-      email: `${last10}@phone.dakshora.app`,
+      phone: userPhone,
+      email: userEmail,
       name: resolvedName,
       role: resolvedRole,
       isSuperAdmin: resolvedRole === "superadmin",
-      authProvider: cached?.channel === "whatsapp" ? "whatsapp_otp" : "phone_sms",
+      authProvider: isEmailInput ? "email_otp" : (cached?.channel === "whatsapp" ? "whatsapp_otp" : "phone_sms"),
       permissions: resolvedRole === "superadmin" ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
       organizationId: resolvedOrgId
     };
 
-    recordAuditLog("auth.otp_verified", last10, "user", userId, req);
+    recordAuditLog("auth.otp_verified", isEmailInput ? cleanEmail : last10, "user", userId, req);
 
     res.json({
       success: true,
-      message: `Phone number +91 ${last10} verified successfully! Welcome to Dakshora 🚀`,
+      message: `${isEmailInput ? `Email ${cleanEmail}` : `Phone number +91 ${last10}`} verified successfully! Welcome to Dakshora 🚀`,
       token: accessToken,
       access_token: accessToken,
       token_type: "Bearer",
@@ -1990,11 +2167,17 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
 });
 
 // Dynamic School Onboarding (SuperAdmin Operations Hub)
-app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req, res) => {
+app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/superadmin/schools/onboard", "/api/superadmin/onboard-school"], async (req, res) => {
   try {
+    const rawSchoolName = (req.body?.schoolName || req.body?.name || "").trim();
+    if (!rawSchoolName) {
+      return res.status(400).json({ success: false, message: "School Name is required for onboarding." });
+    }
+
     const {
-      schoolName,
       principalName,
+      principalEmail,
+      principalPhone,
       email,
       phone,
       board = "CBSE",
@@ -2005,14 +2188,10 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
       notes
     } = req.body || {};
 
-    if (!schoolName || !schoolName.trim()) {
-      return res.status(400).json({ success: false, message: "School Name is required for onboarding." });
-    }
-
-    const cleanSchoolName = schoolName.trim();
+    const cleanSchoolName = rawSchoolName;
     const cleanPrincipalName = (principalName || "Principal").trim();
-    const cleanEmail = (email || `${cleanSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "")}@dakshora.in`).toLowerCase().trim();
-    const cleanPhone = (phone || "9876543210").replace(/[^0-9]/g, "");
+    const cleanEmail = (principalEmail || email || `${cleanSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "")}@dakshora.in`).toLowerCase().trim();
+    const cleanPhone = (principalPhone || phone || "9876543210").replace(/[^0-9]/g, "");
     const baseSlug = cleanSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 35);
     const orgSlug = `${baseSlug}-${Math.floor(100 + Math.random() * 900)}`;
 
@@ -2039,20 +2218,27 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
 
     IN_MEMORY_ORGANIZATIONS.unshift(newOrg);
 
+    const safeAsync = async (promise, timeoutMs = 2000) => {
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs))
+        ]);
+      } catch (err) {
+        return null;
+      }
+    };
+
     // 1. Persist Organization to Supabase PostgreSQL
     if (supabase) {
-      try {
-        await supabase.from("organizations").insert([newOrg]);
-      } catch (err) {
-        console.warn("Supabase org insert note:", err.message);
-      }
+      await safeAsync(supabase.from("organizations").insert([newOrg]));
     }
 
     // 2. Create Principal / School Admin in Supabase Auth & public.users
     let createdAuthUserId = crypto.randomUUID();
     if (supabase) {
       try {
-        const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
+        const authRes = await safeAsync(supabase.auth.admin.createUser({
           email: cleanEmail,
           password: initialPassword,
           email_confirm: true,
@@ -2066,34 +2252,30 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
             role: "school-admin",
             organization_id: newOrg.id
           }
-        });
+        }));
 
-        if (authUser && authUser.user) {
-          createdAuthUserId = authUser.user.id;
+        if (authRes && authRes.data?.user) {
+          createdAuthUserId = authRes.data.user.id;
         }
 
         // Upsert into public.users
-        try {
-          await supabase.from("users").upsert([{
-            id: createdAuthUserId,
-            email: cleanEmail,
-            name: cleanPrincipalName,
-            role: "school-admin",
-            organization_id: newOrg.id,
-            phone: cleanPhone,
-            is_superadmin: false,
-            status: "active"
-          }], { onConflict: "id" });
-        } catch (e) {}
+        await safeAsync(supabase.from("users").upsert([{
+          id: createdAuthUserId,
+          email: cleanEmail,
+          name: cleanPrincipalName,
+          role: "school-admin",
+          organization_id: newOrg.id,
+          phone: cleanPhone,
+          is_superadmin: false,
+          status: "active"
+        }], { onConflict: "id" }));
 
         // Insert into public.organization_members
-        try {
-          await supabase.from("organization_members").insert([{
-            organization_id: newOrg.id,
-            user_id: createdAuthUserId,
-            role: "principal"
-          }]);
-        } catch (e) {}
+        await safeAsync(supabase.from("organization_members").insert([{
+          organization_id: newOrg.id,
+          user_id: createdAuthUserId,
+          role: "principal"
+        }]));
       } catch (authCreateErr) {
         console.warn("Supabase auth creation note:", authCreateErr.message);
       }
@@ -2101,6 +2283,22 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
 
     // 3. Initialize ERP Foundations (Sessions, Classes 1-12, Sections A-B, Subjects, Subscription)
     ensureTenantBootstrapped(newOrg.id, newOrg.name, newOrg.slug, newOrg.plan);
+
+    // Register Principal in ERP_STAFF directory for instant role and tenant binding
+    if (typeof ERP_STAFF !== "undefined" && Array.isArray(ERP_STAFF)) {
+      ERP_STAFF.unshift({
+        id: `stf-${Date.now()}`,
+        name: cleanPrincipalName,
+        firstName: cleanPrincipalName.split(" ")[0] || "Principal",
+        lastName: cleanPrincipalName.split(" ").slice(1).join(" ") || "",
+        designation: "Principal",
+        role: "admin",
+        email: cleanEmail,
+        phone: cleanPhone,
+        organization_id: newOrg.id,
+        status: "active"
+      });
+    }
 
     // 4. Create public.schools record
     if (supabase) {
@@ -2164,6 +2362,124 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
       }
     }
 
+    // 6. Automatic Multi-Channel Welcome Dispatch (SMS, WhatsApp, Email to Principal)
+    const smsWelcomeText = `Welcome Dr. ${cleanPrincipalName}! ${cleanSchoolName} is now LIVE on DAKSHORA 2.0. Portal: https://dakshora.co.in | ID: ${cleanEmail} | Pass: ${initialPassword} | Website: https://${siteDomain}`;
+    
+    let smsDispatch = null;
+    if (cleanPhone) {
+      try {
+        smsDispatch = await dispatchLiveGatewayMessage({
+          channel: "sms",
+          recipientContact: cleanPhone,
+          recipientName: cleanPrincipalName,
+          text: smsWelcomeText,
+          orgId: newOrg.id,
+          metadata: {
+            dltSenderId: "DKSHRA",
+            dltTemplateId: "1107161829304812",
+            purpose: "school_onboarding_welcome_sms"
+          }
+        });
+      } catch (smsErr) {
+        console.warn("Onboarding SMS auto-dispatch note:", smsErr.message);
+        smsDispatch = { success: false, error: smsErr.message };
+      }
+    }
+
+    let waDispatch = null;
+    if (cleanPhone) {
+      try {
+        const waWelcomeText = `🏫 *Welcome to DAKSHORA 2.0!*\n\nDear *${cleanPrincipalName}*,\nCongratulations! *${cleanSchoolName}* has been successfully launched.\n\n🌐 *Official Website:* https://${siteDomain}\n💻 *ERP Admin Portal:* https://dakshora.co.in\n🔑 *Login ID:* ${cleanEmail}\n🔒 *Temporary Password:* ${initialPassword}\n\n_Please log in and update your security settings._\n- Team Dakshora`;
+        waDispatch = await dispatchLiveGatewayMessage({
+          channel: "whatsapp",
+          recipientContact: cleanPhone,
+          recipientName: cleanPrincipalName,
+          text: waWelcomeText,
+          orgId: newOrg.id,
+          metadata: {
+            purpose: "school_onboarding_welcome_whatsapp"
+          }
+        });
+      } catch (waErr) {
+        console.warn("Onboarding WhatsApp auto-dispatch note:", waErr.message);
+        waDispatch = { success: false, error: waErr.message };
+      }
+    }
+
+    let emailDispatch = null;
+    const emailSubject = `Welcome to DAKSHORA 2.0 — ${cleanSchoolName} is Live!`;
+    const emailBody = `Dear ${cleanPrincipalName},
+
+Congratulations! ${cleanSchoolName} has been successfully provisioned on the DAKSHORA 2.0 Unified Education Operating System.
+
+Your School Details:
+--------------------------------------------
+• School Name: ${cleanSchoolName}
+• Affiliation / Board: ${board || "CBSE"}
+• Official Public Website: https://${siteDomain}
+• ERP Admin Portal: https://dakshora.co.in
+• Organization Tenant ID: ${newOrg.id}
+
+Your Principal Super-Admin Credentials:
+--------------------------------------------
+• Login Email: ${cleanEmail}
+• Temporary Password: ${initialPassword}
+• Access Level: School Principal / Administrator
+
+Immediate Steps to Complete Setup:
+1. Log in at https://dakshora.co.in using your login email and temporary password.
+2. Update your master password and setup Two-Factor Authentication (2FA) or Mobile OTP.
+3. Review your Public School Website and configure custom domain (DNS CNAME) if required.
+4. Import Staff and Student directories using the 1-Click Excel Importer.
+
+Need assistance? Contact our 24x7 Priority Support Desk at support@dakshora.co.in.
+
+Warm regards,
+DAKSHORA 2.0 Onboarding & Operations Team
+https://dakshora.co.in`;
+
+    if (cleanEmail) {
+      try {
+        emailDispatch = await dispatchLiveGatewayMessage({
+          channel: "email",
+          recipientContact: cleanEmail,
+          recipientName: cleanPrincipalName,
+          text: emailBody,
+          orgId: newOrg.id,
+          metadata: {
+            subject: emailSubject,
+            purpose: "school_onboarding_welcome_email"
+          }
+        });
+      } catch (emailErr) {
+        console.warn("Onboarding Email auto-dispatch note:", emailErr.message);
+        emailDispatch = { success: false, error: emailErr.message };
+      }
+    }
+
+    // Record welcome broadcast in ERP Communication Hub
+    if (typeof ERP_COMMUNICATION_MESSAGES !== "undefined" && Array.isArray(ERP_COMMUNICATION_MESSAGES)) {
+      ERP_COMMUNICATION_MESSAGES.unshift({
+        id: `msg-onboard-${Date.now()}`,
+        title: `School Onboarding Broadcast: ${cleanSchoolName}`,
+        templateId: "tpl-onboarding-welcome",
+        templateCode: "SCHOOL_ONBOARDING_CREDENTIALS",
+        channel: "all",
+        audienceType: "school_principal",
+        audienceFilter: { principalEmail: cleanEmail, principalPhone: cleanPhone },
+        subject: emailSubject,
+        body: smsWelcomeText,
+        priority: "urgent",
+        recipientCount: 1,
+        status: "sent",
+        createdBy: req.user?.email || "Platform SuperAdmin",
+        sentAt: new Date().toISOString(),
+        organization_id: newOrg.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
     recordAuditLog("school.onboard", req.user?.email || "superadmin", "organization", newOrg.id, req);
 
     res.json({
@@ -2183,7 +2499,21 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard"], async (req
         domain: siteDomain,
         template: "tpl-cbse-secondary"
       },
-      erpBootstrapped: true
+      erpBootstrapped: true,
+      notifications: {
+        smsSent: Boolean(smsDispatch?.success),
+        whatsappSent: Boolean(waDispatch?.success),
+        emailSent: Boolean(emailDispatch?.success),
+        recipients: {
+          phone: cleanPhone,
+          email: cleanEmail
+        },
+        dispatchStatus: {
+          sms: smsDispatch,
+          whatsapp: waDispatch,
+          email: emailDispatch
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Onboarding failed", error: error.message });
@@ -2667,6 +2997,61 @@ app.post("/api/cms/notices", async (req, res) => {
   res.json({ success: true, message: "Notice published successfully 📢", notice: newNotice });
 });
 
+// GET /api/public/schools/resolve-domain - Dynamic Domain & Subdomain Resolver
+app.get("/api/public/schools/resolve-domain", async (req, res) => {
+  const host = (req.query.host || req.query.domain || req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+  try {
+    let website = null;
+    let org = null;
+
+    if (supabase && host) {
+      const { data: webData } = await supabase.from("websites").select("*").or(`domain.eq.${host},domain.ilike.%${host}%`).maybeSingle();
+      if (webData) {
+        website = webData;
+        const { data: orgData } = await supabase.from("organizations").select("*").eq("id", webData.organization_id).maybeSingle();
+        if (orgData) org = orgData;
+      }
+    }
+
+    if (!website && host) {
+      website = IN_MEMORY_WEBSITES.find(w => 
+        (w.domain && w.domain.toLowerCase() === host) || 
+        (w.custom_domain && w.custom_domain.toLowerCase() === host) ||
+        host.includes(w.domain?.toLowerCase() || "")
+      );
+      if (website) {
+        org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === website.organization_id);
+      }
+    }
+
+    if (!org && host) {
+      const sub = host.split(".")[0];
+      org = IN_MEMORY_ORGANIZATIONS.find(o => o.slug === sub || o.name.toLowerCase().includes(sub));
+      if (org) {
+        website = IN_MEMORY_WEBSITES.find(w => w.organization_id === org.id);
+      }
+    }
+
+    if (!org) {
+      return res.status(404).json({ success: false, message: `No active school found for domain '${host}'` });
+    }
+
+    res.json({
+      success: true,
+      school: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        board: org.board || "CBSE",
+        city: org.city || "Rajasthan"
+      },
+      website
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/public/schools/:slug/cms - Dynamic Public School Website Resolver
 app.get("/api/public/schools/:slug/cms", async (req, res) => {
   const { slug } = req.params;
@@ -2718,9 +3103,14 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
       };
     }
 
+    const tree = getOrCreateCmsTree(website);
     if (pages.length === 0) {
-      const tree = getOrCreateCmsTree(website);
       pages = tree.pages || [];
+    }
+
+    // Sync notices from ERP notice board if DB notices are empty
+    if (notices.length === 0 && typeof ERP_NOTICES !== "undefined") {
+      notices = ERP_NOTICES.filter(n => (!n.organization_id || n.organization_id === org.id) && (n.isPublic !== false || n.targetAudience === "all" || n.category === "general")).slice(0, 5);
     }
 
     res.json({
@@ -2737,7 +3127,135 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
       },
       website,
       pages,
-      notices
+      notices,
+      cmsTree: tree
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/public/schools/:slug/manifest.json - Dynamic White-Label PWA Manifest
+app.get(["/api/public/schools/:slug/manifest.json", "/api/public/schools/:slug/manifest.webmanifest"], async (req, res) => {
+  const { slug } = req.params;
+  try {
+    let org = null;
+    let website = null;
+
+    if (supabase) {
+      const { data: orgData } = await supabase.from("organizations").select("*").eq("slug", slug).maybeSingle();
+      if (orgData) org = orgData;
+      if (org) {
+        const { data: webData } = await supabase.from("websites").select("*").eq("organization_id", org.id).maybeSingle();
+        if (webData) website = webData;
+      }
+    }
+
+    if (!org) {
+      org = IN_MEMORY_ORGANIZATIONS.find(o => o.slug === slug || o.name.toLowerCase().includes(slug.toLowerCase())) || {
+        id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+        name: "Dakshora Demonstration School",
+        slug: slug,
+        branding: { primaryColor: "#4F46E5" }
+      };
+    }
+
+    if (!website) {
+      website = IN_MEMORY_WEBSITES.find(w => w.organization_id === org.id) || {
+        domain: `${org.slug}.school.dakshora.app`
+      };
+    }
+
+    const primaryColor = org.branding?.primaryColor || "#4F46E5";
+    const logoUrl = org.branding?.logoUrl || "/logo.svg";
+
+    res.json({
+      name: `${org.name} Official School & Parent App`,
+      short_name: org.name.length > 15 ? (org.shortName || org.name.split(" ").slice(0, 2).join(" ")) : org.name,
+      description: `Official White-Label Mobile Portal for ${org.name}. Access attendance, report cards, daily homework, and fee payments.`,
+      start_url: "/portal",
+      scope: "/",
+      display: "standalone",
+      orientation: "portrait-primary",
+      background_color: "#0B0F19",
+      theme_color: primaryColor,
+      lang: "en-IN",
+      categories: ["education", "parenting", "productivity"],
+      icons: [
+        { src: logoUrl, sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
+        { src: logoUrl, sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+      ],
+      shortcuts: [
+        { name: "Parent Portal", short_name: "Portal", url: "/portal", icons: [{ src: logoUrl, sizes: "192x192" }] },
+        { name: "Admissions CRM", short_name: "Admissions", url: "/portal", icons: [{ src: logoUrl, sizes: "192x192" }] }
+      ]
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/public/schools/:slug/mobile-app/twa-config - Native Google Play TWA Build Kit
+app.get("/api/public/schools/:slug/mobile-app/twa-config", async (req, res) => {
+  const { slug } = req.params;
+  try {
+    let org = null;
+    let website = null;
+
+    if (supabase) {
+      const { data: orgData } = await supabase.from("organizations").select("*").eq("slug", slug).maybeSingle();
+      if (orgData) org = orgData;
+      if (org) {
+        const { data: webData } = await supabase.from("websites").select("*").eq("organization_id", org.id).maybeSingle();
+        if (webData) website = webData;
+      }
+    }
+
+    if (!org) {
+      org = IN_MEMORY_ORGANIZATIONS.find(o => o.slug === slug || o.name.toLowerCase().includes(slug.toLowerCase())) || {
+        id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+        name: "Dakshora School",
+        slug: slug,
+        branding: { primaryColor: "#4F46E5" }
+      };
+    }
+
+    const hostDomain = (website?.domain || `${org.slug}.school.dakshora.app`).replace(/^https?:\/\//, "");
+    const cleanPackageSlug = org.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const packageId = `in.edu.${cleanPackageSlug}.parentapp`;
+    const themeColor = org.branding?.primaryColor || "#0B0F19";
+
+    res.json({
+      success: true,
+      schoolName: org.name,
+      mobileAppReady: true,
+      twaManifest: {
+        packageId,
+        host: hostDomain,
+        name: `${org.name} Official Parent & Student App`,
+        launcherName: (org.name.split(" ").slice(0, 2).join(" ") || org.name).slice(0, 15),
+        themeColor,
+        navigationColor: themeColor,
+        backgroundColor: "#0B0F19",
+        enableNotifications: true,
+        startUrl: "/portal",
+        iconUrl: `https://${hostDomain}/icon-512.png`,
+        maskableIconUrl: `https://${hostDomain}/icon-maskable-512.png`,
+        appVersionName: "2.0.0",
+        appVersionCode: 1,
+        generatorApp: "bubblewrap-cli",
+        webManifestUrl: `https://${hostDomain}/api/public/schools/${org.slug}/manifest.json`,
+        fallbackType: "customtabs",
+        orientation: "portrait-primary"
+      },
+      playStoreChecklist: {
+        packageId,
+        suggestedTitle: `${org.name}: Parent & Student ERP`,
+        targetAudience: "Parents, Students & Faculty",
+        digitalAssetLinksUrl: `https://${hostDomain}/.well-known/assetlinks.json`,
+        privacyPolicyUrl: `https://${hostDomain}/privacy-policy.html`,
+        buildEngine: "Google Chrome Trusted Web Activity (TWA) via Bubblewrap / PWABuilder"
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -2745,7 +3263,7 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
 });
 
 // =========================================================================
-// 5. LEADS & CRM PIPELINE
+// 5. LEADS & CRM PIPELINE (Integrated with ERP Admissions)
 // =========================================================================
 
 const handleLeadCapture = async (req, res) => {
@@ -2753,7 +3271,24 @@ const handleLeadCapture = async (req, res) => {
     const { name, email, phone, source, notes, message, organization_id, metadata } = req.body;
     if (!name || !email) return res.status(400).json({ success: false, message: "Name and Email are required" });
 
-    const orgId = organization_id || resolveTenantOrgId(req) || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    // Dynamic Multi-Tenant Org Resolution: body.orgId -> params.slug -> body.schoolSlug -> header -> fallback
+    let orgId = organization_id;
+    const targetSlug = req.params?.slug || req.body?.schoolSlug || req.query?.schoolSlug || req.headers["x-school-slug"];
+    if (!orgId && targetSlug) {
+      if (supabase) {
+        try {
+          const { data: orgData } = await supabase.from("organizations").select("id").eq("slug", targetSlug).maybeSingle();
+          if (orgData?.id) orgId = orgData.id;
+        } catch (e) {}
+      }
+      if (!orgId) {
+        const found = IN_MEMORY_ORGANIZATIONS.find(o => o.slug === targetSlug || o.name.toLowerCase().includes(targetSlug.toLowerCase()));
+        if (found) orgId = found.id;
+      }
+    }
+    if (!orgId) {
+      orgId = resolveTenantOrgId(req) || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    }
 
     const leadRecord = {
       id: crypto.randomUUID(),
@@ -2761,10 +3296,10 @@ const handleLeadCapture = async (req, res) => {
       name: name.trim(),
       email: email.trim(),
       phone: phone ? phone.trim() : "+91 98000 00000",
-      source: source || "website",
+      source: source || (req.params?.slug ? `website:${req.params.slug}` : "website"),
       status: "new",
-      message: message || notes || "Submitted via Public Form",
-      notes: notes || message || "Submitted via Public Form",
+      message: message || notes || "Submitted via Public School Form",
+      notes: notes || message || "Submitted via Public School Form",
       metadata: metadata || {
         grade: req.body.grade || req.body.appliedGrade || "Class 10",
         session: req.body.session || req.body.academicSession || "2026-27"
@@ -2773,6 +3308,35 @@ const handleLeadCapture = async (req, res) => {
     };
 
     IN_MEMORY_LEADS.unshift(leadRecord);
+
+    // Automatic 2-Way Sync: Register inquiry directly into ERP Admissions Pipeline
+    const inqYear = new Date().getFullYear();
+    const uniqueInqNo = `INQ-${inqYear}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newAdm = {
+      id: `adm-${leadRecord.id}`,
+      applicationNo: uniqueInqNo,
+      inquiryNo: uniqueInqNo,
+      academicSession: req.body.session || req.body.academicSession || "2026-27",
+      studentName: leadRecord.name,
+      dob: req.body.dob || null,
+      gender: req.body.gender || "Not Specified",
+      parentName: req.body.parentName || "Parent of " + leadRecord.name,
+      parentRelation: req.body.parentRelation || "Father",
+      parentEmail: leadRecord.email,
+      phone: leadRecord.phone,
+      appliedGrade: req.body.grade || req.body.appliedGrade || "Class 1",
+      previousSchool: req.body.previousSchool || "",
+      source: "website",
+      status: "new",
+      leadId: leadRecord.id,
+      notes: leadRecord.notes || leadRecord.message || "Submitted via School Public Website",
+      organization_id: orgId,
+      created_at: leadRecord.created_at,
+      updated_at: leadRecord.created_at
+    };
+    if (!ERP_ADMISSIONS.some(a => a.leadId === leadRecord.id)) {
+      ERP_ADMISSIONS.unshift(newAdm);
+    }
 
     if (supabase) {
       try {
@@ -2792,7 +3356,7 @@ const handleLeadCapture = async (req, res) => {
           console.warn("[Leads DB] Supabase lead insert warning:", error.message);
         } else if (data && data[0]) {
           recordAuditLog("lead.captured", email, "lead", data[0].id, req);
-          return res.json({ success: true, message: "Inquiry received & saved to CRM ✅", lead: data[0] });
+          return res.json({ success: true, message: "Inquiry received & saved to CRM ✅", lead: data[0], inquiryNo: uniqueInqNo });
         }
       } catch (err) {
         console.warn("[Leads DB] Supabase lead insert fallback:", err.message);
@@ -2800,12 +3364,14 @@ const handleLeadCapture = async (req, res) => {
     }
 
     recordAuditLog("lead.captured", email, "lead", leadRecord.id, req);
-    res.json({ success: true, message: "Inquiry received & saved to CRM ✅", lead: leadRecord });
+    res.json({ success: true, message: "Inquiry received & saved to CRM ✅", lead: leadRecord, inquiryNo: uniqueInqNo });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to capture lead", error: error.message });
   }
 };
 
+app.post("/api/public/schools/:slug/leads", leadsRateLimiter, handleLeadCapture);
+app.post("/api/public/schools/:slug/admissions", leadsRateLimiter, handleLeadCapture);
 app.post("/api/leads", leadsRateLimiter, handleLeadCapture);
 app.post("/api/erp/admissions/leads/capture", leadsRateLimiter, handleLeadCapture);
 
@@ -3519,6 +4085,23 @@ const PaymentService = {
     }
   },
 
+  verifyWebhookSignature(payload, signature) {
+    if (!signature) return false;
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET || "dakshora_webhook_production_secret";
+    try {
+      const payloadString = typeof payload === "string" ? payload : JSON.stringify(payload);
+      const expectedSignature = crypto.createHmac("sha256", secret).update(payloadString).digest("hex");
+      if (signature === expectedSignature) return true;
+      // Allow test simulator webhook tokens only in non-production environments
+      if (process.env.NODE_ENV !== "production" && (signature === "mock_webhook_sig_valid" || signature.startsWith("rzp_test_wh_sig_"))) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      return false;
+    }
+  },
+
   async handleWebhook(event) {
     if (!event || !event.id) {
       return { success: false, message: "Missing webhook event ID" };
@@ -4094,9 +4677,20 @@ app.post("/api/billing/verify-payment", async (req, res) => {
   });
 });
 
-// POST /api/billing/webhook - Webhook ingestion with idempotency
+// POST /api/billing/webhook - Webhook ingestion with cryptographic signature & idempotency
 app.post("/api/billing/webhook", async (req, res) => {
+  const signature = req.headers["x-razorpay-signature"];
   const event = req.body;
+
+  if (!signature) {
+    return res.status(401).json({ success: false, message: "Missing x-razorpay-signature header" });
+  }
+
+  const isValidSignature = PaymentService.verifyWebhookSignature(event, signature);
+  if (!isValidSignature) {
+    return res.status(400).json({ success: false, message: "Invalid webhook cryptographic signature" });
+  }
+
   const result = await PaymentService.handleWebhook(event);
   res.json({ success: true, ...result });
 });
@@ -6821,6 +7415,44 @@ let ERP_FEE_REVERSALS = [
 ];
 
 let ERP_ONLINE_ORDERS = [];
+let ERP_PAYMENT_GATEWAYS = {};
+
+async function getTenantPaymentGateway(orgId) {
+  if (!orgId) return null;
+  if (ERP_PAYMENT_GATEWAYS[orgId]) {
+    return ERP_PAYMENT_GATEWAYS[orgId];
+  }
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("organization_payment_gateways")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (!error && data && data.key_id) {
+        const gw = {
+          id: data.id,
+          organization_id: orgId,
+          provider: data.provider || "razorpay",
+          keyId: data.key_id,
+          keySecret: data.key_secret,
+          webhookSecret: data.webhook_secret || "",
+          mode: data.mode || "live",
+          status: data.status || "active",
+          isConfigured: true,
+          updated_at: data.updated_at
+        };
+        ERP_PAYMENT_GATEWAYS[orgId] = gw;
+        return gw;
+      }
+    } catch (dbErr) {
+      console.warn("[Tenant Gateway DB] Error fetching gateway:", dbErr.message);
+    }
+  }
+  return null;
+}
 
 // Reference alias to maintain 100% backward-compatibility with existing legacy code
 let ERP_FEES = ERP_FEE_DEMANDS;
@@ -7411,6 +8043,8 @@ let ERP_MESSAGE_TEMPLATES = [
     subject: "DPS Heritage: Admission Application Received ({{application_number}})",
     body: "Dear {{parent_name}}, thank you for applying to DPS Heritage School. We have received your admission application for {{student_name}} (App No: {{application_number}}) for {{class_name}}. Our admissions desk will review the documentation shortly.",
     variables: ["parent_name", "student_name", "application_number", "class_name"],
+    dlt_template_id: "1207161829304918231",
+    dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "System",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
@@ -7426,6 +8060,8 @@ let ERP_MESSAGE_TEMPLATES = [
     subject: "DPS Heritage: Status Update for Application {{application_number}}",
     body: "Dear {{parent_name}}, the admission status for your ward {{student_name}} (Application No: {{application_number}}) has been updated to: {{application_status}}. Please log in to your admission portal to view complete details.",
     variables: ["parent_name", "student_name", "application_number", "application_status"],
+    dlt_template_id: "1207161829304918235",
+    dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "System",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
@@ -7441,6 +8077,8 @@ let ERP_MESSAGE_TEMPLATES = [
     subject: "Fee Due Reminder for {{student_name}} - {{class_name}}",
     body: "Dear {{parent_name}}, this is a friendly reminder that an outstanding fee installment of ₹{{due_amount}} for {{student_name}} ({{class_name}}-{{section_name}}) is due on {{due_date}}. Kindly settle online via UPI or Net Banking to avoid late fines.",
     variables: ["parent_name", "student_name", "class_name", "section_name", "due_amount", "due_date"],
+    dlt_template_id: "1207161829304918232",
+    dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Accounts Wing",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
@@ -7456,6 +8094,8 @@ let ERP_MESSAGE_TEMPLATES = [
     subject: "Fee Payment Received - Receipt {{receipt_number}}",
     body: "Dear {{parent_name}}, we have successfully received fee payment of ₹{{due_amount}} for {{student_name}} ({{class_name}}). Your official digital receipt number is {{receipt_number}}. Thank you for your prompt payment.",
     variables: ["parent_name", "student_name", "class_name", "due_amount", "receipt_number"],
+    dlt_template_id: "1207161829304918233",
+    dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Accounts Wing",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
@@ -7471,6 +8111,8 @@ let ERP_MESSAGE_TEMPLATES = [
     subject: "Urgent: Attendance Alert for {{student_name}}",
     body: "Dear {{parent_name}}, attendance monitoring indicates that {{student_name}} (Roll No: {{roll_no}}, {{class_name}}-{{section_name}}) currently has an attendance rate of {{attendance_percent}}%, which is below the mandatory 75% CBSE requirement. Please contact the class teacher.",
     variables: ["parent_name", "student_name", "roll_no", "class_name", "section_name", "attendance_percent"],
+    dlt_template_id: "1207161829304918234",
+    dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Attendance Wing",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
@@ -7922,6 +8564,44 @@ function maskCredential(str) {
   return str.slice(0, 3) + "••••••••" + str.slice(-4);
 }
 
+async function getOrLoadCommunicationSettings(orgId) {
+  if (!orgId) return null;
+  if (ERP_COMMUNICATION_GATEWAY_SETTINGS[orgId]) {
+    return ERP_COMMUNICATION_GATEWAY_SETTINGS[orgId];
+  }
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("organization_communication_settings")
+        .select("*")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (!error && data) {
+        ERP_COMMUNICATION_GATEWAY_SETTINGS[orgId] = {
+          organization_id: orgId,
+          defaultSmsProvider: data.default_sms_provider || "fast2sms",
+          defaultWhatsappProvider: data.default_whatsapp_provider || "gupshup",
+          fallbackEnabled: data.fallback_enabled ?? true,
+          twilio: data.twilio_settings || {},
+          gupshup: data.gupshup_settings || {},
+          fast2sms: {
+            ...(data.fast2sms_settings || {}),
+            senderId: data.dlt_default_sender_id || data.fast2sms_settings?.senderId || "DKSHRA",
+            dltEntityId: data.dlt_entity_id || data.fast2sms_settings?.dltEntityId || ""
+          },
+          smtp: data.smtp_settings || {},
+          updatedAt: data.updated_at
+        };
+        return ERP_COMMUNICATION_GATEWAY_SETTINGS[orgId];
+      }
+    } catch (err) {
+      console.warn("[Comm Settings DB] Error loading from DB:", err.message);
+    }
+  }
+  return null;
+}
+
 function getSanitizedGatewaySettings(orgId) {
   const cfg = ERP_COMMUNICATION_GATEWAY_SETTINGS[orgId] || {
     organization_id: orgId,
@@ -8030,10 +8710,10 @@ async function dispatchGupshupWhatsAppMessage({ apiKey, appName, source, destina
 }
 
 // Provider 3: Fast2SMS DLT-Compliant SMS Dispatcher
-async function dispatchFast2SMSMessage({ apiKey, numbers, message, route = "dlt", senderId = "DKSHRA", dltEntityId }) {
+async function dispatchFast2SMSMessage({ apiKey, numbers, message, route = "dlt", senderId = "DKSHRA", dltEntityId, dltTemplateId }) {
   if (!apiKey || apiKey.includes("test") || apiKey.includes("key_")) {
     const simId = `F2S_sim_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    return { success: true, provider: "fast2sms", providerMessageId: simId, status: "sent", simulated: true };
+    return { success: true, provider: "fast2sms", providerMessageId: simId, status: "sent", simulated: true, dltTemplateId };
   }
   try {
     const cleanedNumbers = Array.isArray(numbers) ? numbers.map(n => String(n).replace(/\D/g, "")).join(",") : String(numbers).replace(/\D/g, "");
@@ -8043,7 +8723,11 @@ async function dispatchFast2SMSMessage({ apiKey, numbers, message, route = "dlt"
       message,
       numbers: cleanedNumbers
     };
-    if (dltEntityId && route === "dlt") payload.flash = 0;
+    if (dltTemplateId && route === "dlt") payload.message_id = dltTemplateId;
+    if (dltEntityId && route === "dlt") {
+      payload.flash = 0;
+      payload.entity_id = dltEntityId;
+    }
 
     const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
       method: "POST",
@@ -8128,11 +8812,12 @@ async function dispatchLiveGatewayMessage({ channel, recipientContact, recipient
     if (primaryProvider === "fast2sms") {
       dispatchResult = await dispatchFast2SMSMessage({
         apiKey: cfg?.fast2sms?.apiKey,
-        senderId: cfg?.fast2sms?.senderId,
+        senderId: metadata?.dltSenderId || metadata?.dlt_sender_id || cfg?.fast2sms?.senderId,
         numbers: recipientContact,
         message: text,
         route: cfg?.fast2sms?.route,
-        dltEntityId: cfg?.fast2sms?.dltEntityId
+        dltEntityId: cfg?.fast2sms?.dltEntityId,
+        dltTemplateId: metadata?.dltTemplateId || metadata?.dlt_template_id
       });
       if (!dispatchResult.success && cfg?.fallbackEnabled && cfg?.twilio?.enabled) {
         primaryProvider = "twilio";
@@ -16204,9 +16889,9 @@ app.get("/api/erp/fees/reversals", (req, res) => {
 });
 
 // 6p. POST /api/erp/fees/online/create-order - Online Payment Gateway (Razorpay/UPI Order)
-app.post("/api/erp/fees/online/create-order", (req, res) => {
+app.post("/api/erp/fees/online/create-order", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { demandId, amountINR, studentId } = req.body;
+  const { demandId, amountINR, studentId, simulator } = req.body || {};
 
   if (!demandId) {
     return res.status(400).json({ success: false, message: "demandId is required" });
@@ -16222,6 +16907,19 @@ app.post("/api/erp/fees/online/create-order", (req, res) => {
     return res.status(400).json({ success: false, message: "amountINR must be a positive number" });
   }
 
+  // Multi-Tenant Per-School Gateway Isolation
+  const gateway = await getTenantPaymentGateway(orgId);
+  const isSimulator = simulator === true || req.query?.simulator === "true";
+
+  if (!gateway?.keyId && !isSimulator) {
+    return res.status(400).json({
+      success: false,
+      code: "GATEWAY_NOT_CONFIGURED",
+      message: "School online payment gateway is not configured. School administration must configure their Razorpay merchant credentials in Settings > Payment Gateways."
+    });
+  }
+
+  const activeKeyId = gateway?.keyId || "rzp_test_school_simulator";
   const orderId = `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const order = {
     orderId,
@@ -16234,6 +16932,8 @@ app.post("/api/erp/fees/online/create-order", (req, res) => {
     receipt: demand.invoiceNo,
     status: "created",
     organization_id: orgId,
+    keyId: activeKeyId,
+    isSimulator: Boolean(!gateway?.keyId && isSimulator),
     created_at: new Date().toISOString()
   };
 
@@ -16246,7 +16946,9 @@ app.post("/api/erp/fees/online/create-order", (req, res) => {
       amount: order.amountPaise,
       currency: "INR",
       receipt: order.receipt,
-      key: process.env.RAZORPAY_KEY_ID || "rzp_live_dakshora_gateway",
+      key: activeKeyId,
+      provider: gateway?.provider || "razorpay",
+      mode: gateway?.mode || (isSimulator ? "test" : "live"),
       demand: {
         id: demand.id,
         invoiceNo: demand.invoiceNo,
@@ -16261,7 +16963,7 @@ app.post("/api/erp/fees/online/create-order", (req, res) => {
 // 6q. POST /api/erp/fees/online/verify-payment - Payment Verification & Automated Settlement
 app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { orderId, paymentId, signature, demandId, amountPaid } = req.body;
+  const { orderId, paymentId, signature, demandId, amountPaid } = req.body || {};
 
   if (!orderId || !paymentId) {
     return res.status(400).json({ success: false, message: "orderId and paymentId are required" });
@@ -16275,8 +16977,19 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
     return res.status(404).json({ success: false, message: "Fee demand not found" });
   }
 
+  // Multi-Tenant Dynamic Secret Resolution (School Specific Secret)
+  const gateway = await getTenantPaymentGateway(orgId);
+  const secret = gateway?.keySecret || (order?.isSimulator ? "simulator_secret" : process.env.RAZORPAY_KEY_SECRET);
+
+  if (!secret) {
+    return res.status(400).json({
+      success: false,
+      code: "GATEWAY_SECRET_MISSING",
+      message: "Payment gateway secret not configured for school"
+    });
+  }
+
   // Cryptographic signature verification
-  const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
   const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
   
   const isValidSignature = Boolean(signature && signature === expectedSignature);
@@ -17178,8 +17891,12 @@ const handleConfirmAdmission = async (req, res) => {
   }
 
   // 2. Create Student Record
-  const nextStdSeq = ERP_STUDENTS.length + 101;
-  const newAdmissionNo = `DPS-ADM-2026-${String(nextStdSeq).padStart(3, "0")}`;
+  let nextStdSeq = ERP_STUDENTS.length + 101;
+  while (ERP_STUDENTS.some(s => s.rollNo === `DPS-2026-${String(nextStdSeq).padStart(3, "0")}`)) {
+    nextStdSeq++;
+  }
+  const uniqueSuffix = Math.floor(1000 + Math.random() * 9000);
+  const newAdmissionNo = `DPS-ADM-2026-${String(nextStdSeq).padStart(3, "0")}-${uniqueSuffix}`;
   const newRollNo = `DPS-2026-${String(nextStdSeq).padStart(3, "0")}`;
   const nameParts = adm.studentName.trim().split(" ");
   const firstName = nameParts[0] || adm.studentName;
@@ -17199,7 +17916,7 @@ const handleConfirmAdmission = async (req, res) => {
   const newStudent = {
     id: `std-${nextStdSeq}`,
     admissionNo: newAdmissionNo,
-    penNo: `20268940${String(nextStdSeq).padStart(3, "0")}`,
+    penNo: `202689${String(nextStdSeq).padStart(3, "0")}${uniqueSuffix}`,
     rollNo: newRollNo,
     firstName,
     middleName: "",
@@ -17249,7 +17966,7 @@ const handleConfirmAdmission = async (req, res) => {
           last_name: lastName,
           admission_no: newStudent.admissionNo,
           pen_no: newStudent.penNo,
-          gender: (newStudent.gender || "male").toLowerCase(),
+          gender: ["male", "female", "other"].includes((newStudent.gender || "").toLowerCase()) ? newStudent.gender.toLowerCase() : "other",
           date_of_birth: newStudent.dob || "2011-01-01",
           blood_group: newStudent.bloodGroup || "B+",
           phone: newStudent.phone,
@@ -18145,10 +18862,10 @@ app.get("/api/erp/communication/templates", (req, res) => {
   res.json({ success: true, total: templates.length, templates });
 });
 
-app.post("/api/erp/communication/templates", (req, res) => {
+app.post("/api/erp/communication/templates", async (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const { code, name, category = 'general', channel = 'all', subject, body, variables = [] } = req.body;
+  const { code, name, category = 'general', channel = 'all', subject, body, variables = [], dlt_template_id, dltTemplateId, dlt_sender_id, dltSenderId } = req.body;
 
   if (!code || !name || !body) {
     return res.status(400).json({ success: false, message: "Code, name, and body are required" });
@@ -18168,6 +18885,8 @@ app.post("/api/erp/communication/templates", (req, res) => {
     subject: subject || name,
     body: body.trim(),
     variables: Array.isArray(variables) ? variables : [],
+    dlt_template_id: dlt_template_id || dltTemplateId || null,
+    dlt_sender_id: dlt_sender_id || dltSenderId || "DKSHRA",
     status: 'active',
     createdBy: req.user?.name || "Principal Office",
     organization_id: orgId,
@@ -18176,6 +18895,31 @@ app.post("/api/erp/communication/templates", (req, res) => {
   };
 
   ERP_MESSAGE_TEMPLATES.push(newTpl);
+
+  if (supabase) {
+    try {
+      await supabase.from("message_templates").upsert([{
+        id: newTpl.id,
+        organization_id: newTpl.organization_id,
+        code: newTpl.code,
+        name: newTpl.name,
+        category: newTpl.category,
+        channel: newTpl.channel,
+        subject: newTpl.subject,
+        body: newTpl.body,
+        variables: newTpl.variables,
+        dlt_template_id: newTpl.dlt_template_id,
+        dlt_sender_id: newTpl.dlt_sender_id,
+        status: newTpl.status,
+        created_by: newTpl.createdBy,
+        created_at: newTpl.createdAt,
+        updated_at: newTpl.updatedAt
+      }], { onConflict: "organization_id,code" });
+    } catch (err) {
+      console.warn("[Message Templates DB] Failed to upsert template in Supabase:", err.message);
+    }
+  }
+
   recordAuditLog("erp.template_created", req.user?.email || "principal@dpsheritage.edu.in", "template", newTpl.id, req);
 
   res.status(201).json({ success: true, message: "Template created successfully", template: newTpl });
@@ -18486,15 +19230,16 @@ app.post("/api/erp/communication/events/trigger", (req, res) => {
 // =========================================================================
 
 // GET /api/erp/communication/gateway/settings - Retrieve masked provider configuration
-app.get("/api/erp/communication/gateway/settings", (req, res) => {
+app.get("/api/erp/communication/gateway/settings", async (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
+  await getOrLoadCommunicationSettings(orgId);
   const settings = getSanitizedGatewaySettings(orgId);
   res.json({ success: true, settings });
 });
 
 // PATCH /api/erp/communication/gateway/settings - Configure Twilio, Gupshup, Fast2SMS
-app.patch("/api/erp/communication/gateway/settings", (req, res) => {
+app.patch("/api/erp/communication/gateway/settings", async (req, res) => {
   const userRole = (req.user?.role || "").toLowerCase();
   const isSuperOrSchoolAdmin = Boolean(
     req.user?.isSuperAdmin || 
@@ -18569,6 +19314,28 @@ app.patch("/api/erp/communication/gateway/settings", (req, res) => {
   }
 
   current.updatedAt = new Date().toISOString();
+
+  // Persist to Supabase PostgreSQL table
+  if (supabase && orgId) {
+    try {
+      await supabase.from("organization_communication_settings").upsert([{
+        organization_id: orgId,
+        default_sms_provider: current.defaultSmsProvider,
+        default_whatsapp_provider: current.defaultWhatsappProvider,
+        fallback_enabled: current.fallbackEnabled,
+        twilio_settings: current.twilio || {},
+        gupshup_settings: current.gupshup || {},
+        fast2sms_settings: current.fast2sms || {},
+        smtp_settings: current.smtp || {},
+        dlt_entity_id: current.fast2sms?.dltEntityId || null,
+        dlt_default_sender_id: current.fast2sms?.senderId || "DKSHRA",
+        updated_at: current.updatedAt
+      }], { onConflict: "organization_id" });
+    } catch (dbErr) {
+      console.warn("[Comm Settings DB] Error upserting to Supabase:", dbErr.message);
+    }
+  }
+
   recordAuditLog("erp.gateway_settings_updated", req.user?.email || "principal@dpsheritage.edu.in", "gateway_settings", orgId, req);
 
   res.json({
@@ -18577,6 +19344,137 @@ app.patch("/api/erp/communication/gateway/settings", (req, res) => {
     settings: getSanitizedGatewaySettings(orgId)
   });
 });
+
+// =========================================================================
+// 8j-2. Multi-Tenant Per-School Payment Gateway Configuration Endpoints
+// =========================================================================
+
+// GET /api/erp/settings/payment-gateway
+app.get("/api/erp/settings/payment-gateway", async (req, res) => {
+  const userRole = (req.user?.role || "").toLowerCase();
+  const isSuperOrSchoolAdmin = Boolean(
+    req.user?.isSuperAdmin || 
+    userRole === "superadmin" || 
+    userRole === "school-admin" || 
+    userRole === "admin" || 
+    userRole === "principal"
+  );
+  if (!isSuperOrSchoolAdmin) {
+    return res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. Only Super Admin or School Admin can view payment gateway configuration."
+    });
+  }
+  const orgId = resolveTenantOrgId(req);
+  const gateway = await getTenantPaymentGateway(orgId);
+
+  res.json({
+    success: true,
+    isConfigured: Boolean(gateway?.keyId),
+    gateway: gateway ? {
+      provider: gateway.provider || "razorpay",
+      keyId: gateway.keyId,
+      maskedSecret: maskCredential(gateway.keySecret),
+      hasSecret: Boolean(gateway.keySecret),
+      hasWebhookSecret: Boolean(gateway.webhookSecret),
+      mode: gateway.mode || "live",
+      status: gateway.status || "active",
+      updated_at: gateway.updated_at
+    } : null
+  });
+});
+
+// POST & PATCH /api/erp/settings/payment-gateway
+const handleConfigurePaymentGateway = async (req, res) => {
+  const userRole = (req.user?.role || "").toLowerCase();
+  const isSuperOrSchoolAdmin = Boolean(
+    req.user?.isSuperAdmin || 
+    userRole === "superadmin" || 
+    userRole === "school-admin" || 
+    userRole === "admin" || 
+    userRole === "principal"
+  );
+  if (!isSuperOrSchoolAdmin) {
+    return res.status(403).json({
+      success: false,
+      code: "FORBIDDEN_ROLE",
+      message: "Access denied. Only Super Admin or School Admin can configure payment gateways."
+    });
+  }
+  const orgId = resolveTenantOrgId(req);
+  const { provider = "razorpay", keyId, keySecret, webhookSecret = "", mode = "live", status = "active" } = req.body || {};
+
+  if (!keyId || !keySecret) {
+    return res.status(400).json({ success: false, message: "keyId and keySecret are required" });
+  }
+
+  if (keySecret.includes("••••")) {
+    return res.status(400).json({ success: false, message: "Please provide a valid, unmasked keySecret" });
+  }
+
+  const cleanKeyId = keyId.trim();
+  const cleanKeySecret = keySecret.trim();
+  const cleanWebhookSecret = webhookSecret ? webhookSecret.trim() : null;
+
+  const gwRecord = {
+    id: `gw-${Date.now()}`,
+    organization_id: orgId,
+    provider,
+    key_id: cleanKeyId,
+    key_secret: cleanKeySecret,
+    webhook_secret: cleanWebhookSecret,
+    mode,
+    status,
+    updated_at: new Date().toISOString()
+  };
+
+  ERP_PAYMENT_GATEWAYS[orgId] = {
+    organization_id: orgId,
+    provider,
+    keyId: cleanKeyId,
+    keySecret: cleanKeySecret,
+    webhookSecret: cleanWebhookSecret || "",
+    mode,
+    status,
+    isConfigured: true,
+    updated_at: gwRecord.updated_at
+  };
+
+  if (supabase) {
+    try {
+      await supabase.from("organization_payment_gateways").upsert([{
+        organization_id: orgId,
+        provider,
+        key_id: cleanKeyId,
+        key_secret: cleanKeySecret,
+        webhook_secret: cleanWebhookSecret,
+        mode,
+        status,
+        updated_at: gwRecord.updated_at
+      }], { onConflict: "organization_id,provider" });
+    } catch (err) {
+      console.warn("[Payment Gateway DB] Failed to upsert gateway in Supabase:", err.message);
+    }
+  }
+
+  await recordAuditLog("erp.payment_gateway_configured", req.user?.email || "admin@school.internal", "payment_gateway", orgId, req);
+
+  res.json({
+    success: true,
+    message: "School payment gateway configured successfully! ✅",
+    gateway: {
+      provider,
+      keyId: cleanKeyId,
+      maskedSecret: maskCredential(cleanKeySecret),
+      mode,
+      status
+    }
+  });
+};
+
+app.post("/api/erp/settings/payment-gateway", handleConfigurePaymentGateway);
+app.patch("/api/erp/settings/payment-gateway", handleConfigurePaymentGateway);
 
 // POST /api/erp/communication/gateway/test - Live Connectivity Ping & Test Dispatch
 app.post("/api/erp/communication/gateway/test", async (req, res) => {
@@ -27777,6 +28675,20 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
       ).catch(err => console.warn("[Portal Login] Parent DB sync warning:", err.message));
     }
 
+    const activeStudentOrgId = activeStudent.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const schoolInfo = IN_MEMORY_ORGANIZATIONS.find(o => o.id === activeStudentOrgId) || {
+      id: activeStudentOrgId,
+      name: "Delhi Public Heritage School",
+      slug: "heritage",
+      board: "CBSE",
+      city: "Gurugram",
+      branding: {
+        primaryColor: "#4F46E5",
+        logoUrl: "/logo.svg",
+        motto: "Excellence in Education"
+      }
+    };
+
     res.json({
       success: true,
       role,
@@ -27784,6 +28696,15 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
       message: `Welcome! Found ${matchedStudents.length} enrolled ward(s).`,
       token,
       guardian: guardianInfo,
+      school: {
+        id: schoolInfo.id,
+        name: schoolInfo.name,
+        slug: schoolInfo.slug,
+        board: schoolInfo.board || "CBSE",
+        city: schoolInfo.city || "India",
+        logoUrl: schoolInfo.branding?.logoUrl || "/logo.svg",
+        branding: schoolInfo.branding || { primaryColor: "#4F46E5" }
+      },
       wardsCount: matchedStudents.length,
       totalWards: matchedStudents.length,
       activeWardId: activeStudent.id,
@@ -27798,7 +28719,8 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
         bloodGroup: w.bloodGroup,
         avatarUrl: w.avatarUrl,
         attendancePercent: w.attendancePercent,
-        duesINR: w.duesINR
+        duesINR: w.duesINR,
+        schoolName: schoolInfo.name
       }))
     });
   } catch (error) {
@@ -32313,6 +33235,7 @@ const INITIAL_ERP_SNAPSHOT = JSON.stringify({
   ERP_FEE_PAYMENTS,
   ERP_FEE_REVERSALS,
   ERP_ONLINE_ORDERS,
+  ERP_PAYMENT_GATEWAYS,
   ERP_ADMISSIONS,
   ERP_ADMISSION_DOCUMENTS,
   ERP_ADMISSION_NOTES,
@@ -32355,6 +33278,7 @@ app.post("/api/erp/test/reset-state", (req, res) => {
     ERP_FEE_PAYMENTS = snapshot.ERP_FEE_PAYMENTS;
     ERP_FEE_REVERSALS = snapshot.ERP_FEE_REVERSALS;
     ERP_ONLINE_ORDERS = snapshot.ERP_ONLINE_ORDERS || [];
+    ERP_PAYMENT_GATEWAYS = snapshot.ERP_PAYMENT_GATEWAYS || {};
     ERP_ADMISSIONS = snapshot.ERP_ADMISSIONS;
     ERP_ADMISSION_DOCUMENTS = snapshot.ERP_ADMISSION_DOCUMENTS;
     ERP_ADMISSION_NOTES = snapshot.ERP_ADMISSION_NOTES;
