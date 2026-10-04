@@ -2172,7 +2172,32 @@ app.get("/api/organizations", requireAuth, async (req, res) => {
       return res.json({ success: true, organizations: org });
     }
 
-    res.json({ success: true, organizations: data });
+    // Enrich DB organizations with full metadata from in-memory cache and school profile
+    let orgsList = data.map(o => {
+      const mem = IN_MEMORY_ORGANIZATIONS.find(m => m.id === o.id) || {};
+      return {
+        ...mem,
+        ...o, // DB status and name take precedence
+        plan: mem.plan || o.plan || "growth",
+        board: mem.board || o.board || "CBSE",
+        city: mem.city || o.city || "Jaipur, Rajasthan",
+        state: mem.state || o.state || "Rajasthan",
+        contact_email: mem.contact_email || o.contact_email || "",
+        contact_phone: mem.contact_phone || o.contact_phone || "",
+        mrr_inr: mem.mrr_inr !== undefined ? mem.mrr_inr : (mem.plan === "enterprise" ? 24999 : mem.plan === "growth" ? 12500 : 4999)
+      };
+    });
+
+    // Merge any newly onboarded in-memory orgs that may not yet be in db
+    if (req.user?.isSuperAdmin) {
+      IN_MEMORY_ORGANIZATIONS.forEach(mem => {
+        if (!orgsList.some(o => o.id === mem.id)) {
+          orgsList.unshift(mem);
+        }
+      });
+    }
+
+    res.json({ success: true, organizations: orgsList });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to fetch organizations", error: error.message });
   }
@@ -2189,7 +2214,9 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
       slug: slug.toLowerCase().trim(),
       plan: plan || "growth",
       status: "active",
-      created_at: new Date().toISOString()
+      industry: "Education",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
     IN_MEMORY_ORGANIZATIONS.unshift(newOrg);
@@ -2199,10 +2226,38 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
 
     if (supabase) {
       try {
-        const { data } = await supabase.from("organizations").insert([newOrg]).select();
+        const dbOrgPayload = {
+          id: newOrg.id,
+          name: newOrg.name,
+          slug: newOrg.slug,
+          industry: "Education",
+          status: "active",
+          created_at: newOrg.created_at,
+          updated_at: newOrg.updated_at
+        };
+        const { data } = await supabase.from("organizations").insert([dbOrgPayload]).select();
+        await supabase.from("schools").insert([{
+          organization_id: newOrg.id,
+          name: newOrg.name,
+          status: "active",
+          created_at: newOrg.created_at,
+          updated_at: newOrg.updated_at
+        }]).catch(() => {});
+        await supabase.from("saas_subscriptions").upsert([{
+          id: "sub-" + newOrg.id.slice(0, 8),
+          organization_id: newOrg.id,
+          plan_id: newOrg.plan,
+          status: "active",
+          billing_interval: "monthly",
+          amount: newOrg.plan === "enterprise" ? 24999 : newOrg.plan === "growth" ? 12500 : 4999,
+          currency: "INR",
+          current_period_start: new Date().toISOString(),
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        }], { onConflict: "id" }).catch(() => {});
+
         if (data && data[0]) {
           recordAuditLog("org.create", "admin", "organization", data[0].id, req);
-          return res.json({ success: true, message: "Organization created successfully with all modules enabled ✅", organization: data[0] });
+          return res.json({ success: true, message: "Organization created successfully with all modules enabled ✅", organization: { ...newOrg, ...data[0] } });
         }
       } catch (err) {
         console.warn("Supabase org insert fallback:", err.message);
@@ -2279,9 +2334,34 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       }
     };
 
-    // 1. Persist Organization to Supabase PostgreSQL
+    // 1. Persist Organization to Supabase PostgreSQL with sanitized columns
     if (supabase) {
-      await safeAsync(supabase.from("organizations").insert([newOrg]));
+      const dbOrgPayload = {
+        id: newOrg.id,
+        name: newOrg.name,
+        slug: newOrg.slug,
+        industry: "Education",
+        status: "active",
+        created_at: newOrg.created_at,
+        updated_at: newOrg.updated_at
+      };
+      const orgInsRes = await safeAsync(supabase.from("organizations").insert([dbOrgPayload]));
+      if (orgInsRes?.error) {
+        console.warn("[Onboard School] Supabase organizations insert note:", orgInsRes.error.message);
+      }
+
+      // Explicitly persist SaaS Subscription in Supabase with explicit ID
+      await safeAsync(supabase.from("saas_subscriptions").upsert([{
+        id: "sub-" + newOrg.id.slice(0, 8),
+        organization_id: newOrg.id,
+        plan_id: plan || "growth",
+        status: "active",
+        billing_interval: "monthly",
+        amount: planMRR,
+        currency: "INR",
+        current_period_start: new Date().toISOString(),
+        current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      }], { onConflict: "id" }));
     }
 
     // 2. Create Principal / School Admin in Supabase Auth & public.users
@@ -2357,10 +2437,13 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
           organization_id: newOrg.id,
           name: cleanSchoolName,
           board: board || "CBSE",
-          city: city,
+          city: city || "Jaipur, Rajasthan",
+          state: state || "Rajasthan",
           phone: cleanPhone,
           email: cleanEmail,
-          status: "active"
+          status: "active",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }]).catch(() => {});
       } catch (e) {}
     }
@@ -30970,9 +31053,12 @@ app.get(["/api/admin/dashboard", "/api/admin/overview"], async (req, res) => {
   let totalOrgs = IN_MEMORY_ORGANIZATIONS.length;
   let activeOrgs = IN_MEMORY_ORGANIZATIONS.filter(o => o.status === "active").length;
   let trialOrgs = IN_MEMORY_ORGANIZATIONS.filter(o => o.status === "trial").length;
-  let suspendedOrgs = IN_MEMORY_ORGANIZATIONS.filter(o => o.status === "suspended").length;
+  let suspendedOrgs = IN_MEMORY_ORGANIZATIONS.filter(o => o.status === "suspended" || o.status === "deactivated").length;
 
-  const activeSubs = SAAS_SUBSCRIPTIONS.filter(s => s.status === "active");
+  const activeSubs = SAAS_SUBSCRIPTIONS.filter(s => {
+    const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === s.organization_id);
+    return s.status === "active" && (!org || org.status === "active");
+  });
   let totalMRR = activeSubs.reduce((acc, curr) => acc + (parseFloat(curr.amountINR) || 0), 0);
   const expiringSubs = SAAS_SUBSCRIPTIONS.filter(s => {
     if (!s.current_period_end) return false;
@@ -30988,27 +31074,38 @@ app.get(["/api/admin/dashboard", "/api/admin/overview"], async (req, res) => {
   // Live PostgreSQL Aggregations from Supabase
   if (supabase) {
     try {
-      const [orgsRes, studentsRes, staffRes, schoolsRes] = await Promise.all([
+      const [orgsRes, studentsRes, staffRes, schoolsRes, subsRes] = await Promise.all([
         supabase.from("organizations").select("id, status, plan, mrr_inr", { count: "exact" }),
         supabase.from("students").select("id", { count: "exact" }),
         supabase.from("staff").select("id", { count: "exact" }),
-        supabase.from("schools").select("id", { count: "exact" })
+        supabase.from("schools").select("id", { count: "exact" }),
+        supabase.from("saas_subscriptions").select("id, organization_id, status, amount")
       ]);
 
       if (orgsRes.data && orgsRes.data.length > 0) {
         totalOrgs = orgsRes.count ?? orgsRes.data.length;
-        activeOrgs = orgsRes.data.filter(o => o.status === "active" || !o.status).length;
+        activeOrgs = orgsRes.data.filter(o => o.status === "active").length;
         trialOrgs = orgsRes.data.filter(o => o.status === "trial").length;
-        suspendedOrgs = orgsRes.data.filter(o => o.status === "suspended").length;
+        suspendedOrgs = orgsRes.data.filter(o => o.status === "suspended" || o.status === "deactivated").length;
 
-        // Dynamic MRR calculation across customer tenants
-        const liveMRR = orgsRes.data.reduce((sum, o) => {
-          const val = Number(o.mrr_inr);
-          if (!isNaN(val) && val > 0) return sum + val;
-          const planFee = o.plan === "enterprise" ? 24999 : o.plan === "growth" ? 12500 : 4999;
-          return sum + planFee;
-        }, 0);
-        if (liveMRR > 0) totalMRR = liveMRR;
+        // Dynamic MRR calculation across ACTIVE customer tenants only!
+        const activeSubsList = (subsRes.data || []).filter(sub => {
+          if (sub.status !== "active") return false;
+          const matchingOrg = orgsRes.data.find(o => o.id === sub.organization_id);
+          return !matchingOrg || matchingOrg.status === "active";
+        });
+
+        if (activeSubsList.length > 0) {
+          totalMRR = activeSubsList.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+        } else {
+          const activeOrgsList = orgsRes.data.filter(o => o.status === "active");
+          totalMRR = activeOrgsList.reduce((sum, o) => {
+            const val = Number(o.mrr_inr);
+            if (!isNaN(val) && val > 0) return sum + val;
+            const planFee = o.plan === "enterprise" ? 24999 : o.plan === "growth" ? 12500 : 4999;
+            return sum + planFee;
+          }, 0);
+        }
       }
 
       if (typeof studentsRes.count === "number" && studentsRes.count > 0) {
@@ -31192,8 +31289,33 @@ app.patch(["/api/admin/organizations/:id/status", "/api/organizations/:id/status
   if (supabase) {
     try {
       await supabase.from("organizations").update({ status: org.status, updated_at: org.updated_at }).eq("id", org.id);
+      await supabase.from("schools").update({ status: org.status, updated_at: org.updated_at }).eq("organization_id", org.id).catch(() => {});
     } catch (e) {
       console.warn("Supabase organization status sync note:", e.message);
+    }
+  }
+
+  // CRITICAL: Synchronize Subscription Status with Organization Status!
+  const targetSubStatus = (org.status === "suspended" || org.status === "archived" || org.status === "cancelled") ? "suspended" : "active";
+
+  // 1. Update in-memory SAAS_SUBSCRIPTIONS
+  SAAS_SUBSCRIPTIONS.forEach(sub => {
+    if (sub.organization_id === org.id) {
+      sub.status = targetSubStatus;
+      sub.updated_at = new Date().toISOString();
+    }
+  });
+
+  // 2. Update Supabase saas_subscriptions
+  if (supabase) {
+    try {
+      const dbSubStatus = (org.status === "suspended" || org.status === "archived") ? "paused" : org.status === "cancelled" ? "cancelled" : "active";
+      await supabase.from("saas_subscriptions").update({
+        status: dbSubStatus,
+        updated_at: new Date().toISOString()
+      }).eq("organization_id", org.id);
+    } catch (subErr) {
+      console.warn("Supabase saas_subscriptions status sync note:", subErr.message);
     }
   }
 
@@ -31201,14 +31323,15 @@ app.patch(["/api/admin/organizations/:id/status", "/api/organizations/:id/status
     "ORGANIZATION_STATUS_CHANGED",
     req.user?.email || "superadmin@dakshora.ai",
     "organization",
-    `Changed '${org.name}' status from ${oldStatus} to ${org.status}`,
+    `Changed '${org.name}' status from ${oldStatus} to ${org.status} (Subscription status: ${targetSubStatus})`,
     req
   );
 
   res.json({
     success: true,
-    message: `School '${org.name}' is now ${org.status.toUpperCase()} ✅`,
-    organization: org
+    message: `School '${org.name}' is now ${org.status.toUpperCase()} ✅ (Subscription: ${targetSubStatus.toUpperCase()})`,
+    organization: org,
+    subscriptionStatus: targetSubStatus
   });
 });
 
@@ -31236,18 +31359,31 @@ app.put(["/api/admin/organizations/:id", "/api/organizations/:id"], async (req, 
 
   if (supabase) {
     try {
+      // organizations table only has name, status, updated_at
       await supabase.from("organizations").update({
         name: org.name,
-        plan: org.plan,
+        status: org.status,
+        updated_at: org.updated_at
+      }).eq("id", org.id);
+
+      // sync school table
+      await supabase.from("schools").update({
+        name: org.name,
         board: org.board,
         contact_email: org.contact_email,
         contact_phone: org.contact_phone,
         city: org.city,
         state: org.state,
-        mrr_inr: org.mrr_inr,
         status: org.status,
         updated_at: org.updated_at
-      }).eq("id", org.id);
+      }).eq("organization_id", org.id).catch(() => {});
+
+      // sync subscription if status changed
+      const dbSubStatus = (org.status === "suspended" || org.status === "archived") ? "paused" : org.status === "cancelled" ? "cancelled" : "active";
+      await supabase.from("saas_subscriptions").update({
+        status: dbSubStatus,
+        updated_at: new Date().toISOString()
+      }).eq("organization_id", org.id).catch(() => {});
     } catch (e) {
       console.warn("Supabase organization details sync note:", e.message);
     }
@@ -31283,6 +31419,8 @@ app.delete(["/api/admin/organizations/:id", "/api/organizations/:id"], async (re
   if (supabase) {
     try {
       await supabase.from("organizations").update({ status: "archived", updated_at: org.updated_at }).eq("id", org.id);
+      await supabase.from("schools").update({ status: "archived", updated_at: org.updated_at }).eq("organization_id", org.id).catch(() => {});
+      await supabase.from("saas_subscriptions").update({ status: "paused", updated_at: org.updated_at }).eq("organization_id", org.id).catch(() => {});
     } catch (e) {
       console.warn("Supabase organization archive note:", e.message);
     }
@@ -31422,18 +31560,21 @@ app.get("/api/admin/subscriptions", async (req, res) => {
 
   if (supabase) {
     try {
-      const { data: dbSubs, error: subsErr } = await supabase.from("saas_subscriptions").select("*, organization:organizations(id, name, slug)");
+      const { data: dbSubs, error: subsErr } = await supabase.from("saas_subscriptions").select("*, organization:organizations(id, name, slug, status)");
       if (!subsErr && dbSubs && dbSubs.length > 0) {
         const subscriptions = dbSubs.map(s => {
           const plan = SAAS_PLANS.find(p => p.id === s.plan_id) || { name: s.plan_id };
+          const orgStatus = s.organization?.status || "active";
+          const effectiveStatus = (orgStatus === "suspended" || orgStatus === "deactivated" || orgStatus === "archived" || s.status === "paused" || s.status === "suspended" || s.status === "cancelled") ? "suspended" : s.status;
           return {
             id: s.id,
             organization_id: s.organization_id,
             organizationName: s.organization?.name || "Unknown Organization",
             organizationSlug: s.organization?.slug || "unknown",
+            organizationStatus: orgStatus,
             plan_id: s.plan_id,
             planName: plan.name,
-            status: s.status,
+            status: effectiveStatus,
             billing_interval: s.billing_interval,
             amountINR: Number(s.amount),
             currency: s.currency,
@@ -31456,13 +31597,17 @@ app.get("/api/admin/subscriptions", async (req, res) => {
   }
 
   const subs = SAAS_SUBSCRIPTIONS.map(sub => {
-    const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === sub.organization_id) || { name: "Unknown Organization", slug: "unknown" };
+    const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === sub.organization_id) || { name: "Unknown Organization", slug: "unknown", status: "active" };
     const plan = SAAS_PLANS.find(p => p.id === sub.plan_id) || { name: sub.plan_id };
+    const orgStatus = org.status || "active";
+    const effectiveStatus = (orgStatus === "suspended" || orgStatus === "deactivated" || orgStatus === "archived" || sub.status === "paused" || sub.status === "suspended" || sub.status === "cancelled") ? "suspended" : sub.status;
 
     return {
       ...sub,
       organizationName: org.name,
       organizationSlug: org.slug,
+      organizationStatus: orgStatus,
+      status: effectiveStatus,
       planName: plan.name
     };
   });
