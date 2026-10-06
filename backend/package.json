@@ -8,6 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "test": "tsx --test test/security-audit.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "dotenv": "^17.0.0",
     "express": "^5.2.1",
     "fastify": "^5.0.0",
+    "razorpay": "^2.9.8",
     "ws": "^8.21.3",
     "zod": "^4.0.0"
   },

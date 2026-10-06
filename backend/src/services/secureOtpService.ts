@@ -121,14 +121,8 @@ export class SecureOtpService {
       hashesMatch = false;
     }
 
-    // 4. Test bypass strictly disabled in production
-    const isProduction = process.env.NODE_ENV === "production";
-    const allowTestBypass = !isProduction &&
-      process.env.ALLOW_DEV_TEST_OTP === "true" &&
-      process.env.DEV_TEST_OTP &&
-      inputOtp.trim() === process.env.DEV_TEST_OTP;
-
-    if (!hashesMatch && !allowTestBypass) {
+    // 4. Strict hash verification (No bypasses)
+    if (!hashesMatch) {
       record.attempts++;
       const remaining = record.maxAttempts - record.attempts;
       if (remaining <= 0) {

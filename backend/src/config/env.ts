@@ -45,6 +45,30 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default("Dakshora ERP <no-reply@dakshora.co.in>"),
   SMTP_SECURE: z.preprocess((val) => val === "true" || val === true, z.boolean()).default(false)
+}).superRefine((data, ctx) => {
+  if (data.NODE_ENV === "production") {
+    if (!data.RAZORPAY_KEY_ID) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "RAZORPAY_KEY_ID is required in production environment",
+        path: ["RAZORPAY_KEY_ID"]
+      });
+    }
+    if (!data.RAZORPAY_KEY_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "RAZORPAY_KEY_SECRET is required in production environment",
+        path: ["RAZORPAY_KEY_SECRET"]
+      });
+    }
+    if (!data.RAZORPAY_WEBHOOK_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "RAZORPAY_WEBHOOK_SECRET is required in production environment",
+        path: ["RAZORPAY_WEBHOOK_SECRET"]
+      });
+    }
+  }
 });
 
 const parsed = envSchema.parse(process.env);

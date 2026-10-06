@@ -524,7 +524,8 @@ async function runOnboardingAndIsolationVerification() {
     assert(tamperFeeRes.status === 400, "Forged signature on student fee payment rejected with HTTP 400");
 
     // 6d. Genuine HMAC-SHA256 Signature on School Student Fee Payment
-    const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
+    const { data: orgGw } = await supabaseAdmin.from("organization_payment_gateways").select("key_secret").eq("organization_id", ORG_ID).eq("status", "active").maybeSingle();
+    const secret = orgGw?.key_secret || process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
     const paymentId = "pay_student_legit_456";
     const genuineFeeSignature = crypto.createHmac("sha256", secret).update(`${orderData.id}|${paymentId}`).digest("hex");
 

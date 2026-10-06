@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { ResponsibilityService } from "./services/responsibilityStore.js";
 import { SecureOtpService } from "./services/secureOtpService.js";
 import WebSocket from "ws";
+import Razorpay from "razorpay";
 
 if (typeof globalThis.WebSocket === "undefined") {
   globalThis.WebSocket = WebSocket;
@@ -366,20 +367,6 @@ function verifyDakshoraToken(token, secret = (process.env.SUPABASE_SERVICE_ROLE_
 
 // requireAuth middleware validates incoming Bearer JWT from Supabase Auth cryptographically
 async function requireAuth(req, res, next) {
-  // 1. SuperAdmin platform bypass header verification
-  if (req.headers['x-platform-role'] === 'superadmin' || req.headers['x-role'] === 'superadmin') {
-    req.user = {
-      id: "superadmin-root",
-      email: req.headers['x-user-email'] || "superadmin@dakshora.ai",
-      name: "SuperAdmin (Platform Ops)",
-      role: "superadmin",
-      isSuperAdmin: true,
-      permissions: ["*"],
-      organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
-    };
-    return next();
-  }
-
   const authHeader = req.headers.authorization || req.headers.Authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -387,29 +374,14 @@ async function requireAuth(req, res, next) {
       success: false,
       code: "AUTH_REQUIRED",
       message: "Authorization header with 'Bearer <JWT_TOKEN>' is required 🔒",
-      pipeline: "User → Supabase Auth → JWT → Fastify → requireAuth()"
+      pipeline: "User → Supabase Auth → JWT → requireAuth()"
     });
   }
 
   const token = authHeader.split(" ")[1];
 
-  // 2. Demo token bypass
-  if (token && token.startsWith('dakshora-demo-token-')) {
-    const isSuper = token.includes('superadmin');
-    req.user = {
-      id: isSuper ? "usr-superadmin" : "usr-demo",
-      email: isSuper ? "superadmin@dakshora.ai" : "admin@demo.dakshora.local",
-      name: isSuper ? "SuperAdmin (Platform Ops)" : "School Admin",
-      role: isSuper ? "superadmin" : "school-admin",
-      isSuperAdmin: isSuper,
-      permissions: isSuper ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
-      organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
-    };
-    return next();
-  }
-
   try {
-    // Cryptographically verify token with Supabase Auth or Dakshora Token Verifier
+    // Cryptographically verify token strictly with Supabase Auth
     let user = null;
     let authError = null;
 
@@ -427,16 +399,11 @@ async function requireAuth(req, res, next) {
     }
 
     if (!user) {
-      const fallbackUser = verifyDakshoraToken(token);
-      if (fallbackUser) {
-        req.user = fallbackUser;
-        return next();
-      }
       return res.status(401).json({
         success: false,
         code: "INVALID_JWT",
         message: "Invalid or expired JWT token. Please sign in again 🔒",
-        pipeline: "User → Supabase Auth → JWT → Fastify → requireAuth()",
+        pipeline: "User → Supabase Auth → JWT → requireAuth()",
         error: authError?.message || "Invalid token signature"
       });
     }
@@ -467,8 +434,7 @@ async function requireAuth(req, res, next) {
       }
     }
 
-    role = role || "school-admin";
-    organizationId = organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    role = role || (isSuperAdmin ? "superadmin" : "school-admin");
 
     req.user = {
       id: user.id,
@@ -477,7 +443,7 @@ async function requireAuth(req, res, next) {
       role,
       isSuperAdmin,
       permissions: isSuperAdmin ? ["*"] : ["websites.view", "websites.edit", "leads.view", "leads.manage", "school.manage", "ai.use"],
-      organizationId
+      organizationId: organizationId || null
     };
 
     // Multi-Tenant Security: Block access if the school tenant is deactivated/suspended
@@ -550,21 +516,6 @@ async function requireAuth(req, res, next) {
 
 // SuperAdmin Authorization Middleware
 async function requireSuperAdmin(req, res, next) {
-  if (req.headers['x-platform-role'] === 'superadmin' || req.headers['x-role'] === 'superadmin') {
-    if (!req.user) {
-      req.user = {
-        id: "superadmin-root",
-        email: req.headers['x-user-email'] || "superadmin@dakshora.ai",
-        name: "SuperAdmin (Platform Ops)",
-        role: "superadmin",
-        isSuperAdmin: true,
-        permissions: ["*"],
-        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
-      };
-    }
-    return next();
-  }
-
   if (!req.user) {
     return requireAuth(req, res, () => {
       if (!req.user?.isSuperAdmin && req.user?.role !== "superadmin") {
@@ -835,19 +786,26 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       ? ["*"] 
       : ["websites.view", "websites.edit", "leads.view", "leads.create", "cms.view", "cms.edit", "media.upload", "billing.view"];
 
-    const userOrgId = data.user.app_metadata?.organization_id || data.user.user_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-    const orgInfo = IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || {
+    let userOrgId = data.user.app_metadata?.organization_id || null;
+    if (!isSuperAdmin && !userOrgId && supabase) {
+      try {
+        const { data: member } = await supabase.from("organization_members").select("organization_id").eq("user_id", data.user.id).limit(1).maybeSingle();
+        if (member) userOrgId = member.organization_id;
+      } catch (_) {}
+    }
+
+    const orgInfo = userOrgId ? (IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || {
       id: userOrgId,
-      name: "Delhi Public Heritage School",
-      slug: "heritage",
+      name: "School Organization",
+      slug: "school",
       board: "CBSE",
-      city: "Gurugram",
+      city: "India",
       branding: {
         primaryColor: "#4F46E5",
         logoUrl: "/logo.svg",
         motto: "Excellence in Education"
       }
-    };
+    }) : null;
 
     recordAuditLog("user.login", data.user.email, "user", data.user.id, req);
 
@@ -862,12 +820,12 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
         id: data.user.id,
         email: data.user.email,
         name: data.user.user_metadata?.name || "User",
-        role: isSuperAdmin ? "superadmin" : "school-admin",
+        role: isSuperAdmin ? "superadmin" : (data.user.app_metadata?.role || "school-admin"),
         isSuperAdmin,
         permissions,
-        organizationId: userOrgId
+        organizationId: userOrgId || null
       },
-      school: {
+      school: orgInfo ? {
         id: orgInfo.id,
         name: orgInfo.name,
         slug: orgInfo.slug,
@@ -875,7 +833,7 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
         city: orgInfo.city || "India",
         logoUrl: orgInfo.branding?.logoUrl || "/logo.svg",
         branding: orgInfo.branding || { primaryColor: "#4F46E5" }
-      }
+      } : null
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Login failed", error: error.message });
@@ -891,30 +849,17 @@ app.post("/api/auth/superadmin/verify-otp", async (req, res) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    let verifyRes = SecureOtpService.verify(`superadmin:${cleanEmail}`, otp);
-    const isMasterOtp = (otp === "202609" || otp === "123456");
+    const verifyRes = SecureOtpService.verify(`superadmin:${cleanEmail}`, otp);
 
-    if (!verifyRes.valid && !isMasterOtp) {
+    if (!verifyRes.valid) {
       return res.status(verifyRes.status || 400).json({ success: false, message: verifyRes.error || "Invalid or expired Super Admin OTP. Please try again." });
     }
 
-    let token = verifyRes.metadata?.session?.access_token || tempToken;
-    let user = verifyRes.metadata?.user;
+    const token = verifyRes.metadata?.session?.access_token || tempToken;
+    const user = verifyRes.metadata?.user;
 
     if (!token) {
-      const tokenPayload = {
-        sub: user?.id || crypto.randomUUID(),
-        id: user?.id || crypto.randomUUID(),
-        email: cleanEmail,
-        name: user?.user_metadata?.name || "Platform SuperAdmin",
-        role: "superadmin",
-        isSuperAdmin: true,
-        permissions: ["*"],
-        organizationId: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-        app_metadata: { role: "superadmin", provider: "superadmin_otp" },
-        user_metadata: { role: "superadmin" }
-      };
-      token = createDakshoraJwt(tokenPayload);
+      return res.status(401).json({ success: false, message: "Valid authentication session required for Super Admin" });
     }
 
     recordAuditLog("auth.superadmin_otp_verified", SecureOtpService.maskIdentifier(cleanEmail), "user", user?.id || null, req);
@@ -1524,10 +1469,10 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
 
       // Look up registered user across ERP Staff, Students, and Parents by email
       let matchedUser = null;
-      let resolvedRole = req.body.role || "school-admin";
+      let resolvedRole = req.body.role || "parent";
       let resolvedName = req.body.name || "";
-      let resolvedOrgId = req.body.organization_id || req.body.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-      let userType = "staff";
+      let resolvedOrgId = req.body.organization_id || req.body.organizationId || null;
+      let userType = "guest";
       let isRegistered = false;
 
       // A. Check ERP_STAFF
@@ -1556,22 +1501,6 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
           userType = isParentEmail ? "parent" : "student";
           isRegistered = true;
         }
-      }
-
-      // C. Built-in Test / Demo Email addresses
-      if (!matchedUser && (
-        cleanEmail === "principal@heritage.edu.in" || 
-        cleanEmail === "admin@dakshora.com" || 
-        cleanEmail === "superadmin@dakshora.com" || 
-        cleanEmail.endsWith("@dakshora.app") ||
-        cleanEmail.endsWith("@dakshora.com") ||
-        cleanEmail.includes("principal") ||
-        cleanEmail.includes("admin")
-      )) {
-        isRegistered = true;
-        resolvedRole = cleanEmail.includes("superadmin") ? "superadmin" : "school-admin";
-        resolvedName = cleanEmail.includes("superadmin") ? "Dakshora SuperAdmin" : "School Administrator";
-        userType = "staff";
       }
 
       const otpGen = SecureOtpService.generateAndStore(cleanEmail, {
@@ -1643,7 +1572,7 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
     let matchedUser = null;
     let resolvedRole = req.body.role || "parent";
     let resolvedName = req.body.name || "";
-    let resolvedOrgId = req.body.organization_id || req.body.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    let resolvedOrgId = req.body.organization_id || req.body.organizationId || null;
     let userType = "guest";
     let isRegistered = false;
 
@@ -1681,14 +1610,6 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
         userType = isParentPhone ? "parent" : "student";
         isRegistered = true;
       }
-    }
-
-    // C. Built-in Test / Demo Phone numbers
-    if (!matchedUser && (last10 === "9876543210" || last10 === "9810000111")) {
-      isRegistered = true;
-      resolvedRole = "school-admin";
-      resolvedName = "School Administrator";
-      userType = "staff";
     }
 
     const otpGen = SecureOtpService.generateAndStore(last10, {
@@ -1808,9 +1729,9 @@ app.post("/api/auth/otp/verify", otpVerifyRateLimiter, async (req, res) => {
 
     const cached = verifyRes.metadata;
 
-    const resolvedRole = cached?.role || role || "school-admin";
+    const resolvedRole = cached?.role || "parent";
     const resolvedName = name || cached?.name || (isEmailInput ? cleanEmail.split("@")[0] : `User (${last10.slice(-4)})`);
-    const resolvedOrgId = req.body.organization_id || req.body.organizationId || req.headers["x-organization-id"] || cached?.organizationId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const resolvedOrgId = cached?.organizationId || null;
     const userId = crypto.randomUUID();
 
     // Ensure this organization is fully bootstrapped with all modules ready
@@ -2268,6 +2189,93 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
     res.json({ success: true, message: "Organization created successfully with all modules enabled ✅", organization: newOrg });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to create organization", error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESEND / RESET PRINCIPAL ACCESS — SuperAdmin can resend credentials anytime
+// POST /api/admin/resend-access
+// Body: { organizationId, email, principalName, phone, newPassword? }
+// ─────────────────────────────────────────────────────────────────────────────
+app.post(["/api/admin/resend-access", "/api/superadmin/resend-access"], async (req, res) => {
+  try {
+    const { organizationId, email, principalName, phone, newPassword } = req.body || {};
+    if (!email) return res.status(400).json({ success: false, message: "Email is required to resend access." });
+
+    // Generate new password if not provided
+    const resetPassword = newPassword || `Dakshora@${Math.floor(1000 + Math.random() * 9000)}!`;
+
+    // 1. Reset password in Supabase Auth
+    let authResetOk = false;
+    let authUserId = null;
+    if (supabase) {
+      try {
+        // Find user by email in Supabase Auth
+        const { data: listData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+        const existingUser = listData?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase());
+        if (existingUser) {
+          authUserId = existingUser.id;
+          const { error: pwErr } = await supabase.auth.admin.updateUserById(existingUser.id, {
+            password: resetPassword,
+            email_confirm: true
+          });
+          if (!pwErr) authResetOk = true;
+        } else {
+          // User doesn't exist — create them fresh
+          const { data: newUser } = await supabase.auth.admin.createUser({
+            email,
+            password: resetPassword,
+            email_confirm: true,
+            user_metadata: { name: principalName || "Principal", role: "school-admin", organization_id: organizationId },
+            app_metadata: { role: "school-admin", organization_id: organizationId }
+          });
+          if (newUser?.user) {
+            authUserId = newUser.user.id;
+            authResetOk = true;
+            // Upsert public.users
+            await supabase.from("users").upsert([{
+              id: authUserId, email, name: principalName || "Principal",
+              role: "school-admin", organization_id: organizationId, status: "active"
+            }], { onConflict: "id" }).catch(() => {});
+          }
+        }
+      } catch (authErr) {
+        console.warn("[ResendAccess] Supabase auth error:", authErr.message);
+      }
+    }
+
+    // 2. Find org name for message
+    const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === organizationId) || { name: "Your School" };
+
+    // 3. Dispatch WhatsApp / SMS / Email
+    const waText = `🏫 *DAKSHORA 2.0 — Access Reset*\n\nDear *${principalName || "Principal"}*,\nYour login credentials for *${org.name}* have been reset.\n\n💻 *ERP Portal:* https://dakshora.co.in\n🔑 *Login ID:* ${email}\n🔒 *New Password:* ${resetPassword}\n\n_Please log in and change your password immediately._\n- Team Dakshora`;
+
+    let waResult = null, smsResult = null, emailResult = null;
+    if (phone) {
+      try { waResult = await dispatchLiveGatewayMessage({ channel: "whatsapp", recipientContact: phone, recipientName: principalName || "Principal", text: waText, orgId: organizationId, metadata: { purpose: "access_resend_whatsapp" } }); } catch (e) { waResult = { success: false, error: e.message }; }
+      try { smsResult = await dispatchLiveGatewayMessage({ channel: "sms", recipientContact: phone, recipientName: principalName || "Principal", text: `DAKSHORA 2.0: Your new login - ID: ${email} Pass: ${resetPassword} Portal: https://dakshora.co.in`, orgId: organizationId, metadata: { purpose: "access_resend_sms" } }); } catch (e) { smsResult = { success: false, error: e.message }; }
+    }
+    if (email) {
+      try {
+        emailResult = await dispatchLiveGatewayMessage({ channel: "email", recipientContact: email, recipientName: principalName || "Principal", text: `Dear ${principalName || "Principal"},\n\nYour DAKSHORA 2.0 login credentials have been reset.\n\nSchool: ${org.name}\nLogin Email: ${email}\nNew Password: ${resetPassword}\nPortal: https://dakshora.co.in\n\n- Team Dakshora`, orgId: organizationId, metadata: { subject: `DAKSHORA 2.0 — Access Reset for ${org.name}`, purpose: "access_resend_email" } });
+      } catch (e) { emailResult = { success: false, error: e.message }; }
+    }
+
+    recordAuditLog("school.access_resent", req.user?.email || "superadmin", "organization", organizationId, req);
+
+    res.json({
+      success: true,
+      message: `Access credentials reset and resent for ${org.name} ✅`,
+      credentials: { email, newPassword: resetPassword, loginUrl: "https://dakshora.co.in" },
+      authResetOk,
+      notifications: {
+        whatsappSent: Boolean(waResult?.success),
+        smsSent: Boolean(smsResult?.success),
+        emailSent: Boolean(emailResult?.success)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to resend access", error: err.message });
   }
 });
 
@@ -2734,32 +2742,55 @@ app.get("/api/templates", (req, res) => res.json({ success: true, templates: TEM
 
 app.get("/api/websites", requireAuth, async (req, res) => {
   try {
-    if (!supabase) return res.json({ success: true, websites: IN_MEMORY_WEBSITES });
-    const { data, error } = await supabase.from("websites").select("*").order("created_at", { ascending: false });
-
-    if (error || !data || data.length === 0) {
-      return res.json({ success: true, websites: IN_MEMORY_WEBSITES });
+    const isSuper = req.user?.isSuperAdmin || req.user?.role === "superadmin";
+    const userOrgId = req.user?.organizationId;
+    let dbSites = [];
+    if (supabase) {
+      let query = supabase.from("websites").select("*").order("created_at", { ascending: false });
+      if (!isSuper) {
+        if (!userOrgId) return res.json({ success: true, websites: [] });
+        query = query.eq("organization_id", userOrgId);
+      }
+      const { data } = await query;
+      if (data) {
+        dbSites = data.map(d => ({
+          id: d.id,
+          name: d.name,
+          domain: `${d.slug}.school.dakshora.app`,
+          template: "tpl-school-saas",
+          status: d.status,
+          organization_id: d.organization_id,
+          created_at: d.created_at
+        }));
+      }
     }
 
-    // Merge Supabase and in-memory unique records
-    const allSites = [...IN_MEMORY_WEBSITES];
-    data.forEach(dbSite => {
-      if (!allSites.some(s => s.id === dbSite.id || s.name === dbSite.name)) {
-        allSites.push(dbSite);
-      }
+    const memSites = isSuper 
+      ? IN_MEMORY_WEBSITES 
+      : (userOrgId ? IN_MEMORY_WEBSITES.filter(s => s.organization_id === userOrgId) : []);
+
+    const allSites = [...dbSites];
+    memSites.forEach(s => {
+      if (!allSites.some(c => c.id === s.id)) allSites.push(s);
     });
 
     res.json({ success: true, websites: allSites });
   } catch (error) {
-    res.json({ success: true, websites: IN_MEMORY_WEBSITES });
+    res.status(500).json({ success: false, message: "Failed to fetch websites", error: error.message });
   }
 });
 
 app.post("/api/websites", requireAuth, async (req, res) => {
   try {
-    const { name, domain, template, organization_id } = req.body;
+    const { name, domain, template } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, message: "Website Name is required" });
+    }
+
+    const isSuper = req.user?.isSuperAdmin || req.user?.role === "superadmin";
+    const targetOrgId = isSuper ? (req.body.organization_id || req.user?.organizationId) : req.user?.organizationId;
+    if (!targetOrgId) {
+      return res.status(403).json({ success: false, message: "Organization required to create website" });
     }
 
     const cleanDomain = domain && domain.trim()
@@ -2772,7 +2803,7 @@ app.post("/api/websites", requireAuth, async (req, res) => {
       domain: cleanDomain,
       template: template || "tpl-school-saas",
       status: "live",
-      organization_id: organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+      organization_id: targetOrgId,
       created_at: new Date().toISOString()
     };
 
@@ -2781,17 +2812,28 @@ app.post("/api/websites", requireAuth, async (req, res) => {
 
     if (supabase) {
       try {
-        const { data } = await supabase.from("websites").insert([newSite]).select();
-        if (data && data[0]) {
-          recordAuditLog("website.deploy", "admin", "website", data[0].id, req);
-          return res.json({ success: true, message: "Website provisioned and activated successfully ✅", website: data[0] });
+        const slug = cleanDomain.split(".")[0].replace(/[^a-z0-9-]/g, "") || name.toLowerCase().replace(/[^a-z0-9-]/g, "");
+        const dbSiteRow = {
+          id: newSite.id,
+          organization_id: targetOrgId,
+          name: newSite.name,
+          slug,
+          template_id: null,
+          status: (newSite.status === "live" || newSite.status === "published") ? "published" : "draft"
+        };
+        const { data, error } = await supabase.from("websites").insert([dbSiteRow]).select();
+        if (!error && data && data[0]) {
+          recordAuditLog("website.deploy", req.user?.email || "admin", "website", data[0].id, req);
+          return res.json({ success: true, message: "Website provisioned and activated successfully ✅", website: newSite });
+        } else if (error) {
+          console.warn("Supabase website insert error:", error.message);
         }
       } catch (err) {
         console.warn("Supabase website insert fallback:", err.message);
       }
     }
 
-    recordAuditLog("website.deploy", "admin", "website", newSite.id, req);
+    recordAuditLog("website.deploy", req.user?.email || "admin", "website", newSite.id, req);
     res.json({ success: true, message: "Website provisioned and activated successfully ✅", website: newSite });
   } catch (error) {
     console.error("Create website error:", error);
@@ -2896,43 +2938,163 @@ function getOrCreateCmsTree(site) {
   return tree;
 }
 
-// GET /api/websites/:id/cms (Get full 9-layer CMS tree)
-app.get("/api/websites/:id/cms", (req, res) => {
-  const { id } = req.params;
-  const site = IN_MEMORY_WEBSITES.find(s => s.id === id) || { id, name: "Delhi Public Heritage School", domain: "heritage.dakshora.app" };
-  const tree = getOrCreateCmsTree(site);
+// Security Helper to locate website and enforce strict tenant ownership
+async function findAuthorizedWebsite(id, req, res) {
+  let site = IN_MEMORY_WEBSITES.find(s => s.id === id);
+  if (!site && supabase) {
+    try {
+      const { data } = await supabase.from("websites").select("*").eq("id", id).maybeSingle();
+      if (data) {
+        site = {
+          id: data.id,
+          name: data.name,
+          domain: `${data.slug}.school.dakshora.app`,
+          template: "tpl-school-saas",
+          status: data.status,
+          organization_id: data.organization_id,
+          created_at: data.created_at
+        };
+      }
+    } catch (_) {}
+  }
+  if (!site) {
+    res.status(404).json({ success: false, code: "NOT_FOUND", message: `Website '${id}' not found` });
+    return null;
+  }
+  // Check authorization
+  const isSuper = req.user?.isSuperAdmin || req.user?.role === "superadmin";
+  if (!isSuper) {
+    if (!req.user?.organizationId || site.organization_id !== req.user.organizationId) {
+      res.status(403).json({
+        success: false,
+        code: "FORBIDDEN_TENANT_MISMATCH",
+        message: "Access Denied: You do not have permission to manage this website."
+      });
+      return null;
+    }
+  }
+  return site;
+}
+
+// Helper to load persisted CMS tree from DB across server restarts
+async function loadPersistedCmsTree(site) {
+  if (WEBSITE_CMS_TREES.has(site.id)) {
+    return WEBSITE_CMS_TREES.get(site.id);
+  }
+  if (supabase && site.organization_id) {
+    try {
+      const { data: onb } = await supabase
+        .from("school_onboarding")
+        .select("draft_data")
+        .eq("organization_id", site.organization_id)
+        .maybeSingle();
+
+      if (onb?.draft_data?.cms_trees?.[site.id]) {
+        const persistedTree = onb.draft_data.cms_trees[site.id];
+        WEBSITE_CMS_TREES.set(site.id, persistedTree);
+        return persistedTree;
+      }
+    } catch (_) {}
+  }
+  return getOrCreateCmsTree(site);
+}
+
+// Helper to persist CMS tree to DB across restarts
+async function persistCmsTree(site, tree) {
+  WEBSITE_CMS_TREES.set(site.id, tree);
+  if (supabase && site.organization_id) {
+    try {
+      const { data: existingOnb } = await supabase
+        .from("school_onboarding")
+        .select("id, draft_data")
+        .eq("organization_id", site.organization_id)
+        .maybeSingle();
+
+      const existingDraft = existingOnb?.draft_data || {};
+      const updatedDraft = {
+        ...existingDraft,
+        cms_trees: {
+          ...(existingDraft.cms_trees || {}),
+          [site.id]: tree
+        }
+      };
+
+      if (existingOnb?.id) {
+        await supabase
+          .from("school_onboarding")
+          .update({
+            draft_data: updatedDraft,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", existingOnb.id);
+      } else {
+        await supabase
+          .from("school_onboarding")
+          .insert([{
+            id: crypto.randomUUID(),
+            organization_id: site.organization_id,
+            status: "draft",
+            current_step: 1,
+            completed_steps: [],
+            draft_data: updatedDraft
+          }]);
+      }
+    } catch (err) {
+      console.warn("[CMS DB] Failed to persist CMS tree:", err.message);
+    }
+  }
+}
+
+// GET /api/websites/:id/cms (Get full 9-layer CMS tree with DB Persistence)
+app.get("/api/websites/:id/cms", requireAuth, async (req, res) => {
+  const site = await findAuthorizedWebsite(req.params.id, req, res);
+  if (!site) return;
+  const tree = await loadPersistedCmsTree(site);
   res.json({ success: true, tree });
 });
 
-// PUT /api/websites/:id/cms (Update any of the 9 layers)
-app.put("/api/websites/:id/cms", (req, res) => {
-  const { id } = req.params;
-  const site = IN_MEMORY_WEBSITES.find(s => s.id === id) || { id, name: "Delhi Public Heritage School", domain: "heritage.dakshora.app" };
-  const existing = getOrCreateCmsTree(site);
+// PUT /api/websites/:id/cms (Update any of the 9 layers with DB Persistence)
+app.put("/api/websites/:id/cms", requireAuth, async (req, res) => {
+  const site = await findAuthorizedWebsite(req.params.id, req, res);
+  if (!site) return;
+  const existing = await loadPersistedCmsTree(site);
 
   const updated = {
     ...existing,
     ...req.body,
-    websiteId: id
+    websiteId: site.id
   };
 
-  WEBSITE_CMS_TREES.set(id, updated);
-  recordAuditLog("cms.tree_updated", "admin", "website", id, req);
+  await persistCmsTree(site, updated);
+  recordAuditLog("cms.tree_updated", req.user?.email || "admin", "website", site.id, req);
   res.json({ success: true, message: "CMS Tree updated successfully ✅", tree: updated });
 });
 
-// POST /api/websites/:id/publish (1-Click Publish to Production)
-app.post("/api/websites/:id/publish", (req, res) => {
-  const { id } = req.params;
-  const site = IN_MEMORY_WEBSITES.find(s => s.id === id) || { id, name: "Delhi Public Heritage School", domain: "heritage.dakshora.app" };
-  const tree = getOrCreateCmsTree(site);
+// POST /api/websites/:id/publish (1-Click Publish to Production with DB Persistence)
+app.post("/api/websites/:id/publish", requireAuth, async (req, res) => {
+  const site = await findAuthorizedWebsite(req.params.id, req, res);
+  if (!site) return;
+  const tree = await loadPersistedCmsTree(site);
 
   tree.publishing.status = "live";
   tree.publishing.version = (tree.publishing.version || 1) + 1;
   tree.publishing.lastPublishedAt = new Date().toISOString();
 
-  WEBSITE_CMS_TREES.set(id, tree);
-  recordAuditLog("website.publish", "admin", "website", id, req);
+  await persistCmsTree(site, tree);
+
+  if (supabase) {
+    try {
+      await supabase
+        .from("websites")
+        .update({
+          status: "published",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", site.id);
+    } catch (_) {}
+  }
+
+  recordAuditLog("website.publish", req.user?.email || "admin", "website", site.id, req);
 
   res.json({
     success: true,
@@ -3095,7 +3257,7 @@ app.get("/api/cms/notices", async (req, res) => {
         return res.json({ success: true, notices: data });
       }
     }
-    const memNotices = (typeof ERP_NOTICES !== "undefined" ? ERP_NOTICES : []).filter(n => !n.organization_id || n.organization_id === orgId);
+    const memNotices = (typeof ERP_NOTICES !== "undefined" ? ERP_NOTICES : []).filter(n => n.organization_id === orgId);
     res.json({ success: true, notices: memNotices });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -3243,7 +3405,7 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
 
     // Sync notices from ERP notice board if DB notices are empty
     if (notices.length === 0 && typeof ERP_NOTICES !== "undefined") {
-      notices = ERP_NOTICES.filter(n => (!n.organization_id || n.organization_id === org.id) && (n.isPublic !== false || n.targetAudience === "all" || n.category === "general")).slice(0, 5);
+      notices = ERP_NOTICES.filter(n => (n.organization_id === org.id) && (n.isPublic !== false || n.targetAudience === "all" || n.category === "general")).slice(0, 5);
     }
 
     res.json({
@@ -3970,18 +4132,19 @@ const EntitlementService = {
   getSubscription(orgId) {
     let sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === orgId);
     if (!sub) {
+      const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
       sub = {
         id: "sub-" + (orgId ? orgId.slice(0, 8) : "default"),
         organization_id: orgId || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-        plan_id: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? "enterprise" : "growth"),
-        status: "active",
+        plan_id: isSeed ? "enterprise" : "starter",
+        status: isSeed ? "active" : "trial",
         billing_interval: "month",
-        amountINR: (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? 8999 : 3999),
+        amountINR: isSeed ? 8999 : 0,
         currency: "INR",
-        trial_start: null,
-        trial_end: null,
-        current_period_start: new Date(Date.now() - 15 * 86400000).toISOString(),
-        current_period_end: new Date(Date.now() + 15 * 86400000).toISOString(),
+        trial_start: isSeed ? null : new Date().toISOString(),
+        trial_end: isSeed ? null : new Date(Date.now() + 14 * 86400000).toISOString(),
+        current_period_start: new Date().toISOString(),
+        current_period_end: new Date(Date.now() + 14 * 86400000).toISOString(),
         cancel_at_period_end: false,
         canceled_at: null,
         created_at: new Date().toISOString(),
@@ -4093,17 +4256,49 @@ const EntitlementService = {
 };
 
 // =========================================================================
-// REAL USAGE CALCULATION SERVICE
+// REAL USAGE CALCULATION SERVICE (TENANT-SCOPED DB COUNTS)
 // =========================================================================
 
+const TENANT_USAGE_COUNTS = new Map();
+
 const UsageService = {
+  async syncMetricsFromDb(orgId) {
+    if (!supabase || !orgId) return;
+    try {
+      const { count: stdCount } = await supabase
+        .from("students")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("admission_status", "admitted");
+
+      const { count: stfCount } = await supabase
+        .from("staff")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .eq("is_active", true);
+
+      TENANT_USAGE_COUNTS.set(orgId, {
+        students: stdCount !== null && stdCount !== undefined ? stdCount : 0,
+        staff: stfCount !== null && stfCount !== undefined ? stfCount : 0
+      });
+    } catch (_) {}
+  },
+
   getStudentUsage(orgId) {
+    const cached = TENANT_USAGE_COUNTS.get(orgId);
+    if (cached?.students !== undefined && cached.students !== null) {
+      return cached.students;
+    }
     if (typeof ERP_STUDENTS === "undefined") return 0;
     const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
     return ERP_STUDENTS.filter(s => (s.organization_id ? s.organization_id === orgId : isSeed) && s.status === 'active').length;
   },
 
   getStaffUsage(orgId) {
+    const cached = TENANT_USAGE_COUNTS.get(orgId);
+    if (cached?.staff !== undefined && cached.staff !== null) {
+      return cached.staff;
+    }
     if (typeof ERP_STAFF === "undefined") return 0;
     const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
     return ERP_STAFF.filter(s => (s.organization_id ? s.organization_id === orgId : isSeed) && (s.status === 'active' || s.isActive !== false)).length;
@@ -4123,7 +4318,7 @@ const UsageService = {
 
   getCommunicationUsage(orgId) {
     if (typeof ERP_COMMUNICATION_MESSAGES !== "undefined") {
-      return ERP_COMMUNICATION_MESSAGES.filter(m => !m.organization_id || m.organization_id === orgId).length;
+      return ERP_COMMUNICATION_MESSAGES.filter(m => m.organization_id === orgId).length;
     }
     return 0;
   },
@@ -4198,21 +4393,31 @@ const UsageService = {
 };
 
 // =========================================================================
-// PAYMENT & WEBHOOK GATEWAY SERVICE (MOCK ABSTRACTION)
+// PRODUCTION RAZORPAY PAYMENT & WEBHOOK GATEWAY SERVICE
 // =========================================================================
 
 const PaymentService = {
+  getRazorpay() {
+    const key_id = process.env.RAZORPAY_KEY_ID;
+    const key_secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!key_id || !key_secret) {
+      throw new Error("Razorpay credentials (RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) are not configured on the server.");
+    }
+    return new Razorpay({ key_id, key_secret });
+  },
+
   verifySignature(orderId, paymentId, signature) {
     if (!orderId || !paymentId || !signature) return false;
-    const secret = process.env.RAZORPAY_KEY_SECRET || "dakshora_gateway_production_secret";
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      throw new Error("RAZORPAY_KEY_SECRET is not configured on server.");
+    }
     try {
       const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
-      if (signature === expectedSignature) return true;
-      // Allow test simulator tokens only in non-production environments
-      if (process.env.NODE_ENV !== "production" && (signature === "mock_signature_valid" || signature.startsWith("rzp_test_sig_"))) {
-        return true;
-      }
-      return false;
+      const sigBuf = Buffer.from(signature, "utf8");
+      const expBuf = Buffer.from(expectedSignature, "utf8");
+      if (sigBuf.length !== expBuf.length) return false;
+      return crypto.timingSafeEqual(sigBuf, expBuf);
     } catch (err) {
       return false;
     }
@@ -4220,26 +4425,28 @@ const PaymentService = {
 
   verifyWebhookSignature(payload, signature) {
     if (!signature) return false;
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET || "dakshora_webhook_production_secret";
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!secret) {
+      throw new Error("RAZORPAY_WEBHOOK_SECRET is not configured on server.");
+    }
     try {
       const payloadString = typeof payload === "string" ? payload : JSON.stringify(payload);
       const expectedSignature = crypto.createHmac("sha256", secret).update(payloadString).digest("hex");
-      if (signature === expectedSignature) return true;
-      // Allow test simulator webhook tokens only in non-production environments
-      if (process.env.NODE_ENV !== "production" && (signature === "mock_webhook_sig_valid" || signature.startsWith("rzp_test_wh_sig_"))) {
-        return true;
-      }
-      return false;
+      const sigBuf = Buffer.from(signature, "utf8");
+      const expBuf = Buffer.from(expectedSignature, "utf8");
+      if (sigBuf.length !== expBuf.length) return false;
+      return crypto.timingSafeEqual(sigBuf, expBuf);
     } catch (err) {
       return false;
     }
   },
 
   async handleWebhook(event) {
-    if (!event || !event.id) {
+    const eventId = event?.event_id || event?.id;
+    if (!eventId) {
       return { success: false, message: "Missing webhook event ID" };
     }
-    const existing = SAAS_WEBHOOK_EVENTS.find(e => e.event_id === event.id);
+    const existing = SAAS_WEBHOOK_EVENTS.find(e => e.event_id === eventId);
     if (existing) {
       return { success: true, duplicate: true, message: "Webhook event already processed (idempotent)" };
     }
@@ -4247,7 +4454,7 @@ const PaymentService = {
     const eventRecord = {
       id: `wh-${Date.now()}`,
       provider: "razorpay",
-      event_id: event.id,
+      event_id: eventId,
       event_type: event.event || event.type || "payment.captured",
       payload: event,
       processed: true,
@@ -4264,7 +4471,43 @@ const PaymentService = {
       }
     }
 
-    return { success: true, duplicate: false, message: "Webhook event recorded and verified" };
+    // Process payment event to update subscription and invoice
+    const eventType = event.event || event.type;
+    if (eventType === "payment.captured" || eventType === "order.paid") {
+      const paymentEntity = event.payload?.payment?.entity || {};
+      const orderEntity = event.payload?.order?.entity || {};
+      const notes = paymentEntity.notes || orderEntity.notes || {};
+      const orgId = notes.organization_id;
+      const planId = notes.plan_id;
+      if (orgId) {
+        const sub = EntitlementService.getSubscription(orgId);
+        if (planId && SAAS_PLANS.some(p => p.id === planId)) {
+          sub.plan_id = planId;
+        }
+        sub.status = "active";
+        sub.updated_at = new Date().toISOString();
+        if (supabase) {
+          try {
+            await supabase.from("saas_subscriptions").upsert([{
+              id: sub.id,
+              organization_id: sub.organization_id,
+              plan_id: sub.plan_id,
+              status: sub.status,
+              billing_interval: sub.billing_interval || "month",
+              amount: sub.amountINR || 3999,
+              currency: "INR",
+              current_period_start: sub.current_period_start,
+              current_period_end: sub.current_period_end,
+              cancel_at_period_end: false,
+              canceled_at: null,
+              updated_at: sub.updated_at
+            }]);
+          } catch (_) {}
+        }
+      }
+    }
+
+    return { success: true, duplicate: false, message: "Webhook event recorded, verified, and applied" };
   }
 };
 
@@ -4361,8 +4604,9 @@ app.get("/api/billing/subscription", async (req, res) => {
 });
 
 // GET /api/billing/usage - Live resource consumption vs plan limits
-app.get("/api/billing/usage", (req, res) => {
+app.get("/api/billing/usage", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  await UsageService.syncMetricsFromDb(orgId);
   const metrics = UsageService.getAllMetrics(orgId);
   res.json({ success: true, ...metrics });
 });
@@ -4414,7 +4658,7 @@ const handleGetInvoices = async (req, res) => {
     }
   }
 
-  const invoices = SAAS_INVOICES.filter(i => !i.organization_id || i.organization_id === orgId);
+  const invoices = SAAS_INVOICES.filter(i => i.organization_id === orgId);
   res.json({
     success: true,
     total: invoices.length,
@@ -4460,7 +4704,7 @@ app.get("/api/billing/invoices/:id", async (req, res) => {
     }
   }
 
-  const invoice = SAAS_INVOICES.find(i => (!i.organization_id || i.organization_id === orgId) && i.id === req.params.id);
+  const invoice = SAAS_INVOICES.find(i => (i.organization_id === orgId) && i.id === req.params.id);
   if (!invoice) {
     return res.status(404).json({ success: false, message: "Invoice not found in organization" });
   }
@@ -4468,9 +4712,13 @@ app.get("/api/billing/invoices/:id", async (req, res) => {
 });
 
 // POST /api/billing/change-plan - Upgrade / Downgrade with DOWNGRADE PROTECTION
-app.post("/api/billing/change-plan", async (req, res) => {
+app.post("/api/billing/change-plan", requireAuth, async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { planId, interval = "month" } = req.body || {};
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "User is not assigned to an active organization" });
+  }
+  const planId = req.body?.planId || req.body?.plan_id;
+  const interval = req.body?.interval || req.body?.billing_interval || "month";
 
   const targetPlan = SAAS_PLANS.find(p => p.id === planId);
   if (!targetPlan) {
@@ -4479,6 +4727,17 @@ app.post("/api/billing/change-plan", async (req, res) => {
 
   const sub = EntitlementService.getSubscription(orgId);
   const currentPlan = SAAS_PLANS.find(p => p.id === sub.plan_id) || SAAS_PLANS[0];
+
+  // Disallow unpaid plan upgrades (must go through checkout & payment verification)
+  if (targetPlan.priceINR > 0 && targetPlan.id !== sub.plan_id) {
+    return res.status(402).json({
+      success: false,
+      code: "PAYMENT_REQUIRED",
+      message: `Upgrading to ${targetPlan.name} requires payment. Please complete checkout via /api/billing/checkout.`,
+      planId: targetPlan.id,
+      amountINR: targetPlan.priceINR
+    });
+  }
 
   // DOWNGRADE PROTECTION CHECK:
   // Check if current student usage exceeds target plan's max_students limit
@@ -4735,42 +4994,95 @@ app.post("/api/billing/renew", async (req, res) => {
   });
 });
 
-// POST /api/billing/checkout - Initiate payment checkout
-app.post("/api/billing/checkout", (req, res) => {
+// POST /api/billing/checkout - Initiate payment checkout with Razorpay SDK
+app.post("/api/billing/checkout", requireAuth, async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "User is not assigned to an active organization." });
+  }
   const { planId, interval = "month" } = req.body || {};
 
   const plan = SAAS_PLANS.find(p => p.id === planId);
   if (!plan) return res.status(400).json({ success: false, message: "Invalid plan ID" });
 
-  const orderId = `order_dak_${Date.now()}`;
-  res.json({
-    success: true,
-    orderId,
-    amountINR: plan.priceINR,
-    currency: "INR",
-    planName: plan.name,
-    planId: plan.id,
-    keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_dakshora2026",
-    organizationId: orgId
-  });
+  try {
+    const razorpay = PaymentService.getRazorpay();
+    const order = await razorpay.orders.create({
+      amount: plan.priceINR * 100, // Amount in paise
+      currency: "INR",
+      receipt: `rcpt_${orgId.slice(0, 8)}_${Date.now()}`,
+      notes: {
+        organization_id: orgId,
+        plan_id: plan.id,
+        interval
+      }
+    });
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      amountINR: plan.priceINR,
+      amountPaise: order.amount,
+      currency: "INR",
+      planName: plan.name,
+      planId: plan.id,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      organizationId: orgId
+    });
+  } catch (err) {
+    console.error("[Billing Checkout Error]:", err.message);
+    res.status(500).json({
+      success: false,
+      code: "CHECKOUT_FAILED",
+      message: err.message || "Failed to initialize server-side payment order with Razorpay"
+    });
+  }
 });
 
 // POST /api/billing/verify-payment - Cryptographic payment confirmation
-app.post("/api/billing/verify-payment", async (req, res) => {
+app.post("/api/billing/verify-payment", requireAuth, async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { orderId, paymentId, signature, planId } = req.body || {};
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "User is not assigned to an active organization." });
+  }
+  const orderId = req.body?.orderId || req.body?.razorpay_order_id;
+  const paymentId = req.body?.paymentId || req.body?.razorpay_payment_id;
+  const signature = req.body?.signature || req.body?.razorpay_signature;
+  const planId = req.body?.planId || req.body?.plan_id;
 
-  const isValid = PaymentService.verifySignature(orderId, paymentId, signature);
+  if (!orderId || !paymentId || !signature) {
+    return res.status(400).json({ success: false, code: "MISSING_PAYMENT_DETAILS", message: "orderId, paymentId, and signature are required." });
+  }
+
+  let isValid = false;
+  try {
+    isValid = PaymentService.verifySignature(orderId, paymentId, signature);
+  } catch (sigErr) {
+    return res.status(500).json({ success: false, code: "GATEWAY_ERROR", message: sigErr.message });
+  }
+
   if (!isValid) {
-    return res.status(400).json({ success: false, message: "Invalid payment cryptographic signature or missing details" });
+    return res.status(400).json({ success: false, code: "INVALID_SIGNATURE", message: "Invalid payment cryptographic signature" });
+  }
+
+  // Idempotency: avoid double-crediting if duplicate payment verification is submitted
+  const alreadyProcessed = SAAS_INVOICES.find(inv => inv.paymentId === paymentId || inv.id === paymentId);
+  if (alreadyProcessed) {
+    return res.json({
+      success: true,
+      duplicate: true,
+      message: "Payment already verified and processed (idempotent)",
+      paymentId,
+      orderId,
+      subscription: EntitlementService.getSubscription(orgId)
+    });
   }
 
   const sub = EntitlementService.getSubscription(orgId);
-  if (planId && SAAS_PLANS.some(p => p.id === planId)) {
-    sub.plan_id = planId;
-  }
+  const targetPlan = SAAS_PLANS.find(p => p.id === planId) || SAAS_PLANS.find(p => p.id === sub.plan_id) || SAAS_PLANS[0];
+  sub.plan_id = targetPlan.id;
   sub.status = "active";
+  sub.amountINR = targetPlan.priceINR;
   sub.updated_at = new Date().toISOString();
 
   if (supabase && orgId) {
@@ -4781,7 +5093,7 @@ app.post("/api/billing/verify-payment", async (req, res) => {
         plan_id: sub.plan_id,
         status: sub.status,
         billing_interval: sub.billing_interval || "month",
-        amount: sub.amountINR || 3999,
+        amount: sub.amountINR,
         currency: "INR",
         current_period_start: sub.current_period_start,
         current_period_end: sub.current_period_end,
@@ -4794,9 +5106,57 @@ app.post("/api/billing/verify-payment", async (req, res) => {
     }
   }
 
+  const newInvoice = {
+    id: `inv-${Date.now()}`,
+    organization_id: orgId,
+    subscription_id: sub.id,
+    paymentId: paymentId,
+    invoiceNumber: `DAK-INV-${Date.now().toString().slice(-6)}`,
+    plan: targetPlan.name,
+    planId: targetPlan.id,
+    amountINR: targetPlan.priceINR,
+    subtotalINR: Math.round((targetPlan.priceINR / 1.18) * 100) / 100,
+    taxGstINR: Math.round((targetPlan.priceINR - (targetPlan.priceINR / 1.18)) * 100) / 100,
+    currency: "INR",
+    status: "paid",
+    billingPeriod: "Next 30 Days",
+    periodStart: new Date().toISOString(),
+    periodEnd: new Date(Date.now() + 30 * 86400000).toISOString(),
+    issueDate: new Date().toISOString().slice(0, 10),
+    dueDate: new Date().toISOString().slice(0, 10),
+    paidDate: new Date().toISOString().slice(0, 10),
+    receiptUrl: `/api/billing/invoices/inv-${Date.now()}/receipt`
+  };
+  SAAS_INVOICES.unshift(newInvoice);
+
+  if (supabase && orgId) {
+    try {
+      await supabase.from("saas_invoices").insert([{
+        id: newInvoice.id,
+        organization_id: newInvoice.organization_id,
+        subscription_id: newInvoice.subscription_id,
+        invoice_number: newInvoice.invoiceNumber,
+        plan_name: newInvoice.plan,
+        subtotal: newInvoice.subtotalINR,
+        tax_gst: newInvoice.taxGstINR,
+        total_amount: newInvoice.amountINR,
+        currency: "INR",
+        status: "paid",
+        billing_period_start: newInvoice.periodStart,
+        billing_period_end: newInvoice.periodEnd,
+        issue_date: newInvoice.issueDate,
+        due_date: newInvoice.dueDate,
+        paid_date: newInvoice.paidDate,
+        created_at: new Date().toISOString()
+      }]);
+    } catch (invErr) {
+      console.warn("[Billing Invoice DB] Failed to insert invoice in Supabase:", invErr.message);
+    }
+  }
+
   await recordAuditLog(
     "billing.payment_verified",
-    req.user?.email || "admin@dpsheritage.edu.in",
+    req.user?.email || "admin",
     "payment",
     paymentId,
     req
@@ -4806,7 +5166,9 @@ app.post("/api/billing/verify-payment", async (req, res) => {
     success: true,
     message: "Payment verified successfully. Subscription activated! ✅",
     paymentId,
-    orderId
+    orderId,
+    subscription: sub,
+    invoice: newInvoice
   });
 });
 
@@ -4819,9 +5181,15 @@ app.post("/api/billing/webhook", async (req, res) => {
     return res.status(401).json({ success: false, message: "Missing x-razorpay-signature header" });
   }
 
-  const isValidSignature = PaymentService.verifyWebhookSignature(event, signature);
+  let isValidSignature = false;
+  try {
+    isValidSignature = PaymentService.verifyWebhookSignature(event, signature);
+  } catch (err) {
+    return res.status(500).json({ success: false, code: "WEBHOOK_CONFIG_ERROR", message: err.message });
+  }
+
   if (!isValidSignature) {
-    return res.status(400).json({ success: false, message: "Invalid webhook cryptographic signature" });
+    return res.status(400).json({ success: false, code: "INVALID_SIGNATURE", message: "Invalid webhook cryptographic signature" });
   }
 
   const result = await PaymentService.handleWebhook(event);
@@ -5348,6 +5716,9 @@ let ERP_STUDENTS = [
     updated_at: new Date().toISOString()
   }
 ];
+ERP_STUDENTS.forEach(s => {
+  if (!s.organization_id) s.organization_id = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+});
 
 let ERP_STAFF = [
   {
@@ -5637,6 +6008,9 @@ let ERP_STAFF = [
     updated_at: new Date().toISOString()
   }
 ];
+ERP_STAFF.forEach(s => {
+  if (!s.organization_id) s.organization_id = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+});
 
 let ERP_TEACHER_ASSIGNMENTS = [
   {
@@ -5788,6 +6162,184 @@ let ERP_ATTENDANCE_SETTINGS = {
   allowFutureDates: false,
   defaultStatus: "present"
 };
+
+// Multi-Tenant Settings Cache with PostgreSQL DB Persistence
+const TENANT_SETTINGS = new Map();
+const TENANT_ATTENDANCE_SETTINGS = new Map();
+
+async function getTenantSettings(orgId) {
+  if (!orgId) return ERP_SETTINGS;
+  if (TENANT_SETTINGS.has(orgId)) {
+    return TENANT_SETTINGS.get(orgId);
+  }
+
+  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  let settings = {
+    ...ERP_SETTINGS,
+    schoolName: isSeed ? ERP_SETTINGS.schoolName : "School Academy",
+    schoolCode: isSeed ? ERP_SETTINGS.schoolCode : `SCH-${orgId.slice(0, 6).toUpperCase()}`,
+    organization_id: orgId
+  };
+
+  if (supabase && orgId) {
+    try {
+      const { data: dbSchool } = await supabase
+        .from("schools")
+        .select("*")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (dbSchool) {
+        if (dbSchool.name) settings.schoolName = dbSchool.name;
+        if (dbSchool.affiliation_no) settings.affiliationNo = dbSchool.affiliation_no;
+        if (dbSchool.school_code) settings.schoolCode = dbSchool.school_code;
+        if (dbSchool.board) settings.board = dbSchool.board;
+        if (dbSchool.address) settings.address = dbSchool.address;
+        if (dbSchool.phone) settings.contactPhone = dbSchool.phone;
+        if (dbSchool.email) settings.contactEmail = dbSchool.email;
+      }
+
+      const { data: onb } = await supabase
+        .from("school_onboarding")
+        .select("draft_data")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (onb?.draft_data?.settings) {
+        settings = { ...settings, ...onb.draft_data.settings };
+      }
+    } catch (_) {}
+  }
+
+  TENANT_SETTINGS.set(orgId, settings);
+  return settings;
+}
+
+async function updateTenantSettings(orgId, updates) {
+  if (!orgId) return { ...ERP_SETTINGS, ...updates };
+  const current = await getTenantSettings(orgId);
+  const merged = { ...current, ...updates, organization_id: orgId };
+  TENANT_SETTINGS.set(orgId, merged);
+
+  if (supabase && orgId) {
+    try {
+      const schoolFields = {};
+      if (updates.schoolName) schoolFields.name = updates.schoolName;
+      if (updates.affiliationNo) schoolFields.affiliation_no = updates.affiliationNo;
+      if (updates.schoolCode) schoolFields.school_code = updates.schoolCode;
+      if (updates.board) schoolFields.board = updates.board;
+      if (updates.address) schoolFields.address = updates.address;
+      if (updates.contactPhone || updates.phone) schoolFields.phone = updates.contactPhone || updates.phone;
+      if (updates.contactEmail || updates.email) schoolFields.email = updates.contactEmail || updates.email;
+
+      if (Object.keys(schoolFields).length > 0) {
+        await supabase
+          .from("schools")
+          .update(schoolFields)
+          .eq("organization_id", orgId);
+      }
+
+      const { data: existingOnb } = await supabase
+        .from("school_onboarding")
+        .select("id, draft_data")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      const existingDraft = existingOnb?.draft_data || {};
+      const updatedDraft = {
+        ...existingDraft,
+        settings: merged
+      };
+
+      if (existingOnb?.id) {
+        await supabase
+          .from("school_onboarding")
+          .update({ draft_data: updatedDraft, updated_at: new Date().toISOString() })
+          .eq("id", existingOnb.id);
+      } else {
+        await supabase
+          .from("school_onboarding")
+          .insert([{
+            id: crypto.randomUUID(),
+            organization_id: orgId,
+            status: "draft",
+            current_step: 1,
+            completed_steps: [],
+            draft_data: updatedDraft
+          }]);
+      }
+    } catch (err) {
+      console.warn("[Settings DB] Persist error:", err.message);
+    }
+  }
+
+  return merged;
+}
+
+async function getTenantAttendanceSettings(orgId) {
+  if (!orgId) return ERP_ATTENDANCE_SETTINGS;
+  if (TENANT_ATTENDANCE_SETTINGS.has(orgId)) {
+    return TENANT_ATTENDANCE_SETTINGS.get(orgId);
+  }
+  let attSettings = { ...ERP_ATTENDANCE_SETTINGS };
+  if (supabase && orgId) {
+    try {
+      const { data: onb } = await supabase
+        .from("school_onboarding")
+        .select("draft_data")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (onb?.draft_data?.attendance_settings) {
+        attSettings = { ...attSettings, ...onb.draft_data.attendance_settings };
+      }
+    } catch (_) {}
+  }
+  TENANT_ATTENDANCE_SETTINGS.set(orgId, attSettings);
+  return attSettings;
+}
+
+async function updateTenantAttendanceSettings(orgId, updates) {
+  if (!orgId) return { ...ERP_ATTENDANCE_SETTINGS, ...updates };
+  const current = await getTenantAttendanceSettings(orgId);
+  const merged = { ...current, ...updates };
+  TENANT_ATTENDANCE_SETTINGS.set(orgId, merged);
+
+  if (supabase && orgId) {
+    try {
+      const { data: existingOnb } = await supabase
+        .from("school_onboarding")
+        .select("id, draft_data")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      const existingDraft = existingOnb?.draft_data || {};
+      const updatedDraft = {
+        ...existingDraft,
+        attendance_settings: merged
+      };
+
+      if (existingOnb?.id) {
+        await supabase
+          .from("school_onboarding")
+          .update({ draft_data: updatedDraft, updated_at: new Date().toISOString() })
+          .eq("id", existingOnb.id);
+      } else {
+        await supabase
+          .from("school_onboarding")
+          .insert([{
+            id: crypto.randomUUID(),
+            organization_id: orgId,
+            status: "draft",
+            current_step: 1,
+            completed_steps: [],
+            draft_data: updatedDraft
+          }]);
+      }
+    } catch (_) {}
+  }
+  return merged;
+}
 
 let ERP_CAMPUSES = [
   {
@@ -9025,9 +9577,9 @@ function maskContact(contact, type = 'phone') {
 // Server-Side Audience Resolution Engine
 function resolveAudienceRecipients(audienceType, audienceFilter = {}, orgId) {
   const recipients = [];
-  const tenantStudents = ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status === 'active');
-  const tenantStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status === 'active');
-  const tenantParents = ERP_PARENTS.filter(p => (!p.organization_id || p.organization_id === orgId));
+  const tenantStudents = ERP_STUDENTS.filter(s => (s.organization_id === orgId) && s.status === 'active');
+  const tenantStaff = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.status === 'active');
+  const tenantParents = ERP_PARENTS.filter(p => (p.organization_id === orgId));
 
   const addStudent = (s) => {
     recipients.push({
@@ -10119,8 +10671,17 @@ app.use("/api/erp", (req, res, next) => {
   }
   return requireAuth(req, res, () => {
     const orgId = resolveTenantOrgId(req);
+    if (!orgId && !req.user?.isSuperAdmin) {
+      return res.status(403).json({
+        success: false,
+        code: "ORGANIZATION_REQUIRED",
+        message: "Access Denied: You are not assigned to an active school organization."
+      });
+    }
     // Auto-bootstrap any tenant accessing ERP so all foundation tables are ready
-    ensureTenantBootstrapped(orgId);
+    if (orgId) {
+      ensureTenantBootstrapped(orgId);
+    }
 
     // Platform SuperAdmins bypass tenant plan restrictions for system management
     if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
@@ -10128,7 +10689,7 @@ app.use("/api/erp", (req, res, next) => {
     }
     const subPath = req.path || "";
     const matched = ERP_MODULE_PREFIXES.find(m => subPath.startsWith(m.prefix) || req.originalUrl?.includes("/api/erp" + m.prefix));
-    if (matched && !EntitlementService.hasFeature(orgId, matched.module)) {
+    if (matched && orgId && !EntitlementService.hasFeature(orgId, matched.module)) {
       return res.status(403).json({
         success: false,
         code: "MODULE_NOT_ENTITLED",
@@ -10149,16 +10710,19 @@ function resolveTenantOrgId(req) {
     if (req.headers["x-organization-id"]) return req.headers["x-organization-id"];
     if (req.headers["x-org-id"]) return req.headers["x-org-id"];
     if (req.query?.organization_id) return req.query.organization_id;
+    return req.user?.organizationId || null;
   }
   // For standard users, STRICTLY use their authenticated organization ID
-  if (req.user?.organizationId) return req.user.organizationId;
-  return "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  return req.user?.organizationId || null;
 }
 
 // 1. Students Endpoints (Production SaaS Grade)
 // GET /api/erp/students - Multi-field search, filters, pagination, summary metrics
 app.get("/api/erp/students", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId && !req.user?.isSuperAdmin) {
+    return res.status(403).json({ success: false, message: "Organization required" });
+  }
   const {
     q,
     search,
@@ -10174,7 +10738,7 @@ app.get("/api/erp/students", async (req, res) => {
   } = req.query;
 
   // Strict tenant organization isolation & live DB query
-  let tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let tenantStudents = orgId ? ERP_STUDENTS.filter(s => s.organization_id === orgId) : [];
 
   if (supabase) {
     try {
@@ -10319,7 +10883,7 @@ app.get("/api/erp/students/export", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { q, search, grade, section, gender, status, session, format = "csv" } = req.query;
 
-  let filtered = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let filtered = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   if (session && session !== "all") filtered = filtered.filter(s => !s.academicSession || s.academicSession === session);
   if (grade && grade !== "all") filtered = filtered.filter(s => s.grade === grade);
   if (section && section !== "all") filtered = filtered.filter(s => s.section === section);
@@ -10379,21 +10943,64 @@ app.get("/api/erp/students/export", (req, res) => {
   res.send(csvContent);
 });
 
-// GET /api/erp/students/:id/profile - 360-degree Student Profile
-app.get("/api/erp/students/:id/profile", (req, res) => {
+// GET /api/erp/students/:id/profile - 360-degree Student Profile (DB Fallback)
+app.get("/api/erp/students/:id/profile", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const student = ERP_STUDENTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let student = ERP_STUDENTS.find(s => 
+    (s.organization_id === orgId) && 
     (s.id === id || s.admissionNo === id)
   );
+
+  if (!student && supabase && orgId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      let query = supabase.from("students").select("*").eq("organization_id", orgId);
+      if (isUuid) {
+        query = query.or(`id.eq.${id},admission_no.eq.${id}`);
+      } else {
+        query = query.eq("admission_no", id);
+      }
+      const { data: dbStd } = await query.maybeSingle();
+      if (dbStd) {
+        const fullName = [dbStd.first_name, dbStd.middle_name, dbStd.last_name].filter(Boolean).join(" ") || dbStd.admission_no;
+        student = {
+          id: dbStd.id,
+          admissionNo: dbStd.admission_no || "ADM-001",
+          penNo: dbStd.pen_no || "",
+          rollNo: dbStd.roll_no || dbStd.admission_no?.slice(-3) || "01",
+          firstName: dbStd.first_name || fullName.split(" ")[0],
+          middleName: dbStd.middle_name || "",
+          lastName: dbStd.last_name || fullName.split(" ").slice(1).join(" "),
+          name: fullName,
+          grade: dbStd.grade || "Class 10",
+          section: dbStd.section || "A",
+          gender: dbStd.gender || "Not specified",
+          dob: dbStd.date_of_birth || "2012-01-01",
+          bloodGroup: dbStd.blood_group || "B+",
+          avatarUrl: dbStd.photo_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+          admissionDate: dbStd.admission_date || "2026-04-01",
+          academicSession: "2026-27",
+          status: dbStd.admission_status === "admitted" ? "active" : (dbStd.admission_status || "active"),
+          phone: dbStd.phone || "",
+          email: dbStd.email || "",
+          parentName: `${dbStd.last_name ? dbStd.last_name + ' Parent' : 'Guardian'}`,
+          parentPhone: dbStd.phone || "",
+          duesINR: 0,
+          attendancePercent: 94.5,
+          organization_id: dbStd.organization_id
+        };
+        ERP_STUDENTS.unshift(student);
+      }
+    } catch (_) {}
+  }
 
   if (!student) {
     return res.status(404).json({ success: false, message: `Student '${id}' not found in this organization` });
   }
 
   // Linked fees
-  const linkedFees = ERP_FEES.filter(f => f.studentId === student.id || f.studentName === student.name);
+  const linkedFees = ERP_FEES.filter(f => f.organization_id === orgId && (f.studentId === student.id || f.studentName === student.name));
 
   // Attendance statistics
   const totalDays = 110;
@@ -10446,14 +11053,57 @@ app.get("/api/erp/students/:id/profile", (req, res) => {
   });
 });
 
-// GET /api/erp/students/:id - Single student record
-app.get("/api/erp/students/:id", (req, res) => {
+// GET /api/erp/students/:id - Single student record (DB Fallback)
+app.get("/api/erp/students/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const student = ERP_STUDENTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let student = ERP_STUDENTS.find(s => 
+    (s.organization_id === orgId) && 
     (s.id === id || s.admissionNo === id || s.rollNo === id)
   );
+
+  if (!student && supabase && orgId) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      let query = supabase.from("students").select("*").eq("organization_id", orgId);
+      if (isUuid) {
+        query = query.or(`id.eq.${id},admission_no.eq.${id}`);
+      } else {
+        query = query.eq("admission_no", id);
+      }
+      const { data: dbStd } = await query.maybeSingle();
+      if (dbStd) {
+        const fullName = [dbStd.first_name, dbStd.middle_name, dbStd.last_name].filter(Boolean).join(" ") || dbStd.admission_no;
+        student = {
+          id: dbStd.id,
+          admissionNo: dbStd.admission_no || "ADM-001",
+          penNo: dbStd.pen_no || "",
+          rollNo: dbStd.roll_no || dbStd.admission_no?.slice(-3) || "01",
+          firstName: dbStd.first_name || fullName.split(" ")[0],
+          middleName: dbStd.middle_name || "",
+          lastName: dbStd.last_name || fullName.split(" ").slice(1).join(" "),
+          name: fullName,
+          grade: dbStd.grade || "Class 10",
+          section: dbStd.section || "A",
+          gender: dbStd.gender || "Not specified",
+          dob: dbStd.date_of_birth || "2012-01-01",
+          bloodGroup: dbStd.blood_group || "B+",
+          avatarUrl: dbStd.photo_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+          admissionDate: dbStd.admission_date || "2026-04-01",
+          academicSession: "2026-27",
+          status: dbStd.admission_status === "admitted" ? "active" : (dbStd.admission_status || "active"),
+          phone: dbStd.phone || "",
+          email: dbStd.email || "",
+          parentName: `${dbStd.last_name ? dbStd.last_name + ' Parent' : 'Guardian'}`,
+          parentPhone: dbStd.phone || "",
+          duesINR: 0,
+          attendancePercent: 94.5,
+          organization_id: dbStd.organization_id
+        };
+        ERP_STUDENTS.unshift(student);
+      }
+    } catch (_) {}
+  }
 
   if (!student) {
     return res.status(404).json({ success: false, message: `Student '${id}' not found in this organization` });
@@ -10494,7 +11144,7 @@ app.post("/api/erp/students", async (req, res) => {
   // Validate admission number and uniqueness within tenant
   const admissionNo = (std.admissionNo || `DPS-ADM-2026-${Math.floor(100 + Math.random() * 900)}`).trim();
   const existingAdmission = ERP_STUDENTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     s.admissionNo?.toLowerCase() === admissionNo.toLowerCase()
   );
   if (existingAdmission) {
@@ -10508,7 +11158,7 @@ app.post("/api/erp/students", async (req, res) => {
   const penNo = (std.penNo || "").trim();
   if (penNo) {
     const existingPen = ERP_STUDENTS.find(s => 
-      (!s.organization_id || s.organization_id === orgId) && 
+      (s.organization_id === orgId) && 
       s.penNo === penNo
     );
     if (existingPen) {
@@ -10613,16 +11263,63 @@ app.post("/api/erp/students", async (req, res) => {
   });
 });
 
-// PATCH /api/erp/students/:id - Update student record
+// PATCH /api/erp/students/:id - Update student record (DB Fallback)
 app.patch("/api/erp/students/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "Organization required" });
+  }
   const { id } = req.params;
   const updates = req.body || {};
 
-  const idx = ERP_STUDENTS.findIndex(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let idx = ERP_STUDENTS.findIndex(s => 
+    s.organization_id === orgId && 
     (s.id === id || s.admissionNo === id)
   );
+
+  if (idx === -1 && supabase) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      let q = supabase.from("students").select("*").eq("organization_id", orgId);
+      if (isUuid) {
+        q = q.or(`id.eq.${id},admission_no.eq.${id}`);
+      } else {
+        q = q.eq("admission_no", id);
+      }
+      const { data: dbStd } = await q.maybeSingle();
+      if (dbStd) {
+        const fullName = [dbStd.first_name, dbStd.middle_name, dbStd.last_name].filter(Boolean).join(" ") || dbStd.admission_no;
+        const mappedStd = {
+          id: dbStd.id,
+          admissionNo: dbStd.admission_no || "ADM-001",
+          penNo: dbStd.pen_no || "",
+          rollNo: dbStd.roll_no || dbStd.admission_no?.slice(-3) || "01",
+          firstName: dbStd.first_name || fullName.split(" ")[0],
+          middleName: dbStd.middle_name || "",
+          lastName: dbStd.last_name || fullName.split(" ").slice(1).join(" "),
+          name: fullName,
+          grade: dbStd.grade || "Class 10",
+          section: dbStd.section || "A",
+          gender: dbStd.gender || "Not specified",
+          dob: dbStd.date_of_birth || "2012-01-01",
+          bloodGroup: dbStd.blood_group || "B+",
+          avatarUrl: dbStd.photo_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+          admissionDate: dbStd.admission_date || "2026-04-01",
+          academicSession: "2026-27",
+          status: dbStd.admission_status === "admitted" ? "active" : (dbStd.admission_status || "active"),
+          phone: dbStd.phone || "",
+          email: dbStd.email || "",
+          parentName: `${dbStd.last_name ? dbStd.last_name + ' Parent' : 'Guardian'}`,
+          parentPhone: dbStd.phone || "",
+          duesINR: 0,
+          attendancePercent: 94.5,
+          organization_id: dbStd.organization_id
+        };
+        ERP_STUDENTS.unshift(mappedStd);
+        idx = 0;
+      }
+    } catch (_) {}
+  }
 
   if (idx === -1) {
     return res.status(404).json({ success: false, message: `Student '${id}' not found in this organization` });
@@ -10632,7 +11329,7 @@ app.patch("/api/erp/students/:id", async (req, res) => {
   if (updates.admissionNo && updates.admissionNo !== ERP_STUDENTS[idx].admissionNo) {
     const dup = ERP_STUDENTS.find(s => 
       s.id !== ERP_STUDENTS[idx].id && 
-      (!s.organization_id || s.organization_id === orgId) && 
+      s.organization_id === orgId && 
       s.admissionNo?.toLowerCase() === updates.admissionNo.toLowerCase()
     );
     if (dup) {
@@ -10647,7 +11344,7 @@ app.patch("/api/erp/students/:id", async (req, res) => {
   if (updates.penNo && updates.penNo !== ERP_STUDENTS[idx].penNo) {
     const dupPen = ERP_STUDENTS.find(s => 
       s.id !== ERP_STUDENTS[idx].id && 
-      (!s.organization_id || s.organization_id === orgId) && 
+      s.organization_id === orgId && 
       s.penNo === updates.penNo
     );
     if (dupPen) {
@@ -10671,6 +11368,30 @@ app.patch("/api/erp/students/:id", async (req, res) => {
   }
 
   ERP_STUDENTS[idx] = updatedStudent;
+
+  // Persist to Supabase PostgreSQL
+  if (supabase) {
+    try {
+      const dbPayload = {};
+      if (updates.firstName) dbPayload.first_name = updates.firstName;
+      if (updates.lastName) dbPayload.last_name = updates.lastName;
+      if (updates.grade) dbPayload.grade = updates.grade;
+      if (updates.section) dbPayload.section = updates.section;
+      if (updates.phone) dbPayload.phone = updates.phone;
+      if (updates.email) dbPayload.email = updates.email;
+      if (updates.status) dbPayload.admission_status = updates.status;
+      dbPayload.updated_at = new Date().toISOString();
+
+      await supabase
+        .from("students")
+        .update(dbPayload)
+        .eq("organization_id", orgId)
+        .or(`id.eq.${id},admission_no.eq.${id}`);
+    } catch (dbErr) {
+      console.warn("[DB] Student update note:", dbErr.message);
+    }
+  }
+
   await recordAuditLog("erp.student_updated", req.user?.email || "admin", "student", updatedStudent.id, req);
 
   res.json({
@@ -10680,16 +11401,46 @@ app.patch("/api/erp/students/:id", async (req, res) => {
   });
 });
 
-// DELETE /api/erp/students/:id - Soft deactivation or hard delete
+// DELETE /api/erp/students/:id - Soft deactivation or hard delete (DB Fallback)
 app.delete("/api/erp/students/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "Organization required" });
+  }
   const { id } = req.params;
   const hard = req.query.hard === "true";
 
-  const idx = ERP_STUDENTS.findIndex(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let idx = ERP_STUDENTS.findIndex(s => 
+    s.organization_id === orgId && 
     (s.id === id || s.admissionNo === id)
   );
+
+  if (idx === -1 && supabase) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      let q = supabase.from("students").select("*").eq("organization_id", orgId);
+      if (isUuid) {
+        q = q.or(`id.eq.${id},admission_no.eq.${id}`);
+      } else {
+        q = q.eq("admission_no", id);
+      }
+      const { data: dbStd } = await q.maybeSingle();
+      if (dbStd) {
+        const fullName = [dbStd.first_name, dbStd.middle_name, dbStd.last_name].filter(Boolean).join(" ") || dbStd.admission_no;
+        const mappedStd = {
+          id: dbStd.id,
+          admissionNo: dbStd.admission_no || "ADM-001",
+          name: fullName,
+          grade: dbStd.grade || "Class 10",
+          section: dbStd.section || "A",
+          status: dbStd.admission_status || "active",
+          organization_id: dbStd.organization_id
+        };
+        ERP_STUDENTS.unshift(mappedStd);
+        idx = 0;
+      }
+    } catch (_) {}
+  }
 
   if (idx === -1) {
     return res.status(404).json({ success: false, message: `Student '${id}' not found` });
@@ -10701,6 +11452,27 @@ app.delete("/api/erp/students/:id", async (req, res) => {
   } else {
     target.status = "inactive";
     target.updated_at = new Date().toISOString();
+  }
+
+  // Persist to Supabase PostgreSQL
+  if (supabase) {
+    try {
+      if (hard) {
+        await supabase
+          .from("students")
+          .delete()
+          .eq("organization_id", orgId)
+          .or(`id.eq.${id},admission_no.eq.${id}`);
+      } else {
+        await supabase
+          .from("students")
+          .update({ admission_status: "inactive", updated_at: new Date().toISOString() })
+          .eq("organization_id", orgId)
+          .or(`id.eq.${id},admission_no.eq.${id}`);
+      }
+    } catch (dbErr) {
+      console.warn("[DB] Student delete note:", dbErr.message);
+    }
   }
 
   await recordAuditLog("erp.student_deactivated", req.user?.email || "admin", "student", target.id, req);
@@ -10724,10 +11496,10 @@ const handleStudentBulkImport = async (req, res) => {
   const validRecords = [];
   const errors = [];
   const seenAdmissionNos = new Set(
-    ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId).map(s => (s.admissionNo || "").toLowerCase())
+    ERP_STUDENTS.filter(s => s.organization_id === orgId).map(s => (s.admissionNo || "").toLowerCase())
   );
   const seenPens = new Set(
-    ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId).map(s => s.penNo).filter(Boolean)
+    ERP_STUDENTS.filter(s => s.organization_id === orgId).map(s => s.penNo).filter(Boolean)
   );
 
   students.forEach((row, index) => {
@@ -10893,8 +11665,11 @@ app.post("/api/erp/students/bulk-import", handleStudentBulkImport);
 
 // 2. Staff & Faculty Endpoints (Production SaaS Grade)
 // GET /api/erp/staff - Multi-field search, filters, sorting, server-side pagination & live KPI summary
-app.get("/api/erp/staff", (req, res) => {
+app.get("/api/erp/staff", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId && !req.user?.isSuperAdmin) {
+    return res.status(403).json({ success: false, message: "Organization required" });
+  }
   const {
     q,
     query,
@@ -10910,8 +11685,45 @@ app.get("/api/erp/staff", (req, res) => {
     limit = 25
   } = req.query;
 
-  // Strict tenant organization isolation
-  let tenantStaff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  // Strict tenant organization isolation & live DB query
+  let tenantStaff = [];
+
+  if (supabase && orgId) {
+    try {
+      const { data: dbStaff, error: dbStaffErr } = await supabase.from("staff").select("*").eq("organization_id", orgId);
+      if (dbStaff && dbStaff.length > 0) {
+        tenantStaff = dbStaff.map(s => {
+          const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+          return {
+            id: s.id,
+            empId: s.employee_code || "FAC-01",
+            firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+            lastName: s.last_name || "",
+            name: fullName,
+            email: s.email || "",
+            phone: s.phone || "",
+            gender: s.gender || "Not specified",
+            role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+            staffType: s.employment_type || "Teacher",
+            department: s.department || "Academics",
+            designation: s.designation || "Faculty",
+            joiningDate: s.joining_date || "2026-04-01",
+            salaryINR: 50000,
+            status: s.is_active ? "active" : "inactive",
+            isActive: s.is_active !== false,
+            organization_id: s.organization_id
+          };
+        });
+      }
+    } catch (e) {
+      console.warn("[Staff DB Fetch Error]:", e.message);
+    }
+  }
+
+  // If DB returned nothing, only seed org b17780e5-3832-4ac6-9aeb-33fd80c5cb0e may use memory seed
+  if (tenantStaff.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    tenantStaff = ERP_STAFF.filter(s => s.organization_id === orgId);
+  }
 
   // Calculate live KPI summary metrics from database
   const today = new Date().toISOString().split("T")[0];
@@ -10923,7 +11735,7 @@ app.get("/api/erp/staff", (req, res) => {
   ).length;
   const nonTeachingCount = totalStaff - teacherCount;
   const onLeaveTodayCount = ERP_STAFF_ATTENDANCE.filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    a.organization_id === orgId && 
     a.attendanceDate === today && 
     a.status === "on_leave"
   ).length;
@@ -11020,7 +11832,7 @@ app.get("/api/erp/staff/export", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { q, query, search, staffType, designation, department, status, gender, format = "csv" } = req.query;
 
-  let filtered = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  let filtered = ERP_STAFF.filter(s => s.organization_id === orgId);
 
   const searchQuery = (search || query || q || "").trim().toLowerCase();
   if (searchQuery) {
@@ -11082,7 +11894,7 @@ app.get("/api/erp/staff/:id/profile", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === id || s.empId === id)
   );
 
@@ -11092,14 +11904,14 @@ app.get("/api/erp/staff/:id/profile", (req, res) => {
 
   // Teacher academic assignments
   const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     a.staffId === staff.id
   );
 
   // Attendance statistics
   const today = new Date().toISOString().split("T")[0];
   const todayAtt = ERP_STAFF_ATTENDANCE.find(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     a.staffId === staff.id && 
     a.attendanceDate === today
   );
@@ -11138,7 +11950,7 @@ app.get("/api/erp/staff/:id/assignments", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === id || s.empId === id)
   );
 
@@ -11147,7 +11959,7 @@ app.get("/api/erp/staff/:id/assignments", (req, res) => {
   }
 
   const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     a.staffId === staff.id
   );
 
@@ -11161,7 +11973,7 @@ app.post("/api/erp/staff/:id/assignments", async (req, res) => {
   const { academicSession = "2026-27", grade, section, subject } = req.body || {};
 
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === id || s.empId === id)
   );
 
@@ -11175,7 +11987,7 @@ app.post("/api/erp/staff/:id/assignments", async (req, res) => {
 
   // Prevent duplicate assignment for this teacher
   const isDuplicate = ERP_TEACHER_ASSIGNMENTS.some(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     a.staffId === staff.id && 
     a.academicSession === academicSession && 
     a.grade.toLowerCase() === grade.toLowerCase() && 
@@ -11218,7 +12030,7 @@ app.delete("/api/erp/staff/:id/assignments/:assignmentId", async (req, res) => {
   const { id, assignmentId } = req.params;
 
   const idx = ERP_TEACHER_ASSIGNMENTS.findIndex(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.staffId === id || a.staffName === id) && 
     a.id === assignmentId
   );
@@ -11242,7 +12054,7 @@ app.get("/api/erp/staff/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === id || s.empId === id)
   );
 
@@ -11284,7 +12096,7 @@ app.post("/api/erp/staff", async (req, res) => {
   // Validate Employee Code and uniqueness within tenant
   const empId = (stf.empId || `FAC-${Math.floor(10 + Math.random() * 90)}`).trim();
   const existingStaff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    s.organization_id === orgId && 
     s.empId?.toLowerCase() === empId.toLowerCase()
   );
   if (existingStaff) {
@@ -11379,23 +12191,48 @@ app.post("/api/erp/staff", async (req, res) => {
 // PATCH /api/erp/staff/:id - Update staff member
 app.patch("/api/erp/staff/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "Organization required" });
+  }
   const { id } = req.params;
   const updates = req.body || {};
 
-  const idx = ERP_STAFF.findIndex(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let idx = ERP_STAFF.findIndex(s => 
+    s.organization_id === orgId && 
     (s.id === id || s.empId === id)
   );
 
-  if (idx === -1) {
+  let targetStaff = idx !== -1 ? ERP_STAFF[idx] : null;
+  if (!targetStaff && supabase && orgId) {
+    try {
+      const { data: dbS } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${id},employee_code.eq.${id}`).maybeSingle();
+      if (dbS) {
+        targetStaff = {
+          id: dbS.id,
+          empId: dbS.employee_code,
+          name: [dbS.first_name, dbS.last_name].filter(Boolean).join(" "),
+          firstName: dbS.first_name,
+          lastName: dbS.last_name,
+          designation: dbS.designation,
+          department: dbS.department,
+          phone: dbS.phone,
+          email: dbS.email,
+          status: dbS.is_active ? "active" : "inactive",
+          organization_id: orgId
+        };
+      }
+    } catch (_) {}
+  }
+
+  if (!targetStaff) {
     return res.status(404).json({ success: false, message: `Staff member '${id}' not found in this organization` });
   }
 
   // Check unique empId if changed
-  if (updates.empId && updates.empId !== ERP_STAFF[idx].empId) {
+  if (updates.empId && updates.empId !== targetStaff.empId) {
     const dup = ERP_STAFF.find(s => 
-      s.id !== ERP_STAFF[idx].id && 
-      (!s.organization_id || s.organization_id === orgId) && 
+      s.id !== targetStaff.id && 
+      s.organization_id === orgId && 
       s.empId?.toLowerCase() === updates.empId.toLowerCase()
     );
     if (dup) {
@@ -11407,7 +12244,7 @@ app.patch("/api/erp/staff/:id", async (req, res) => {
   }
 
   const updatedStaff = {
-    ...ERP_STAFF[idx],
+    ...targetStaff,
     ...updates,
     updated_at: new Date().toISOString()
   };
@@ -11418,7 +12255,31 @@ app.patch("/api/erp/staff/:id", async (req, res) => {
     updatedStaff.name = `${first} ${last}`.trim();
   }
 
-  ERP_STAFF[idx] = updatedStaff;
+  if (idx !== -1) {
+    ERP_STAFF[idx] = updatedStaff;
+  } else {
+    ERP_STAFF.push(updatedStaff);
+  }
+
+  // Persist to Supabase PostgreSQL staff table
+  if (supabase) {
+    try {
+      await supabase
+        .from("staff")
+        .update({
+          first_name: updates.firstName,
+          last_name: updates.lastName,
+          designation: updates.designation,
+          department: updates.department,
+          phone: updates.phone,
+          email: updates.email,
+          updated_at: new Date().toISOString()
+        })
+        .eq("organization_id", orgId)
+        .or(`id.eq.${id},employee_code.eq.${id}`);
+    } catch (_) {}
+  }
+
   await recordAuditLog("erp.staff_updated", req.user?.email || "admin", "staff", updatedStaff.id, req);
 
   res.json({
@@ -11431,10 +12292,13 @@ app.patch("/api/erp/staff/:id", async (req, res) => {
 // POST /api/erp/staff/:id/deactivate - Soft deactivate preserving historical records
 app.post("/api/erp/staff/:id/deactivate", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "Organization required" });
+  }
   const { id } = req.params;
 
   const idx = ERP_STAFF.findIndex(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    s.organization_id === orgId && 
     (s.id === id || s.empId === id)
   );
 
@@ -11446,6 +12310,16 @@ app.post("/api/erp/staff/:id/deactivate", async (req, res) => {
   target.status = "inactive";
   target.isActive = false;
   target.updated_at = new Date().toISOString();
+
+  if (supabase) {
+    try {
+      await supabase
+        .from("staff")
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq("organization_id", orgId)
+        .or(`id.eq.${id},employee_code.eq.${id}`);
+    } catch (_) {}
+  }
 
   await recordAuditLog("erp.staff_deactivated", req.user?.email || "admin", "staff", target.id, req);
 
@@ -11459,25 +12333,59 @@ app.post("/api/erp/staff/:id/deactivate", async (req, res) => {
 // DELETE /api/erp/staff/:id - Soft deactivation by default or hard delete
 app.delete("/api/erp/staff/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(403).json({ success: false, code: "ORGANIZATION_REQUIRED", message: "Organization required" });
+  }
   const { id } = req.params;
   const hard = req.query.hard === "true";
 
-  const idx = ERP_STAFF.findIndex(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+  let idx = ERP_STAFF.findIndex(s => 
+    s.organization_id === orgId && 
     (s.id === id || s.empId === id)
   );
 
-  if (idx === -1) {
-    return res.status(404).json({ success: false, message: `Staff member '${id}' not found` });
+  let target = idx !== -1 ? ERP_STAFF[idx] : null;
+  if (!target && supabase && orgId) {
+    try {
+      const { data: dbS } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${id},employee_code.eq.${id}`).maybeSingle();
+      if (dbS) {
+        target = {
+          id: dbS.id,
+          empId: dbS.employee_code,
+          name: [dbS.first_name, dbS.last_name].filter(Boolean).join(" "),
+          organization_id: orgId
+        };
+      }
+    } catch (_) {}
   }
 
-  const target = ERP_STAFF[idx];
+  if (!target) {
+    return res.status(404).json({ success: false, message: `Staff member '${id}' not found` });
+  }
   if (hard) {
     ERP_STAFF.splice(idx, 1);
   } else {
     target.status = "inactive";
     target.isActive = false;
     target.updated_at = new Date().toISOString();
+  }
+
+  if (supabase) {
+    try {
+      if (hard) {
+        await supabase
+          .from("staff")
+          .delete()
+          .eq("organization_id", orgId)
+          .or(`id.eq.${id},employee_code.eq.${id}`);
+      } else {
+        await supabase
+          .from("staff")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("organization_id", orgId)
+          .or(`id.eq.${id},employee_code.eq.${id}`);
+      }
+    } catch (_) {}
   }
 
   await recordAuditLog("erp.staff_deactivated", req.user?.email || "admin", "staff", target.id, req);
@@ -11501,7 +12409,7 @@ app.post("/api/erp/staff/import", async (req, res) => {
   const validRecords = [];
   const errors = [];
   const seenEmpIds = new Set(
-    ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId).map(s => (s.empId || "").toLowerCase())
+    ERP_STAFF.filter(s => s.organization_id === orgId).map(s => (s.empId || "").toLowerCase())
   );
 
   staff.forEach((row, index) => {
@@ -11595,11 +12503,11 @@ app.get("/api/erp/attendance/dashboard", (req, res) => {
   const date = (req.query.date || new Date().toISOString().split("T")[0]).trim();
 
   // 1. Students in this org
-  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   const totalStudents = orgStudents.length;
 
   const todayStudentAtt = ERP_ATTENDANCE.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (a.attendanceDate === date || a.date === date)
   );
 
@@ -11612,11 +12520,11 @@ app.get("/api/erp/attendance/dashboard", (req, res) => {
   const studentRate = totalStudents > 0 ? Number(((presentStudents + lateStudents) / totalStudents * 100).toFixed(1)) : 100.0;
 
   // 2. Staff in this org
-  const orgStaff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  const orgStaff = ERP_STAFF.filter(s => s.organization_id === orgId);
   const totalStaff = orgStaff.length;
 
   const todayStaffAtt = ERP_STAFF_ATTENDANCE.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     a.attendanceDate === date
   );
 
@@ -11676,33 +12584,82 @@ app.get("/api/erp/attendance/dashboard", (req, res) => {
   });
 });
 
-// 3b. GET /api/erp/attendance/student - Section Roll-Call Register
-app.get("/api/erp/attendance/student", (req, res) => {
+// 3b. GET /api/erp/attendance/student - Section Roll-Call Register (PostgreSQL Backed)
+app.get("/api/erp/attendance/student", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { date = new Date().toISOString().split("T")[0], grade = "Class 10", section = "A", session = "2026-27" } = req.query;
 
-  const matchingStudents = ERP_STUDENTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
-    s.grade.toLowerCase() === grade.toLowerCase() &&
+  let matchingStudents = ERP_STUDENTS.filter(s =>
+    (s.organization_id === orgId) &&
+    s.grade && s.grade.toLowerCase() === grade.toLowerCase() &&
     (s.section || "A").toLowerCase() === section.toLowerCase() &&
     s.status !== "inactive" && s.status !== "withdrawn"
   );
 
+  const attMap = new Map();
+
+  if (supabase && orgId) {
+    try {
+      const { data: dbStds } = await supabase
+        .from("students")
+        .select("*")
+        .eq("organization_id", orgId);
+      
+      if (dbStds && dbStds.length > 0) {
+        matchingStudents = dbStds.map(s => {
+          const fullName = [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ") || s.admission_no;
+          return {
+            id: s.id,
+            admissionNo: s.admission_no,
+            rollNo: s.pen_no || s.admission_no,
+            name: fullName,
+            grade: s.grade || grade,
+            section: s.section || section,
+            organization_id: s.organization_id
+          };
+        });
+      }
+
+      const { data: dbAtt } = await supabase
+        .from("student_attendance")
+        .select("*")
+        .eq("organization_id", orgId)
+        .eq("attendance_date", date);
+
+      if (dbAtt && dbAtt.length > 0) {
+        dbAtt.forEach(a => {
+          attMap.set(a.student_id, {
+            id: a.id,
+            status: a.status,
+            remarks: a.remarks || "",
+            marked_by: a.marked_by,
+            attendanceDate: a.attendance_date,
+            date: a.attendance_date
+          });
+        });
+      }
+    } catch (e) {
+      console.warn("[Attendance DB Read Error]:", e.message);
+    }
+  }
+
   const existingAtt = ERP_ATTENDANCE.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (a.attendanceDate === date || a.date === date) &&
-    a.grade.toLowerCase() === grade.toLowerCase() &&
+    a.grade && a.grade.toLowerCase() === grade.toLowerCase() &&
     (a.section || "A").toLowerCase() === section.toLowerCase()
   );
 
-  const isAlreadyMarked = existingAtt.length > 0;
-  const markedBy = existingAtt.length > 0 ? existingAtt[0].marked_by : null;
-  const markedAt = existingAtt.length > 0 ? existingAtt[0].updated_at || existingAtt[0].created_at : null;
-
-  const attMap = new Map();
   existingAtt.forEach(a => {
-    attMap.set(a.studentId || a.student_id, a);
+    if (!attMap.has(a.studentId || a.student_id)) {
+      attMap.set(a.studentId || a.student_id, a);
+    }
   });
+
+  const isAlreadyMarked = attMap.size > 0;
+  const firstAtt = Array.from(attMap.values())[0];
+  const markedBy = firstAtt?.marked_by || null;
+  const markedAt = firstAtt?.updated_at || firstAtt?.created_at || null;
 
   const records = matchingStudents.map(std => {
     const existing = attMap.get(std.id);
@@ -11735,7 +12692,7 @@ app.get("/api/erp/attendance/student", (req, res) => {
   });
 });
 
-// 3c. POST /api/erp/attendance/student/bulk - High-Speed Bulk Attendance Submission with RBAC & Duplicate Prevention
+// 3c. POST /api/erp/attendance/student/bulk - High-Speed Bulk Attendance Submission with PostgreSQL Persistence
 app.post("/api/erp/attendance/student/bulk", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { date, grade, section, session = "2026-27", records } = req.body || {};
@@ -11763,7 +12720,7 @@ app.post("/api/erp/attendance/student/bulk", async (req, res) => {
 
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned = ERP_TEACHER_ASSIGNMENTS.some(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       a.staffId === callerStaffId &&
       a.grade.toLowerCase() === grade.toLowerCase() &&
       a.section.toLowerCase() === section.toLowerCase()
@@ -11790,9 +12747,8 @@ app.post("/api/erp/attendance/student/bulk", async (req, res) => {
     const status = item.status || "present";
     const remarks = item.remarks || "";
 
-    // Uniqueness check: (organization_id, student_id, attendance_date)
     const existingIdx = ERP_ATTENDANCE.findIndex(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       (a.studentId === studentId || a.student_id === studentId) &&
       (a.attendanceDate === date || a.date === date)
     );
@@ -11838,6 +12794,50 @@ app.post("/api/erp/attendance/student/bulk", async (req, res) => {
     }
   }
 
+  // DB Persistence to public.student_attendance
+  if (supabase && orgId) {
+    try {
+      const sessId = await resolveOrCreateAcademicSession(orgId, session);
+      const { data: dbStds } = await supabase.from("students").select("id, admission_no").eq("organization_id", orgId);
+      const stdMap = new Map();
+      (dbStds || []).forEach(s => {
+        stdMap.set(s.id, s.id);
+        if (s.admission_no) stdMap.set(s.admission_no.toLowerCase(), s.id);
+      });
+
+      const dbRows = [];
+      for (const item of records) {
+        const studentId = item.studentId || item.student_id;
+        const matchedStd = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+        const effectiveAdmNo = item.admissionNo || matchedStd?.admissionNo;
+        const dbStdId = (studentId ? stdMap.get(studentId) : null) || (effectiveAdmNo ? stdMap.get(effectiveAdmNo.toLowerCase()) : null) || (typeof studentId === "string" && studentId.length === 36 ? studentId : null) || matchedStd?.db_id;
+        if (dbStdId && sessId) {
+          let sVal = "present";
+          const rawStatus = (item.status || "present").toLowerCase();
+          if (rawStatus === "absent") sVal = "absent";
+          else if (rawStatus === "late") sVal = "late";
+          else if (rawStatus.includes("half")) sVal = "half_day";
+          else if (rawStatus === "leave" || rawStatus === "excused") sVal = "excused";
+
+          dbRows.push({
+            organization_id: orgId,
+            student_id: dbStdId,
+            academic_session_id: sessId,
+            attendance_date: date,
+            status: sVal,
+            remarks: item.remarks || null
+          });
+        }
+      }
+
+      if (dbRows.length > 0) {
+        await supabase.from("student_attendance").upsert(dbRows, { onConflict: "student_id, attendance_date" });
+      }
+    } catch (dbErr) {
+      console.warn("[Attendance DB Insert Error]:", dbErr.message);
+    }
+  }
+
   await recordAuditLog(
     "erp.attendance_saved",
     req.user?.email || markedBy,
@@ -11862,7 +12862,7 @@ app.patch("/api/erp/attendance/student/:id", async (req, res) => {
   const { status, remarks } = req.body || {};
 
   const rec = ERP_ATTENDANCE.find(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (a.id === id || a.studentId === id || a.student_id === id)
   );
 
@@ -11904,7 +12904,7 @@ app.get("/api/erp/attendance/student/monthly", (req, res) => {
   const monthName = monthNames[currentMonth - 1] || "September";
 
   const classStudents = ERP_STUDENTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     s.grade.toLowerCase() === grade.toLowerCase() &&
     (s.section || "A").toLowerCase() === section.toLowerCase() &&
     s.status !== "inactive" && s.status !== "withdrawn"
@@ -11912,7 +12912,7 @@ app.get("/api/erp/attendance/student/monthly", (req, res) => {
 
   const monthPrefix = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
   const monthAtt = ERP_ATTENDANCE.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     a.grade.toLowerCase() === grade.toLowerCase() &&
     (a.section || "A").toLowerCase() === section.toLowerCase() &&
     (a.attendanceDate || a.date || "").startsWith(monthPrefix)
@@ -11979,8 +12979,8 @@ app.get("/api/erp/attendance/student/reports", (req, res) => {
   const { type = "daily", threshold = 75, grade, section, startDate, endDate } = req.query;
   const cutoff = parseFloat(threshold) || 75.0;
 
-  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
-  const orgAttendance = ERP_ATTENDANCE.filter(a => !a.organization_id || a.organization_id === orgId);
+  const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+  const orgAttendance = ERP_ATTENDANCE.filter(a => a.organization_id === orgId);
 
   if (type === "low_attendance") {
     const lowStudents = [];
@@ -12055,7 +13055,7 @@ async function resolveOrCreateStaff(orgId, staffIdentifier) {
   const targetId = typeof staffIdentifier === "string" ? staffIdentifier : (staffIdentifier.id || staffIdentifier.staffId || staffIdentifier.empId);
   
   let memoryStaff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === targetId || s.empId === targetId || s.db_id === targetId || (typeof staffIdentifier === "object" && s.email && s.email === staffIdentifier.email))
   );
 
@@ -12139,7 +13139,7 @@ async function recordStaffAttendanceDb(orgId, staffId, date, status, remarks, ma
   let dbStaffId = null;
 
   let memoryStaff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === staffId || s.empId === staffId || s.db_id === staffId)
   );
 
@@ -12187,7 +13187,7 @@ async function recordStaffLeaveRequestDb(orgId, staffId, fromDate, toDate, reaso
   let dbStaffId = null;
 
   let memoryStaff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === staffId || s.empId === staffId || s.db_id === staffId)
   );
 
@@ -12422,8 +13422,8 @@ app.get("/api/erp/attendance/staff", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const date = (req.query.date || new Date().toISOString().split("T")[0]).trim();
 
-  const staffList = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
-  const existingAtt = ERP_STAFF_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && a.attendanceDate === date);
+  const staffList = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.status !== "resigned");
+  const existingAtt = ERP_STAFF_ATTENDANCE.filter(a => (a.organization_id === orgId) && a.attendanceDate === date);
 
   const attMap = new Map();
   existingAtt.forEach(a => attMap.set(a.staffId, a));
@@ -12471,7 +13471,7 @@ app.post("/api/erp/attendance/staff/bulk", async (req, res) => {
     if (!staffId) continue;
 
     const existing = ERP_STAFF_ATTENDANCE.find(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       a.staffId === staffId &&
       a.attendanceDate === date
     );
@@ -12516,7 +13516,7 @@ app.patch("/api/erp/attendance/staff/:id", async (req, res) => {
   const { status, remarks } = req.body || {};
 
   const rec = ERP_STAFF_ATTENDANCE.find(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (a.id === id || a.staffId === id)
   );
 
@@ -12540,13 +13540,13 @@ app.get("/api/erp/attendance/staff/summary", async (req, res) => {
   const month = (req.query.month || new Date().toISOString().slice(0, 7)).trim(); // YYYY-MM
   const staffId = req.query.staffId ? req.query.staffId.trim() : null;
 
-  let tenantStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  let tenantStaff = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.status !== "resigned");
   if (staffId) {
     tenantStaff = tenantStaff.filter(s => s.id === staffId || s.empId === staffId || s.db_id === staffId);
   }
 
   const monthAtt = ERP_STAFF_ATTENDANCE.filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.attendanceDate && a.attendanceDate.startsWith(month))
   );
 
@@ -12606,7 +13606,7 @@ app.get("/api/erp/hr/leaves", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status, staffId } = req.query;
 
-  let leaves = ERP_STAFF_LEAVES.filter(l => !l.organization_id || l.organization_id === orgId);
+  let leaves = ERP_STAFF_LEAVES.filter(l => l.organization_id === orgId);
 
   // Sync from Supabase public.leave_requests
   if (supabase) {
@@ -12662,7 +13662,7 @@ app.post("/api/erp/hr/leaves", async (req, res) => {
   }
 
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === staffId || s.empId === staffId || s.db_id === staffId)
   );
 
@@ -12710,7 +13710,7 @@ app.patch("/api/erp/hr/leaves/:id/status", async (req, res) => {
   }
 
   let leave = ERP_STAFF_LEAVES.find(l => 
-    (!l.organization_id || l.organization_id === orgId) && 
+    (l.organization_id === orgId) && 
     (l.id === id || l.db_id === id)
   );
 
@@ -12730,7 +13730,7 @@ app.patch("/api/erp/hr/leaves/:id/status", async (req, res) => {
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dateStr = d.toISOString().slice(0, 10);
       const existing = ERP_STAFF_ATTENDANCE.find(a => 
-        (!a.organization_id || a.organization_id === orgId) && 
+        (a.organization_id === orgId) && 
         (a.staffId === leave.staffId || a.staffId === leave.empId) && 
         a.attendanceDate === dateStr
       );
@@ -12782,35 +13782,70 @@ app.patch("/api/erp/hr/leaves/:id/status", async (req, res) => {
   });
 });
 
-// 3j. GET & POST /api/erp/attendance/settings - Attendance Configuration & Cutoffs
-app.get("/api/erp/attendance/settings", (req, res) => {
-  res.json({ success: true, settings: ERP_ATTENDANCE_SETTINGS });
+// 3j. GET & POST /api/erp/attendance/settings - Attendance Configuration & Cutoffs (Tenant Scoped & DB Persisted)
+app.get("/api/erp/attendance/settings", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const settings = await getTenantAttendanceSettings(orgId);
+  res.json({ success: true, settings });
 });
 
 app.post("/api/erp/attendance/settings", async (req, res) => {
-  const { lowAttendanceThreshold, allowFutureDates, defaultStatus } = req.body || {};
-  if (lowAttendanceThreshold !== undefined) ERP_ATTENDANCE_SETTINGS.lowAttendanceThreshold = parseFloat(lowAttendanceThreshold);
-  if (allowFutureDates !== undefined) ERP_ATTENDANCE_SETTINGS.allowFutureDates = Boolean(allowFutureDates);
-  if (defaultStatus) ERP_ATTENDANCE_SETTINGS.defaultStatus = defaultStatus;
+  const orgId = resolveTenantOrgId(req);
+  const updates = { ...(req.body || {}) };
+  if (updates.lowAttendanceThreshold !== undefined) updates.lowAttendanceThreshold = parseFloat(updates.lowAttendanceThreshold);
+  if (updates.allowFutureDates !== undefined) updates.allowFutureDates = Boolean(updates.allowFutureDates);
+  if (updates.minAttendancePercent !== undefined) updates.minAttendancePercent = parseFloat(updates.minAttendancePercent);
 
+  const settings = await updateTenantAttendanceSettings(orgId, updates);
   await recordAuditLog("erp.attendance_settings_updated", req.user?.email || "admin", "settings", "attendance", req);
-  res.json({ success: true, message: "Attendance settings updated", settings: ERP_ATTENDANCE_SETTINGS });
+  res.json({ success: true, message: "Attendance settings updated", settings });
 });
 
-// 3k. Legacy Compatibility Route: GET & POST /api/erp/attendance
-app.get("/api/erp/attendance", (req, res) => {
+// 3k. Legacy Compatibility Route: GET & POST /api/erp/attendance (PostgreSQL Backed)
+app.get("/api/erp/attendance", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
   const { grade, date, session, organization_id } = req.query;
-  let list = ERP_ATTENDANCE;
+  const targetOrg = orgId || organization_id;
+  if (!targetOrg) return res.status(403).json({ success: false, message: "Organization required" });
+
+  let list = ERP_ATTENDANCE.filter(a => a.organization_id === targetOrg);
+
+  if (supabase && targetOrg) {
+    try {
+      let query = supabase.from("student_attendance").select("*, students(id, admission_no, first_name, last_name, grade, section)").eq("organization_id", targetOrg);
+      if (date) query = query.eq("attendance_date", date);
+      const { data: dbAtt } = await query;
+      if (dbAtt && dbAtt.length > 0) {
+        list = dbAtt.map(a => ({
+          id: a.id,
+          studentId: a.student_id,
+          admissionNo: a.students?.admission_no || "",
+          studentName: a.students ? `${a.students.first_name || ""} ${a.students.last_name || ""}`.trim() : "Student",
+          grade: a.students?.grade || grade || "Class 10",
+          section: a.students?.section || "A",
+          attendanceDate: a.attendance_date,
+          date: a.attendance_date,
+          status: a.status,
+          remarks: a.remarks || "",
+          organization_id: a.organization_id
+        }));
+      }
+    } catch (_) {}
+  }
+
   if (date) list = list.filter(a => a.date === date || a.attendanceDate === date);
   if (grade) list = list.filter(a => a.grade === grade);
   if (session) list = list.filter(a => !a.academicSession || a.academicSession === session);
-  if (organization_id) list = list.filter(a => !a.organization_id || a.organization_id === organization_id);
+
   res.json({ success: true, attendance: list });
 });
 
-app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], (req, res) => {
+app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { records, date, grade, section, session, organization_id } = req.body;
+  const targetOrg = orgId || organization_id;
+  if (!targetOrg) return res.status(403).json({ success: false, message: "Organization required" });
+
   if (Array.isArray(records)) {
     const stampedRecords = records.map(r => ({
       ...r,
@@ -12820,10 +13855,48 @@ app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], (req, res) => {
       attendanceDate: r.date || date || r.attendanceDate || new Date().toISOString().split("T")[0],
       date: r.date || date || r.attendanceDate || new Date().toISOString().split("T")[0],
       academicSession: r.academicSession || session || "2026-27",
-      organization_id: orgId || r.organization_id || organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+      organization_id: targetOrg,
       recorded_at: new Date().toISOString()
     }));
     ERP_ATTENDANCE.push(...stampedRecords);
+
+    if (supabase && targetOrg) {
+      try {
+        const sessId = await resolveOrCreateAcademicSession(targetOrg, session || "2026-27");
+        const { data: dbStds } = await supabase.from("students").select("id, admission_no").eq("organization_id", targetOrg);
+        const stdMap = new Map();
+        (dbStds || []).forEach(s => {
+          stdMap.set(s.id, s.id);
+          if (s.admission_no) stdMap.set(s.admission_no.toLowerCase(), s.id);
+        });
+
+        const dbRows = [];
+        for (const item of stampedRecords) {
+          const sId = item.studentId || item.id;
+          const dbStdId = stdMap.get(sId) || stdMap.get(item.admissionNo?.toLowerCase()) || (typeof sId === "string" && sId.length === 36 ? sId : null);
+          if (dbStdId && sessId) {
+            let sVal = "present";
+            const rawStatus = (item.status || "present").toLowerCase();
+            if (rawStatus === "absent") sVal = "absent";
+            else if (rawStatus === "late") sVal = "late";
+            else if (rawStatus.includes("half")) sVal = "half_day";
+            else if (rawStatus === "leave" || rawStatus === "excused") sVal = "excused";
+
+            dbRows.push({
+              organization_id: targetOrg,
+              student_id: dbStdId,
+              academic_session_id: sessId,
+              attendance_date: item.attendanceDate,
+              status: sVal,
+              remarks: item.remarks || null
+            });
+          }
+        }
+        if (dbRows.length > 0) {
+          await supabase.from("student_attendance").upsert(dbRows, { onConflict: "student_id, attendance_date" });
+        }
+      } catch (_) {}
+    }
   }
   res.json({ success: true, message: "Attendance registered successfully", count: records?.length || 0 });
 });
@@ -12854,11 +13927,11 @@ app.get("/api/erp/dashboard", (req, res) => {
   };
 
   // 2. Filter base data for this tenant
-  let tenantStudents = ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId));
-  let tenantStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId));
-  let tenantAssignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (!a.organization_id || a.organization_id === orgId));
-  let tenantAttendance = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId));
-  let tenantStaffAttendance = ERP_STAFF_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId));
+  let tenantStudents = ERP_STUDENTS.filter(s => (s.organization_id === orgId));
+  let tenantStaff = ERP_STAFF.filter(s => (s.organization_id === orgId));
+  let tenantAssignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (a.organization_id === orgId));
+  let tenantAttendance = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId));
+  let tenantStaffAttendance = ERP_STAFF_ATTENDANCE.filter(a => (a.organization_id === orgId));
 
   // Role Adaptation: Teacher filtering
   let assignedClasses = [];
@@ -13126,7 +14199,7 @@ app.get("/api/erp/dashboard", (req, res) => {
     });
 
   // Real Admissions KPIs
-  const tenantApps = ERP_ADMISSIONS.filter(a => (!a.organization_id || a.organization_id === orgId) && (!selectedSession || a.academicSession === selectedSession));
+  const tenantApps = ERP_ADMISSIONS.filter(a => (a.organization_id === orgId) && (!selectedSession || a.academicSession === selectedSession));
   const admissionsKPI = {
     totalApplications: tenantApps.length,
     newCount: tenantApps.filter(a => a.status === "new").length,
@@ -13390,15 +14463,15 @@ app.get("/api/erp/staff/:id/effective-access", (req, res) => {
 app.get("/api/erp/academics/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const tenantSessions = ERP_ACADEMIC_SESSIONS
-    .filter(s => !s.organization_id || s.organization_id === orgId)
+    .filter(s => s.organization_id === orgId)
     .map(s => ({ ...s, name: s.name || s.sessionName, sessionName: s.sessionName || s.name }));
   const currentSession = tenantSessions.find(s => s.isCurrent) || tenantSessions.find(s => s.status === "active") || tenantSessions[0] || { name: "2026-27", sessionName: "2026-27" };
-  const tenantClasses = ERP_CLASSES.filter(c => !c.organization_id || c.organization_id === orgId);
-  const tenantSections = ERP_SECTIONS.filter(sec => !sec.organization_id || sec.organization_id === orgId);
-  const tenantSubjects = ERP_SUBJECTS.filter(sub => !sub.organization_id || sub.organization_id === orgId);
-  const tenantMappings = ERP_SECTION_SUBJECTS.filter(m => !m.organization_id || m.organization_id === orgId);
-  const tenantHomework = ERP_HOMEWORK.filter(h => !h.organization_id || h.organization_id === orgId);
-  const tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const tenantClasses = ERP_CLASSES.filter(c => c.organization_id === orgId);
+  const tenantSections = ERP_SECTIONS.filter(sec => sec.organization_id === orgId);
+  const tenantSubjects = ERP_SUBJECTS.filter(sub => sub.organization_id === orgId);
+  const tenantMappings = ERP_SECTION_SUBJECTS.filter(m => m.organization_id === orgId);
+  const tenantHomework = ERP_HOMEWORK.filter(h => h.organization_id === orgId);
+  const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
 
   const sectionsWithCounts = tenantSections.map(sec => {
     const studentCount = tenantStudents.filter(s => 
@@ -13445,7 +14518,7 @@ app.get("/api/erp/academics/overview", (req, res) => {
 app.get(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const sessions = ERP_ACADEMIC_SESSIONS
-    .filter(s => !s.organization_id || s.organization_id === orgId)
+    .filter(s => s.organization_id === orgId)
     .map(s => ({ ...s, name: s.name || s.sessionName, sessionName: s.sessionName || s.name }));
   res.json({ success: true, sessions });
 });
@@ -13464,7 +14537,7 @@ app.post(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (r
   }
 
   const duplicate = ERP_ACADEMIC_SESSIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.name || s.sessionName || "").toLowerCase() === effectiveName.toLowerCase()
   );
   if (duplicate) {
@@ -13473,7 +14546,7 @@ app.post(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (r
 
   if (isCurrent) {
     ERP_ACADEMIC_SESSIONS.forEach(s => {
-      if (!s.organization_id || s.organization_id === orgId) {
+      if (s.organization_id === orgId) {
         s.isCurrent = false;
         if (s.status === "active") s.status = "closed";
       }
@@ -13504,7 +14577,7 @@ app.patch("/api/erp/academics/sessions/:id", async (req, res) => {
   const { name, sessionName, startDate, endDate, status, isCurrent } = req.body;
 
   const session = ERP_ACADEMIC_SESSIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === id
+    (s.organization_id === orgId) && s.id === id
   );
   if (!session) {
     return res.status(404).json({ success: false, message: "Academic session not found" });
@@ -13516,7 +14589,7 @@ app.patch("/api/erp/academics/sessions/:id", async (req, res) => {
 
   if (isCurrent === true) {
     ERP_ACADEMIC_SESSIONS.forEach(s => {
-      if (!s.organization_id || s.organization_id === orgId) {
+      if (s.organization_id === orgId) {
         s.isCurrent = false;
       }
     });
@@ -13543,14 +14616,14 @@ app.post("/api/erp/academics/sessions/:id/activate", async (req, res) => {
   const { id } = req.params;
 
   const session = ERP_ACADEMIC_SESSIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === id
+    (s.organization_id === orgId) && s.id === id
   );
   if (!session) {
     return res.status(404).json({ success: false, message: "Academic session not found" });
   }
 
   ERP_ACADEMIC_SESSIONS.forEach(s => {
-    if (!s.organization_id || s.organization_id === orgId) {
+    if (s.organization_id === orgId) {
       s.isCurrent = false;
       if (s.id !== id && s.status === "active") {
         s.status = "closed";
@@ -13566,28 +14639,73 @@ app.post("/api/erp/academics/sessions/:id/activate", async (req, res) => {
   res.json({ success: true, message: `Academic session '${session.name || session.sessionName}' is now active`, session: { ...session, name: session.name || session.sessionName, sessionName: session.sessionName || session.name } });
 });
 
-// 4c. Academic Classes Endpoints
-app.get(["/api/erp/academics/classes", "/api/erp/classes"], (req, res) => {
+// 4c. Academic Classes Endpoints (PostgreSQL Backed)
+app.get(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const classes = ERP_CLASSES.filter(c => !c.organization_id || c.organization_id === orgId);
-  const tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
-  const tenantSections = ERP_SECTIONS.filter(s => !s.organization_id || s.organization_id === orgId);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
 
-  const enrichedClasses = classes.map(c => {
-    const classSections = tenantSections.filter(sec => sec.grade.toLowerCase() === c.grade.toLowerCase());
-    const totalStudents = tenantStudents.filter(s => s.grade.toLowerCase() === c.grade.toLowerCase() && s.status === "active").length;
-    return {
-      ...c,
-      sectionsCount: classSections.length,
-      studentCount: totalStudents
-    };
-  }).sort((a, b) => (a.order || 0) - (b.order || 0));
+  let classes = [];
+  if (supabase && orgId) {
+    try {
+      const { data: dbClasses } = await supabase
+        .from("classes")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("display_order", { ascending: true });
 
-  res.json({ success: true, classes: enrichedClasses });
+      if (dbClasses && dbClasses.length > 0) {
+        const { data: dbSecs } = await supabase
+          .from("sections")
+          .select("*")
+          .eq("organization_id", orgId);
+        
+        const tenantSecs = dbSecs || [];
+        const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+
+        classes = dbClasses.map(c => {
+          const classSections = tenantSecs.filter(sec => sec.class_id === c.id || (sec.name && c.name && sec.grade?.toLowerCase() === c.name.toLowerCase()));
+          const totalStudents = tenantStudents.filter(s => s.grade && s.grade.toLowerCase() === c.name.toLowerCase() && s.status === "active").length;
+          return {
+            id: c.id,
+            grade: c.name,
+            name: c.name,
+            code: c.code || `CLS-${c.display_order || 1}`,
+            order: c.display_order,
+            wing: c.code || "Secondary Wing",
+            status: "active",
+            organization_id: c.organization_id,
+            sectionsCount: classSections.length,
+            studentCount: totalStudents
+          };
+        });
+      }
+    } catch (e) {
+      console.warn("[Classes DB Fetch Error]:", e.message);
+    }
+  }
+
+  // If DB returned nothing, only seed org b17780e5-3832-4ac6-9aeb-33fd80c5cb0e may use memory seed
+  if (classes.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    const memClasses = ERP_CLASSES.filter(c => c.organization_id === orgId);
+    const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    const tenantSections = ERP_SECTIONS.filter(s => s.organization_id === orgId);
+    classes = memClasses.map(c => {
+      const classSections = tenantSections.filter(sec => sec.grade.toLowerCase() === c.grade.toLowerCase());
+      const totalStudents = tenantStudents.filter(s => s.grade.toLowerCase() === c.grade.toLowerCase() && s.status === "active").length;
+      return {
+        ...c,
+        sectionsCount: classSections.length,
+        studentCount: totalStudents
+      };
+    }).sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
+
+  res.json({ success: true, classes });
 });
 
 app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { grade, name, section, roomNumber, wing, order, status = "active" } = req.body;
   const effectiveGrade = (grade || name || "").trim();
 
@@ -13595,30 +14713,68 @@ app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) =>
     return res.status(400).json({ success: false, message: "Grade / Class name is required" });
   }
 
-  let existing = ERP_CLASSES.find(c => 
-    (!c.organization_id || c.organization_id === orgId) && 
-    c.grade.toLowerCase() === effectiveGrade.toLowerCase()
-  );
+  const numOrder = order !== undefined ? parseInt(order, 10) : parseInt(effectiveGrade.replace(/\D/g, "") || "1", 10);
+  let newClass = null;
 
-  let newClass = existing;
-  if (!existing) {
-    const numOrder = order !== undefined ? parseInt(order, 10) : parseInt(effectiveGrade.replace(/\D/g, "") || "1", 10);
+  if (supabase && orgId) {
+    try {
+      const { data: dbCls, error: clsErr } = await supabase
+        .from("classes")
+        .upsert([{
+          organization_id: orgId,
+          name: effectiveGrade,
+          code: wing || `CLS-${numOrder}`,
+          display_order: numOrder
+        }], { onConflict: "organization_id, name" })
+        .select()
+        .maybeSingle();
+
+      if (dbCls) {
+        newClass = {
+          id: dbCls.id,
+          grade: dbCls.name,
+          name: dbCls.name,
+          order: dbCls.display_order,
+          wing: dbCls.code || wing || "Secondary Wing",
+          status,
+          organization_id: orgId
+        };
+      }
+    } catch (e) {
+      console.warn("[Classes DB Insert Error]:", e.message);
+    }
+  }
+
+  if (!newClass) {
     newClass = {
       id: `cls-${Date.now()}`,
       grade: effectiveGrade,
+      name: effectiveGrade,
       order: numOrder,
       wing: wing || "Secondary Wing",
       status,
       organization_id: orgId
     };
-    ERP_CLASSES.push(newClass);
-    await recordAuditLog("erp.class_created", req.user?.email || "admin", "academic_class", newClass.id, req);
   }
+
+  const exIdx = ERP_CLASSES.findIndex(c => (c.organization_id === orgId) && c.grade.toLowerCase() === effectiveGrade.toLowerCase());
+  if (exIdx !== -1) ERP_CLASSES[exIdx] = newClass;
+  else ERP_CLASSES.push(newClass);
 
   if (section) {
     const secName = section.trim().toUpperCase();
+    if (supabase && orgId && newClass.id) {
+      try {
+        await supabase.from("sections").upsert([{
+          organization_id: orgId,
+          class_id: newClass.id,
+          name: secName,
+          room_no: roomNumber || "R101"
+        }], { onConflict: "class_id, name" });
+      } catch (_) {}
+    }
     const existingSec = ERP_SECTIONS.find(s => 
-      (!s.organization_id || s.organization_id === orgId) && 
+      (s.organization_id === orgId) && 
       s.grade.toLowerCase() === effectiveGrade.toLowerCase() && 
       s.section.toUpperCase() === secName
     );
@@ -13633,52 +14789,105 @@ app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) =>
     }
   }
 
+  await recordAuditLog("erp.class_created", req.user?.email || "admin", "academic_class", newClass.id, req);
   res.json({ success: true, message: "Class created successfully", class: newClass });
 });
 
-app.patch("/api/erp/academics/classes/:id", async (req, res) => {
+app.patch(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const { grade, wing, order, status } = req.body;
 
-  const cls = ERP_CLASSES.find(c => 
-    (!c.organization_id || c.organization_id === orgId) && c.id === id
-  );
-  if (!cls) {
-    return res.status(404).json({ success: false, message: "Class not found" });
+  if (supabase && orgId) {
+    try {
+      const updateData = {};
+      if (grade !== undefined) updateData.name = grade.trim();
+      if (wing !== undefined) updateData.code = wing.trim();
+      if (order !== undefined) updateData.display_order = parseInt(order, 10);
+      await supabase.from("classes").update(updateData).eq("organization_id", orgId).or(`id.eq.${id},name.eq.${id}`);
+    } catch (_) {}
   }
 
-  if (grade !== undefined) cls.grade = grade.trim();
-  if (wing !== undefined) cls.wing = wing.trim();
-  if (order !== undefined) cls.order = parseInt(order, 10);
-  if (status !== undefined) cls.status = status;
+  let cls = ERP_CLASSES.find(c => (c.organization_id === orgId) && (c.id === id || c.grade === id));
+  if (cls) {
+    if (grade !== undefined) cls.grade = grade.trim();
+    if (wing !== undefined) cls.wing = wing.trim();
+    if (order !== undefined) cls.order = parseInt(order, 10);
+    if (status !== undefined) cls.status = status;
+  } else {
+    cls = { id, grade: grade || "Class", order: parseInt(order, 10) || 1, wing: wing || "Main Wing", status: status || "active", organization_id: orgId };
+  }
 
   await recordAuditLog("erp.class_updated", req.user?.email || "admin", "academic_class", cls.id, req);
   res.json({ success: true, message: "Class updated successfully", class: cls });
 });
 
-// 4d. Academic Sections Endpoints
-app.get("/api/erp/academics/sections", (req, res) => {
+app.delete(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+  if (supabase && orgId) {
+    try {
+      await supabase.from("classes").delete().eq("organization_id", orgId).or(`id.eq.${id},name.eq.${id}`);
+    } catch (_) {}
+  }
+  const idx = ERP_CLASSES.findIndex(c => (c.organization_id === orgId) && (c.id === id || c.grade === id));
+  if (idx !== -1) ERP_CLASSES.splice(idx, 1);
+  res.json({ success: true, message: "Class deleted successfully" });
+});
+
+// 4d. Academic Sections Endpoints (PostgreSQL Backed)
+app.get("/api/erp/academics/sections", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { grade } = req.query;
 
-  let sections = ERP_SECTIONS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let sections = [];
+  if (supabase && orgId) {
+    try {
+      const { data: dbSecs } = await supabase
+        .from("sections")
+        .select("*, classes(name)")
+        .eq("organization_id", orgId);
+
+      if (dbSecs && dbSecs.length > 0) {
+        sections = dbSecs.map(s => ({
+          id: s.id,
+          class_id: s.class_id,
+          grade: s.classes?.name || s.name,
+          section: s.name,
+          name: s.name,
+          roomNumber: s.room_no || "R101",
+          capacity: s.capacity || 40,
+          classTeacherId: s.class_teacher_member_id || null,
+          status: "active",
+          organization_id: s.organization_id
+        }));
+      }
+    } catch (e) {
+      console.warn("[Sections DB Fetch Error]:", e.message);
+    }
+  }
+
+  if (sections.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    sections = ERP_SECTIONS.filter(s => s.organization_id === orgId);
+  }
+
   if (grade && grade !== "all") {
     sections = sections.filter(s => s.grade.toLowerCase() === grade.toLowerCase());
   }
 
-  const tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
-  const tenantMappings = ERP_SECTION_SUBJECTS.filter(m => !m.organization_id || m.organization_id === orgId);
+  const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+  const tenantMappings = ERP_SECTION_SUBJECTS.filter(m => m.organization_id === orgId);
 
   const enrichedSections = sections.map(sec => {
     const studentCount = tenantStudents.filter(s => 
-      s.grade.toLowerCase() === sec.grade.toLowerCase() && 
-      s.section.toLowerCase() === sec.section.toLowerCase() && 
+      s.grade && sec.grade && s.grade.toLowerCase() === sec.grade.toLowerCase() && 
+      s.section && sec.section && s.section.toLowerCase() === sec.section.toLowerCase() && 
       s.status === "active"
     ).length;
     const subjects = tenantMappings.filter(m => 
-      m.grade.toLowerCase() === sec.grade.toLowerCase() && 
-      m.section.toLowerCase() === sec.section.toLowerCase()
+      m.grade && sec.grade && m.grade.toLowerCase() === sec.grade.toLowerCase() && 
+      m.section && sec.section && m.section.toLowerCase() === sec.section.toLowerCase()
     );
     return {
       ...sec,
@@ -13693,45 +14902,76 @@ app.get("/api/erp/academics/sections", (req, res) => {
 
 app.post("/api/erp/academics/sections", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { grade, section, roomNumber, capacity = 40, classTeacherId, status = "active" } = req.body;
 
   if (!grade || !section) {
     return res.status(400).json({ success: false, message: "Grade and Section name are required" });
   }
 
-  const duplicate = ERP_SECTIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
-    s.grade.toLowerCase() === grade.trim().toLowerCase() && 
-    s.section.toLowerCase() === section.trim().toLowerCase()
-  );
-  if (duplicate) {
-    return res.status(400).json({ success: false, message: `Section '${section}' for '${grade}' already exists` });
-  }
-
   let teacherName = null;
   if (classTeacherId) {
-    const staff = ERP_STAFF.find(st => (!st.organization_id || st.organization_id === orgId) && st.id === classTeacherId);
-    if (!staff) {
-      return res.status(400).json({ success: false, message: "Selected class teacher not found in staff registry" });
+    const staff = ERP_STAFF.find(st => (st.organization_id === orgId) && st.id === classTeacherId);
+    if (staff) {
+      teacherName = staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim();
     }
-    teacherName = staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim();
   }
 
-  const newSection = {
-    id: `sec-${Date.now()}`,
-    grade: grade.trim(),
-    section: section.trim().toUpperCase(),
-    roomNumber: roomNumber ? roomNumber.trim() : null,
-    capacity: parseInt(capacity, 10) || 40,
-    classTeacherId: classTeacherId || null,
-    classTeacherName: teacherName,
-    status,
-    organization_id: orgId
-  };
+  let newSection = null;
+  if (supabase && orgId) {
+    try {
+      const classId = await resolveOrCreateClass(orgId, grade.trim());
+      if (classId) {
+        const { data: dbSec, error: secErr } = await supabase
+          .from("sections")
+          .upsert([{
+            organization_id: orgId,
+            class_id: classId,
+            name: section.trim().toUpperCase(),
+            room_no: roomNumber ? roomNumber.trim() : null,
+            capacity: parseInt(capacity, 10) || 40
+          }], { onConflict: "class_id, name" })
+          .select("*, classes(name)")
+          .maybeSingle();
 
-  ERP_SECTIONS.push(newSection);
+        if (dbSec) {
+          newSection = {
+            id: dbSec.id,
+            grade: dbSec.classes?.name || grade.trim(),
+            section: dbSec.name,
+            roomNumber: dbSec.room_no,
+            capacity: dbSec.capacity,
+            classTeacherId: classTeacherId || null,
+            classTeacherName: teacherName,
+            status,
+            organization_id: orgId
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("[Section DB Insert Error]:", e.message);
+    }
+  }
+
+  if (!newSection) {
+    newSection = {
+      id: `sec-${Date.now()}`,
+      grade: grade.trim(),
+      section: section.trim().toUpperCase(),
+      roomNumber: roomNumber ? roomNumber.trim() : null,
+      capacity: parseInt(capacity, 10) || 40,
+      classTeacherId: classTeacherId || null,
+      classTeacherName: teacherName,
+      status,
+      organization_id: orgId
+    };
+  }
+
+  const exIdx = ERP_SECTIONS.findIndex(s => (s.organization_id === orgId) && s.grade.toLowerCase() === grade.trim().toLowerCase() && s.section.toLowerCase() === section.trim().toLowerCase());
+  if (exIdx !== -1) ERP_SECTIONS[exIdx] = newSection;
+  else ERP_SECTIONS.push(newSection);
+
   await recordAuditLog("erp.section_created", req.user?.email || "admin", "academic_section", newSection.id, req);
-
   res.json({ success: true, message: "Section created successfully", section: newSection });
 });
 
@@ -13740,19 +14980,39 @@ app.patch("/api/erp/academics/sections/:id", async (req, res) => {
   const { id } = req.params;
   const { roomNumber, capacity, status } = req.body;
 
-  const sec = ERP_SECTIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === id
-  );
-  if (!sec) {
-    return res.status(404).json({ success: false, message: "Section not found" });
+  if (supabase && orgId) {
+    try {
+      const updateData = {};
+      if (roomNumber !== undefined) updateData.room_no = roomNumber ? roomNumber.trim() : null;
+      if (capacity !== undefined) updateData.capacity = parseInt(capacity, 10);
+      await supabase.from("sections").update(updateData).eq("organization_id", orgId).eq("id", id);
+    } catch (_) {}
   }
 
-  if (roomNumber !== undefined) sec.roomNumber = roomNumber ? roomNumber.trim() : null;
-  if (capacity !== undefined) sec.capacity = parseInt(capacity, 10);
-  if (status !== undefined) sec.status = status;
+  let sec = ERP_SECTIONS.find(s => (s.organization_id === orgId) && s.id === id);
+  if (sec) {
+    if (roomNumber !== undefined) sec.roomNumber = roomNumber ? roomNumber.trim() : null;
+    if (capacity !== undefined) sec.capacity = parseInt(capacity, 10);
+    if (status !== undefined) sec.status = status;
+  } else {
+    sec = { id, roomNumber, capacity, status, organization_id: orgId };
+  }
 
   await recordAuditLog("erp.section_updated", req.user?.email || "admin", "academic_section", sec.id, req);
   res.json({ success: true, message: "Section updated successfully", section: sec });
+});
+
+app.delete("/api/erp/academics/sections/:id", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+  if (supabase && orgId) {
+    try {
+      await supabase.from("sections").delete().eq("organization_id", orgId).eq("id", id);
+    } catch (_) {}
+  }
+  const idx = ERP_SECTIONS.findIndex(s => (s.organization_id === orgId) && s.id === id);
+  if (idx !== -1) ERP_SECTIONS.splice(idx, 1);
+  res.json({ success: true, message: "Section deleted successfully" });
 });
 
 app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
@@ -13760,9 +15020,13 @@ app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
   const { id } = req.params;
   const { teacherId } = req.body;
 
-  const sec = ERP_SECTIONS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === id
-  );
+  let sec = ERP_SECTIONS.find(s => (s.organization_id === orgId) && s.id === id);
+  if (!sec && supabase && orgId) {
+    try {
+      const { data: dbS } = await supabase.from("sections").select("*, classes(name)").eq("organization_id", orgId).eq("id", id).maybeSingle();
+      if (dbS) sec = { id: dbS.id, grade: dbS.classes?.name || "Class", section: dbS.name, organization_id: orgId };
+    } catch (_) {}
+  }
   if (!sec) {
     return res.status(404).json({ success: false, message: "Section not found" });
   }
@@ -13770,36 +15034,67 @@ app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
   if (!teacherId) {
     sec.classTeacherId = null;
     sec.classTeacherName = null;
+    if (supabase && orgId) {
+      try { await supabase.from("sections").update({ class_teacher_member_id: null }).eq("organization_id", orgId).eq("id", id); } catch (_) {}
+    }
     await recordAuditLog("erp.class_teacher_unassigned", req.user?.email || "admin", "academic_section", sec.id, req);
     return res.json({ success: true, message: `Class teacher removed from ${sec.grade} ${sec.section}`, section: sec });
   }
 
-  const staff = ERP_STAFF.find(st => 
-    (!st.organization_id || st.organization_id === orgId) && st.id === teacherId
-  );
-  if (!staff) {
-    return res.status(400).json({ success: false, message: "Staff member not found" });
-  }
-
-  const teacherName = staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim();
+  const staff = ERP_STAFF.find(st => (st.organization_id === orgId) && st.id === teacherId);
+  const teacherName = staff ? (staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim()) : "Teacher";
   sec.classTeacherId = teacherId;
   sec.classTeacherName = teacherName;
+
+  if (supabase && orgId) {
+    try { await supabase.from("sections").update({ class_teacher_member_id: teacherId }).eq("organization_id", orgId).eq("id", id); } catch (_) {}
+  }
 
   await recordAuditLog("erp.class_teacher_assigned", req.user?.email || "admin", "academic_section", `${sec.id}-${teacherId}`, req);
   res.json({ success: true, message: `${teacherName} assigned as Class Teacher for ${sec.grade} ${sec.section}`, section: sec });
 });
 
-// 4e. Subjects Endpoints (CBSE Standard Catalogue)
-app.get(["/api/erp/academics/subjects", "/api/erp/subjects"], (req, res) => {
+// 4e. Subjects Endpoints (PostgreSQL Backed)
+app.get(["/api/erp/academics/subjects", "/api/erp/subjects"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { category, status } = req.query;
 
-  let subjects = ERP_SUBJECTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let subjects = [];
+  if (supabase && orgId) {
+    try {
+      const { data: dbSubs } = await supabase
+        .from("subjects")
+        .select("*")
+        .eq("organization_id", orgId);
+
+      if (dbSubs && dbSubs.length > 0) {
+        subjects = dbSubs.map(s => ({
+          id: s.id,
+          name: s.name,
+          subjectName: s.name,
+          code: s.code || `SUB-${s.id.slice(0, 4).toUpperCase()}`,
+          category: s.subject_type || "Core",
+          maxMarks: 100,
+          passMarks: 33,
+          status: "active",
+          organization_id: s.organization_id
+        }));
+      }
+    } catch (e) {
+      console.warn("[Subjects DB Fetch Error]:", e.message);
+    }
+  }
+
+  if (subjects.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    subjects = ERP_SUBJECTS.filter(s => s.organization_id === orgId);
+  }
+
   if (category && category !== "all") {
-    subjects = subjects.filter(s => s.category.toLowerCase() === category.toLowerCase());
+    subjects = subjects.filter(s => (s.category || "").toLowerCase() === category.toLowerCase());
   }
   if (status && status !== "all") {
-    subjects = subjects.filter(s => s.status.toLowerCase() === status.toLowerCase());
+    subjects = subjects.filter(s => (s.status || "").toLowerCase() === status.toLowerCase());
   }
 
   res.json({ success: true, subjects });
@@ -13807,6 +15102,7 @@ app.get(["/api/erp/academics/subjects", "/api/erp/subjects"], (req, res) => {
 
 app.post(["/api/erp/academics/subjects", "/api/erp/subjects"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { name, subjectName, code, subjectCode, category = "Core", maxMarks = 100, passMarks = 33, status = "active" } = req.body;
   const effectiveName = (name || subjectName || "").trim();
   const effectiveCode = (code || subjectCode || `SUB-${Date.now()}`).trim();
@@ -13815,52 +15111,98 @@ app.post(["/api/erp/academics/subjects", "/api/erp/subjects"], async (req, res) 
     return res.status(400).json({ success: false, message: "Subject name and code are required" });
   }
 
-  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-  const duplicate = ERP_SUBJECTS.find(s => 
-    (s.organization_id ? s.organization_id === orgId : isSeed) && 
-    s.code.toLowerCase() === effectiveCode.toLowerCase()
-  );
-  if (duplicate) {
-    return res.status(400).json({ success: false, message: `Subject with code '${effectiveCode}' already exists` });
+  let newSubject = null;
+  if (supabase && orgId) {
+    try {
+      const { data: dbSub, error: subErr } = await supabase
+        .from("subjects")
+        .upsert([{
+          organization_id: orgId,
+          name: effectiveName,
+          code: effectiveCode.toUpperCase(),
+          subject_type: category
+        }], { onConflict: "organization_id, name" })
+        .select()
+        .maybeSingle();
+
+      if (dbSub) {
+        newSubject = {
+          id: dbSub.id,
+          name: dbSub.name,
+          code: dbSub.code,
+          category: dbSub.subject_type || category,
+          maxMarks: parseInt(maxMarks, 10) || 100,
+          passMarks: parseInt(passMarks, 10) || 33,
+          status,
+          organization_id: orgId
+        };
+      }
+    } catch (e) {
+      console.warn("[Subject DB Insert Error]:", e.message);
+    }
   }
 
-  const newSubject = {
-    id: `sub-${Date.now()}`,
-    name: effectiveName,
-    code: effectiveCode.toUpperCase(),
-    category,
-    maxMarks: parseInt(maxMarks, 10) || 100,
-    passMarks: parseInt(passMarks, 10) || 33,
-    status,
-    organization_id: orgId
-  };
+  if (!newSubject) {
+    newSubject = {
+      id: `sub-${Date.now()}`,
+      name: effectiveName,
+      code: effectiveCode.toUpperCase(),
+      category,
+      maxMarks: parseInt(maxMarks, 10) || 100,
+      passMarks: parseInt(passMarks, 10) || 33,
+      status,
+      organization_id: orgId
+    };
+  }
 
-  ERP_SUBJECTS.push(newSubject);
+  const exIdx = ERP_SUBJECTS.findIndex(s => (s.organization_id === orgId) && s.code.toLowerCase() === effectiveCode.toLowerCase());
+  if (exIdx !== -1) ERP_SUBJECTS[exIdx] = newSubject;
+  else ERP_SUBJECTS.push(newSubject);
+
   await recordAuditLog("erp.subject_created", req.user?.email || "admin", "academic_subject", newSubject.id, req);
-
   res.json({ success: true, message: "Subject added to catalogue successfully", subject: newSubject });
 });
 
-app.patch("/api/erp/academics/subjects/:id", async (req, res) => {
+app.patch(["/api/erp/academics/subjects/:id", "/api/erp/subjects/:id"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const { name, category, maxMarks, passMarks, status } = req.body;
 
-  const sub = ERP_SUBJECTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === id
-  );
-  if (!sub) {
-    return res.status(404).json({ success: false, message: "Subject not found" });
+  if (supabase && orgId) {
+    try {
+      const updateData = {};
+      if (name !== undefined) updateData.name = name.trim();
+      if (category !== undefined) updateData.subject_type = category;
+      await supabase.from("subjects").update(updateData).eq("organization_id", orgId).or(`id.eq.${id},code.eq.${id}`);
+    } catch (_) {}
   }
 
-  if (name !== undefined) sub.name = name.trim();
-  if (category !== undefined) sub.category = category;
-  if (maxMarks !== undefined) sub.maxMarks = parseInt(maxMarks, 10);
-  if (passMarks !== undefined) sub.passMarks = parseInt(passMarks, 10);
-  if (status !== undefined) sub.status = status;
+  let sub = ERP_SUBJECTS.find(s => (s.organization_id === orgId) && (s.id === id || s.code === id));
+  if (sub) {
+    if (name !== undefined) sub.name = name.trim();
+    if (category !== undefined) sub.category = category;
+    if (maxMarks !== undefined) sub.maxMarks = parseInt(maxMarks, 10);
+    if (passMarks !== undefined) sub.passMarks = parseInt(passMarks, 10);
+    if (status !== undefined) sub.status = status;
+  } else {
+    sub = { id, name: name || "Subject", category: category || "Core", maxMarks: maxMarks || 100, passMarks: passMarks || 33, status: status || "active", organization_id: orgId };
+  }
 
   await recordAuditLog("erp.subject_updated", req.user?.email || "admin", "academic_subject", sub.id, req);
-  res.json({ success: true, message: "Subject updated successfully", subject: sub });
+  res.json({ success: true, message: "Subject catalogue updated successfully", subject: sub });
+});
+
+app.delete(["/api/erp/academics/subjects/:id", "/api/erp/subjects/:id"], async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+  if (supabase && orgId) {
+    try {
+      await supabase.from("subjects").delete().eq("organization_id", orgId).or(`id.eq.${id},code.eq.${id}`);
+    } catch (_) {}
+  }
+  const idx = ERP_SUBJECTS.findIndex(s => (s.organization_id === orgId) && (s.id === id || s.code === id));
+  if (idx !== -1) ERP_SUBJECTS.splice(idx, 1);
+  res.json({ success: true, message: "Subject deleted successfully" });
 });
 
 // 4f. Section-Subject Mappings Endpoints
@@ -13868,7 +15210,7 @@ app.get("/api/erp/academics/section-subjects", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { grade, section, session } = req.query;
 
-  let mappings = ERP_SECTION_SUBJECTS.filter(m => !m.organization_id || m.organization_id === orgId);
+  let mappings = ERP_SECTION_SUBJECTS.filter(m => m.organization_id === orgId);
   if (grade && grade !== "all") {
     mappings = mappings.filter(m => m.grade.toLowerCase() === grade.toLowerCase());
   }
@@ -13891,14 +15233,14 @@ app.post("/api/erp/academics/section-subjects", async (req, res) => {
   }
 
   const subject = ERP_SUBJECTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && s.id === subjectId
+    (s.organization_id === orgId) && s.id === subjectId
   );
   if (!subject) {
     return res.status(400).json({ success: false, message: "Subject not found in catalogue" });
   }
 
   const duplicate = ERP_SECTION_SUBJECTS.find(m => 
-    (!m.organization_id || m.organization_id === orgId) && 
+    (m.organization_id === orgId) && 
     m.grade.toLowerCase() === grade.trim().toLowerCase() && 
     m.section.toLowerCase() === section.trim().toLowerCase() && 
     m.subjectId === subjectId && 
@@ -13910,7 +15252,7 @@ app.post("/api/erp/academics/section-subjects", async (req, res) => {
 
   let teacherName = null;
   if (assignedTeacherId) {
-    const staff = ERP_STAFF.find(st => (!st.organization_id || st.organization_id === orgId) && st.id === assignedTeacherId);
+    const staff = ERP_STAFF.find(st => (st.organization_id === orgId) && st.id === assignedTeacherId);
     if (staff) {
       teacherName = staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim();
     }
@@ -13940,7 +15282,7 @@ app.delete("/api/erp/academics/section-subjects/:id", async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_SECTION_SUBJECTS.findIndex(m => 
-    (!m.organization_id || m.organization_id === orgId) && m.id === id
+    (m.organization_id === orgId) && m.id === id
   );
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Section-subject mapping not found" });
@@ -13959,20 +15301,20 @@ app.get("/api/erp/academics/homework", (req, res) => {
   const callerRole = (req.user?.role || "").toLowerCase();
   const callerStaffId = req.user?.staffId || teacherId;
 
-  let homeworkList = ERP_HOMEWORK.filter(h => !h.organization_id || h.organization_id === orgId);
+  let homeworkList = ERP_HOMEWORK.filter(h => h.organization_id === orgId);
 
   // If caller is teacher, restrict to homework created by them or their assigned classes
   if (callerRole === "teacher" && callerStaffId) {
     const assignedGradesAndSections = ERP_TEACHER_ASSIGNMENTS
-      .filter(a => (!a.organization_id || a.organization_id === orgId) && a.staffId === callerStaffId)
+      .filter(a => (a.organization_id === orgId) && a.staffId === callerStaffId)
       .map(a => `${a.grade.toLowerCase()}_${a.section.toLowerCase()}`);
     
     ERP_SECTIONS
-      .filter(s => (!s.organization_id || s.organization_id === orgId) && s.classTeacherId === callerStaffId)
+      .filter(s => (s.organization_id === orgId) && s.classTeacherId === callerStaffId)
       .forEach(s => assignedGradesAndSections.push(`${s.grade.toLowerCase()}_${s.section.toLowerCase()}`));
 
     ERP_SECTION_SUBJECTS
-      .filter(m => (!m.organization_id || m.organization_id === orgId) && m.assignedTeacherId === callerStaffId)
+      .filter(m => (m.organization_id === orgId) && m.assignedTeacherId === callerStaffId)
       .forEach(m => assignedGradesAndSections.push(`${m.grade.toLowerCase()}_${m.section.toLowerCase()}`));
 
     const assignedSet = new Set(assignedGradesAndSections);
@@ -14036,19 +15378,19 @@ app.post("/api/erp/academics/homework", async (req, res) => {
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned = 
       ERP_TEACHER_ASSIGNMENTS.some(a => 
-        (!a.organization_id || a.organization_id === orgId) &&
+        (a.organization_id === orgId) &&
         a.staffId === callerStaffId &&
         a.grade.toLowerCase() === grade.toLowerCase() &&
         a.section.toLowerCase() === section.toLowerCase()
       ) ||
       ERP_SECTIONS.some(s => 
-        (!s.organization_id || s.organization_id === orgId) &&
+        (s.organization_id === orgId) &&
         s.classTeacherId === callerStaffId &&
         s.grade.toLowerCase() === grade.toLowerCase() &&
         s.section.toLowerCase() === section.toLowerCase()
       ) ||
       ERP_SECTION_SUBJECTS.some(m => 
-        (!m.organization_id || m.organization_id === orgId) &&
+        (m.organization_id === orgId) &&
         m.assignedTeacherId === callerStaffId &&
         m.grade.toLowerCase() === grade.toLowerCase() &&
         m.section.toLowerCase() === section.toLowerCase()
@@ -14099,7 +15441,7 @@ app.patch("/api/erp/academics/homework/:id", async (req, res) => {
   const { title, description, dueDate, status } = req.body;
 
   const hw = ERP_HOMEWORK.find(h => 
-    (!h.organization_id || h.organization_id === orgId) && h.id === id
+    (h.organization_id === orgId) && h.id === id
   );
   if (!hw) {
     return res.status(404).json({ success: false, message: "Homework assignment not found" });
@@ -14128,7 +15470,7 @@ app.delete("/api/erp/academics/homework/:id", async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_HOMEWORK.findIndex(h => 
-    (!h.organization_id || h.organization_id === orgId) && h.id === id
+    (h.organization_id === orgId) && h.id === id
   );
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Homework assignment not found" });
@@ -14280,8 +15622,8 @@ async function resolveDbStudent(orgId, studentIdentifier) {
 
 // Helper: Authoritative CBSE Result Calculation Engine
 function calculateStudentExamResult(examId, studentId, orgId) {
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
   if (!exam || !student) return null;
 
   const targetExamId = exam.id;
@@ -14290,11 +15632,11 @@ function calculateStudentExamResult(examId, studentId, orgId) {
   const targetDbStudentId = student.db_id;
 
   const examSubjects = ERP_EXAM_SUBJECTS.filter(es =>
-    (!es.organization_id || es.organization_id === orgId) &&
+    (es.organization_id === orgId) &&
     (es.examId === targetExamId || (targetDbExamId && es.examId === targetDbExamId))
   );
   const studentMarks = ERP_EXAM_MARKS.filter(m =>
-    (!m.organization_id || m.organization_id === orgId) &&
+    (m.organization_id === orgId) &&
     (m.examId === targetExamId || (targetDbExamId && m.examId === targetDbExamId)) &&
     (m.studentId === targetStudentId || (targetDbStudentId && m.studentId === targetDbStudentId))
   );
@@ -14364,7 +15706,7 @@ function calculateStudentExamResult(examId, studentId, orgId) {
   }
 
   const existingResultIndex = ERP_EXAM_RESULTS.findIndex(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.examId === targetExamId || (targetDbExamId && r.examId === targetDbExamId)) &&
     (r.studentId === targetStudentId || (targetDbStudentId && r.studentId === targetDbStudentId))
   );
@@ -14413,12 +15755,12 @@ function calculateStudentExamResult(examId, studentId, orgId) {
 
 // Helper: Recalculate 1-based Ranks within Class / Section
 function recalculateClassRanks(examId, grade, section, orgId) {
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   const targetExamId = exam ? exam.id : examId;
   const targetDbExamId = exam ? exam.db_id : null;
 
   let sectionResults = ERP_EXAM_RESULTS.filter(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.examId === targetExamId || (targetDbExamId && r.examId === targetDbExamId)) &&
     (!grade || grade === "all" || r.grade.toLowerCase() === grade.toLowerCase()) &&
     (!section || section === "all" || r.section.toLowerCase() === section.toLowerCase())
@@ -14435,9 +15777,9 @@ function recalculateClassRanks(examId, grade, section, orgId) {
 // 5a. GET /api/erp/exams/overview - Live Aggregate KPI Summary & Performance Pulse
 app.get("/api/erp/exams/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const tenantExams = ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
-  const tenantResults = ERP_EXAM_RESULTS.filter(r => !r.organization_id || r.organization_id === orgId);
-  const tenantMarks = ERP_EXAM_MARKS.filter(m => !m.organization_id || m.organization_id === orgId);
+  const tenantExams = ERP_EXAMS.filter(e => e.organization_id === orgId);
+  const tenantResults = ERP_EXAM_RESULTS.filter(r => r.organization_id === orgId);
+  const tenantMarks = ERP_EXAM_MARKS.filter(m => m.organization_id === orgId);
 
   const totalExams = tenantExams.length;
   const activeExams = tenantExams.filter(e => e.status === "marks_entry" || e.status === "scheduled").length;
@@ -14465,8 +15807,8 @@ app.get("/api/erp/exams/overview", (req, res) => {
       activeSession: "2026-27"
     },
     recentExams: tenantExams.map(ex => {
-      const subjectsCount = ERP_EXAM_SUBJECTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.examId === ex.id).length;
-      const marksCount = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.examId === ex.id).length;
+      const subjectsCount = ERP_EXAM_SUBJECTS.filter(s => (s.organization_id === orgId) && s.examId === ex.id).length;
+      const marksCount = ERP_EXAM_MARKS.filter(m => (m.organization_id === orgId) && m.examId === ex.id).length;
       return {
         ...ex,
         subjectsCount,
@@ -14476,34 +15818,68 @@ app.get("/api/erp/exams/overview", (req, res) => {
   });
 });
 
-// 5b. GET /api/erp/exams - Filterable Exam Directory
-app.get("/api/erp/exams", (req, res) => {
+// 5b. GET /api/erp/exams - Filterable Exam Directory (PostgreSQL Backed)
+app.get("/api/erp/exams", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { session, grade, status, term, search } = req.query;
 
-  let exams = ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
+  let exams = [];
+  if (supabase && orgId) {
+    try {
+      const { data: dbExams } = await supabase
+        .from("exams")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false });
+
+      if (dbExams && dbExams.length > 0) {
+        exams = dbExams.map(e => ({
+          id: e.id,
+          title: e.name,
+          name: e.name,
+          examType: e.exam_type || "Periodic Test",
+          academicSession: "2026-27",
+          grade: "all",
+          section: "all",
+          startDate: e.start_date || new Date().toISOString().split("T")[0],
+          endDate: e.end_date || new Date().toISOString().split("T")[0],
+          status: "scheduled",
+          isLocked: false,
+          organization_id: e.organization_id
+        }));
+      }
+    } catch (e) {
+      console.warn("[Exams DB Fetch Error]:", e.message);
+    }
+  }
+
+  if (exams.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    exams = ERP_EXAMS.filter(e => e.organization_id === orgId);
+  } else if (exams.length === 0) {
+    exams = ERP_EXAMS.filter(e => e.organization_id === orgId);
+  }
 
   if (session && session !== "all") {
     exams = exams.filter(e => !e.academicSession || e.academicSession === session);
   }
   if (grade && grade !== "all") {
-    exams = exams.filter(e => e.grade.toLowerCase() === grade.toLowerCase());
+    exams = exams.filter(e => (e.grade || "").toLowerCase() === grade.toLowerCase());
   }
   if (status && status !== "all") {
-    exams = exams.filter(e => e.status.toLowerCase() === status.toLowerCase());
+    exams = exams.filter(e => (e.status || "").toLowerCase() === status.toLowerCase());
   }
   if (term && term !== "all") {
     exams = exams.filter(e => (e.examType || e.term || "").toLowerCase().includes(term.toLowerCase()));
   }
   if (search) {
     const q = search.trim().toLowerCase();
-    exams = exams.filter(e => e.title.toLowerCase().includes(q) || (e.examType && e.examType.toLowerCase().includes(q)));
+    exams = exams.filter(e => (e.title || "").toLowerCase().includes(q) || (e.examType && e.examType.toLowerCase().includes(q)));
   }
 
   const enriched = exams.map(ex => {
-    const subjects = ERP_EXAM_SUBJECTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.examId === ex.id);
-    const marks = ERP_EXAM_MARKS.filter(m => (!m.organization_id || m.organization_id === orgId) && m.examId === ex.id);
-    const results = ERP_EXAM_RESULTS.filter(r => (!r.organization_id || r.organization_id === orgId) && r.examId === ex.id);
+    const subjects = ERP_EXAM_SUBJECTS.filter(s => (s.organization_id === orgId) && s.examId === ex.id);
+    const marks = ERP_EXAM_MARKS.filter(m => (m.organization_id === orgId) && m.examId === ex.id);
+    const results = ERP_EXAM_RESULTS.filter(r => (r.organization_id === orgId) && r.examId === ex.id);
     return {
       ...ex,
       subjectsCount: subjects.length,
@@ -14605,23 +15981,43 @@ app.post("/api/erp/exams", async (req, res) => {
 });
 
 // 5d. GET /api/erp/exams/:id - Detailed Exam Dossier
-app.get("/api/erp/exams/:id", (req, res) => {
+app.get("/api/erp/exams/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  let exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  if (!exam && supabase && orgId) {
+    try {
+      const { data: dbE } = await supabase.from("exams").select("*").eq("organization_id", orgId).eq("id", id).maybeSingle();
+      if (dbE) {
+        exam = {
+          id: dbE.id,
+          title: dbE.name,
+          name: dbE.name,
+          examType: dbE.exam_type || "Periodic Test",
+          academicSession: "2026-27",
+          grade: "all",
+          section: "all",
+          startDate: dbE.start_date,
+          endDate: dbE.end_date,
+          status: "scheduled",
+          organization_id: orgId
+        };
+      }
+    } catch (_) {}
+  }
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const subjects = ERP_EXAM_SUBJECTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id))
   );
   const marks = ERP_EXAM_MARKS.filter(m =>
-    (!m.organization_id || m.organization_id === orgId) &&
+    (m.organization_id === orgId) &&
     (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id))
   );
   const results = ERP_EXAM_RESULTS.filter(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))
   );
 
@@ -14643,7 +16039,7 @@ app.patch("/api/erp/exams/:id", async (req, res) => {
   const { id } = req.params;
   const { title, examType, startDate, endDate, status, section } = req.body;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   if (startDate && endDate && startDate > endDate) {
@@ -14681,7 +16077,7 @@ app.post("/api/erp/exams/:id/publish", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   // Update exam status
@@ -14691,7 +16087,7 @@ app.post("/api/erp/exams/:id/publish", async (req, res) => {
 
   // Mark all generated results as published
   ERP_EXAM_RESULTS.forEach(r => {
-    if ((!r.organization_id || r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
+    if ((r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
       r.isPublished = true;
     }
   });
@@ -14720,7 +16116,7 @@ app.post("/api/erp/exams/:id/lock", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   exam.status = "locked";
@@ -14729,14 +16125,14 @@ app.post("/api/erp/exams/:id/lock", async (req, res) => {
 
   // Lock all marks
   ERP_EXAM_MARKS.forEach(m => {
-    if ((!m.organization_id || m.organization_id === orgId) && (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id))) {
+    if ((m.organization_id === orgId) && (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id))) {
       m.isLocked = true;
     }
   });
 
   // Lock all results
   ERP_EXAM_RESULTS.forEach(r => {
-    if ((!r.organization_id || r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
+    if ((r.organization_id === orgId) && (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))) {
       r.isLocked = true;
     }
   });
@@ -14750,9 +16146,9 @@ app.get("/api/erp/exams/:id/subjects", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   const subjects = ERP_EXAM_SUBJECTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === id || (exam && s.examId === exam.id) || (exam?.db_id && s.examId === exam.db_id))
   );
   res.json({ success: true, subjects });
@@ -14774,7 +16170,7 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
     assignedTeacherName
   } = req.body;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const resolvedSubId = subjectId || (subjectName ? `sub-${subjectName.toLowerCase().replace(/[^a-z0-9]/g, '')}` : null);
@@ -14782,7 +16178,7 @@ app.post("/api/erp/exams/:id/subjects", async (req, res) => {
 
   // Prevent duplicate subject within this exam
   const duplicate = ERP_EXAM_SUBJECTS.find(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id)) &&
     (s.subjectId === resolvedSubId || s.id === resolvedSubId || s.subjectName?.toLowerCase() === (subjectName || "").toLowerCase())
   );
@@ -14871,11 +16267,11 @@ app.delete("/api/erp/exams/:id/subjects/:subjectId", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id, subjectId } = req.params;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === id || e.db_id === id));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === id || e.db_id === id));
   const targetExamId = exam ? exam.id : id;
 
   const idx = ERP_EXAM_SUBJECTS.findIndex(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === targetExamId || (exam?.db_id && s.examId === exam.db_id)) &&
     (s.id === subjectId || s.subjectId === subjectId || s.db_id === subjectId)
   );
@@ -14907,7 +16303,7 @@ app.get("/api/erp/marks", (req, res) => {
     return res.status(400).json({ success: false, message: "Exam ID is required" });
   }
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const targetGrade = grade || exam.grade || "Class 10";
@@ -14916,12 +16312,12 @@ app.get("/api/erp/marks", (req, res) => {
   let examSubject = null;
   if (targetSubId) {
     examSubject = ERP_EXAM_SUBJECTS.find(s =>
-      (!s.organization_id || s.organization_id === orgId) &&
+      (s.organization_id === orgId) &&
       (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId)
     );
   } else {
     examSubject = ERP_EXAM_SUBJECTS.find(s =>
-      (!s.organization_id || s.organization_id === orgId) &&
+      (s.organization_id === orgId) &&
       (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id))
     );
   }
@@ -14933,13 +16329,13 @@ app.get("/api/erp/marks", (req, res) => {
   if (callerRole === "teacher" && callerStaffId && examSubject) {
     const isAssigned =
       ERP_TEACHER_ASSIGNMENTS.some(a =>
-        (!a.organization_id || a.organization_id === orgId) &&
+        (a.organization_id === orgId) &&
         a.staffId === callerStaffId &&
         a.grade.toLowerCase() === targetGrade.toLowerCase() &&
         (!targetSection || targetSection === "all" || a.section.toLowerCase() === targetSection.toLowerCase())
       ) ||
       ERP_SECTION_SUBJECTS.some(m =>
-        (!m.organization_id || m.organization_id === orgId) &&
+        (m.organization_id === orgId) &&
         m.assignedTeacherId === callerStaffId &&
         m.grade.toLowerCase() === targetGrade.toLowerCase() &&
         (!targetSection || targetSection === "all" || m.section.toLowerCase() === targetSection.toLowerCase()) &&
@@ -14958,7 +16354,7 @@ app.get("/api/erp/marks", (req, res) => {
 
   // Find enrolled students in this grade & section
   let students = ERP_STUDENTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     s.grade.toLowerCase() === targetGrade.toLowerCase() &&
     (!targetSection || targetSection === "all" || s.section.toLowerCase() === targetSection.toLowerCase()) &&
     s.status === "active"
@@ -14967,7 +16363,7 @@ app.get("/api/erp/marks", (req, res) => {
   // Match with existing marks
   const studentRoster = students.map(std => {
     const existingMark = examSubject ? ERP_EXAM_MARKS.find(m =>
-      (!m.organization_id || m.organization_id === orgId) &&
+      (m.organization_id === orgId) &&
       (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
       (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
       (m.studentId === std.id || (std.db_id && m.studentId === std.db_id))
@@ -15007,18 +16403,18 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     return res.status(400).json({ success: false, message: "Exam ID, Exam Subject ID, and marks array are required" });
   }
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   const targetGrade = grade || exam.grade || "Class 10";
   const targetSection = section || exam.section || "all";
 
   const examSubject = ERP_EXAM_SUBJECTS.find(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === exam.id || (exam.db_id && s.examId === exam.db_id)) &&
     (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   ) || ERP_EXAM_SUBJECTS.find(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   );
   if (!examSubject) return res.status(404).json({ success: false, message: "Exam subject not found" });
@@ -15032,13 +16428,13 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
   if (callerRole === "teacher" && callerStaffId) {
     const isAssigned =
       ERP_TEACHER_ASSIGNMENTS.some(a =>
-        (!a.organization_id || a.organization_id === orgId) &&
+        (a.organization_id === orgId) &&
         a.staffId === callerStaffId &&
         (!targetGrade || a.grade.toLowerCase() === targetGrade.toLowerCase()) &&
         (!targetSection || targetSection === "all" || a.section.toLowerCase() === targetSection.toLowerCase())
       ) ||
       ERP_SECTION_SUBJECTS.some(m =>
-        (!m.organization_id || m.organization_id === orgId) &&
+        (m.organization_id === orgId) &&
         m.assignedTeacherId === callerStaffId &&
         (!targetGrade || m.grade.toLowerCase() === targetGrade.toLowerCase()) &&
         (!targetSection || targetSection === "all" || m.section.toLowerCase() === targetSection.toLowerCase()) &&
@@ -15090,7 +16486,7 @@ app.post("/api/erp/marks/bulk", async (req, res) => {
     }
 
     const existingIdx = ERP_EXAM_MARKS.findIndex(m =>
-      (!m.organization_id || m.organization_id === orgId) &&
+      (m.organization_id === orgId) &&
       (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
       (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
       (m.studentId === studentId || (std?.db_id && m.studentId === std.db_id))
@@ -15223,14 +16619,14 @@ app.post("/api/erp/marks/correct", async (req, res) => {
     });
   }
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
 
   const examSubject = ERP_EXAM_SUBJECTS.find(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.examId === (exam ? exam.id : examId) || (exam?.db_id && s.examId === exam.db_id)) &&
     (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   ) || ERP_EXAM_SUBJECTS.find(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.id === targetSubId || s.db_id === targetSubId || s.subjectId === targetSubId || s.subjectCode === targetSubId || s.id.includes(targetSubId) || s.subjectId.includes(targetSubId) || targetSubId.includes(s.subjectId))
   );
   if (!examSubject) return res.status(404).json({ success: false, message: "Exam subject not found" });
@@ -15243,10 +16639,10 @@ app.post("/api/erp/marks/correct", async (req, res) => {
     }
   }
 
-  const std = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+  const std = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
 
   const markRec = ERP_EXAM_MARKS.find(m =>
-    (!m.organization_id || m.organization_id === orgId) &&
+    (m.organization_id === orgId) &&
     (m.examId === (exam ? exam.id : examId) || (exam?.db_id && m.examId === exam.db_id)) &&
     (m.examSubjectId === examSubject.id || (examSubject.db_id && m.examSubjectId === examSubject.db_id) || m.examSubjectId === examSubject.subjectId) &&
     (m.studentId === studentId || (std?.db_id && m.studentId === std.db_id))
@@ -15329,11 +16725,11 @@ app.get("/api/erp/results/exam/:examId", (req, res) => {
   const { examId } = req.params;
   const { grade, section, status, search, page = 1, limit = 25 } = req.query;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
   if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
 
   let results = ERP_EXAM_RESULTS.filter(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id))
   );
 
@@ -15414,15 +16810,15 @@ app.get("/api/erp/results/student/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
   if (!student) return res.status(404).json({ success: false, message: "Student not found" });
 
   const results = ERP_EXAM_RESULTS.filter(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.studentId === student.id || (student.db_id && r.studentId === student.db_id))
   );
   const marks = ERP_EXAM_MARKS.filter(m =>
-    (!m.organization_id || m.organization_id === orgId) &&
+    (m.organization_id === orgId) &&
     (m.studentId === student.id || (student.db_id && m.studentId === student.db_id))
   );
 
@@ -15440,8 +16836,8 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
   const { examId, studentId } = req.params;
   const { format } = req.query;
 
-  const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId));
 
   if (!exam || !student) {
     return res.status(404).json({ success: false, message: "Exam or Student record not found" });
@@ -15449,7 +16845,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
 
   // Ensure result calculation
   let result = ERP_EXAM_RESULTS.find(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id)) &&
     (r.studentId === student.id || (student.db_id && r.studentId === student.db_id))
   );
@@ -15458,11 +16854,11 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
   }
 
   const examSubjects = ERP_EXAM_SUBJECTS.filter(es =>
-    (!es.organization_id || es.organization_id === orgId) &&
+    (es.organization_id === orgId) &&
     (es.examId === exam.id || (exam.db_id && es.examId === exam.db_id))
   );
   const studentMarks = ERP_EXAM_MARKS.filter(m =>
-    (!m.organization_id || m.organization_id === orgId) &&
+    (m.organization_id === orgId) &&
     (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
     (m.studentId === student.id || (student.db_id && m.studentId === student.db_id))
   );
@@ -15502,7 +16898,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
     };
   });
 
-  const studentAtt = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && (a.studentId === student.id || (student.db_id && a.studentId === student.db_id)));
+  const studentAtt = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId) && (a.studentId === student.id || (student.db_id && a.studentId === student.db_id)));
   const totalDays = studentAtt.length > 0 ? studentAtt.length : 120;
   const presentDays = studentAtt.length > 0 ? studentAtt.filter(a => a.status === 'present').length : 114;
   const attendancePercentage = Math.round((presentDays / totalDays) * 100);
@@ -16064,8 +17460,8 @@ function numberToWordsINR(num) {
 // 6a. GET /api/erp/fees/overview - Real database financial metrics
 app.get("/api/erp/fees/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const orgDemands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
-  const orgPayments = ERP_FEE_PAYMENTS.filter(p => !p.organization_id || p.organization_id === orgId);
+  const orgDemands = ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
+  const orgPayments = ERP_FEE_PAYMENTS.filter(p => p.organization_id === orgId);
   const today = new Date().toISOString().slice(0, 10);
 
   const totalInvoiced = orgDemands.reduce((sum, d) => sum + (Number(d.netAmount) || 0), 0);
@@ -16119,13 +17515,42 @@ app.get("/api/erp/fees/overview", (req, res) => {
 });
 
 // 6b. GET /api/erp/fees/structures - List Fee Heads & Structure
-app.get("/api/erp/fees/structures", (req, res) => {
+app.get("/api/erp/fees/structures", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { session, grade, status } = req.query;
 
-  let structures = ERP_FEE_STRUCTURES.filter(s => !s.organization_id || s.organization_id === orgId);
+  let structures = [];
+  if (supabase && orgId) {
+    try {
+      const { data, error } = await supabase
+        .from("fee_structures")
+        .select("*")
+        .eq("organization_id", orgId);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        structures = data.map(fs => ({
+          id: fs.id,
+          db_id: fs.id,
+          academicSession: "2026-27",
+          grade: "all",
+          feeHead: fs.name,
+          amountINR: Number(fs.amount) || 0,
+          frequency: fs.frequency || "quarterly",
+          dueDay: 10,
+          isMandatory: true,
+          status: "active",
+          organization_id: fs.organization_id,
+          created_at: fs.created_at
+        }));
+      }
+    } catch (_) {}
+  }
+
+  if (structures.length === 0) {
+    structures = ERP_FEE_STRUCTURES.filter(s => s.organization_id === orgId);
+  }
+
   if (session) structures = structures.filter(s => s.academicSession === session);
-  if (grade && grade !== "all") structures = structures.filter(s => s.grade.toLowerCase() === grade.toLowerCase());
+  if (grade && grade !== "all") structures = structures.filter(s => (s.grade || "all").toLowerCase() === grade.toLowerCase() || s.grade === "all");
   if (status) structures = structures.filter(s => s.status === status);
 
   res.json({ success: true, structures, count: structures.length });
@@ -16180,7 +17605,7 @@ app.post("/api/erp/fees/structures", async (req, res) => {
 app.patch("/api/erp/fees/structures/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === id || s.db_id === id));
+  const struct = ERP_FEE_STRUCTURES.find(s => (s.organization_id === orgId) && (s.id === id || s.db_id === id));
 
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
@@ -16219,7 +17644,7 @@ app.patch("/api/erp/fees/structures/:id", async (req, res) => {
 app.delete("/api/erp/fees/structures/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === id || s.db_id === id));
+  const struct = ERP_FEE_STRUCTURES.find(s => (s.organization_id === orgId) && (s.id === id || s.db_id === id));
 
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
@@ -16245,7 +17670,7 @@ app.get("/api/erp/fees/demands", (req, res) => {
   const { session, grade, section, status, search } = req.query;
   const today = new Date().toISOString().slice(0, 10);
 
-  let demands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+  let demands = ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
 
   if (session) demands = demands.filter(d => d.academicSession === session);
   if (grade && grade !== "all") demands = demands.filter(d => d.grade.toLowerCase() === grade.toLowerCase());
@@ -16278,12 +17703,12 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
     return res.status(400).json({ success: false, message: "grade and feeStructureId are required" });
   }
 
-  const struct = ERP_FEE_STRUCTURES.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === feeStructureId || s.db_id === feeStructureId));
+  const struct = ERP_FEE_STRUCTURES.find(s => (s.organization_id === orgId) && (s.id === feeStructureId || s.db_id === feeStructureId));
   if (!struct) {
     return res.status(404).json({ success: false, message: "Fee structure not found" });
   }
 
-  let students = ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.grade.toLowerCase() === grade.toLowerCase());
+  let students = ERP_STUDENTS.filter(s => (s.organization_id === orgId) && s.grade.toLowerCase() === grade.toLowerCase());
   if (section && section !== "all") {
     students = students.filter(s => s.section.toLowerCase() === section.toLowerCase());
   }
@@ -16368,14 +17793,14 @@ app.get("/api/erp/fees/students/:studentId/account", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, message: "Student record not found" });
   }
 
-  const demands = ERP_FEE_DEMANDS.filter(d => (!d.organization_id || d.organization_id === orgId) && (d.studentId === student.id || (student.db_id && d.studentId === student.db_id) || d.studentName === student.name));
-  const payments = ERP_FEE_PAYMENTS.filter(p => (!p.organization_id || p.organization_id === orgId) && (p.studentId === student.id || (student.db_id && p.studentId === student.db_id) || p.studentName === student.name));
-  const concessions = ERP_FEE_CONCESSIONS.filter(c => (!c.organization_id || c.organization_id === orgId) && (c.studentId === student.id || (student.db_id && c.studentId === student.db_id) || c.studentName === student.name));
+  const demands = ERP_FEE_DEMANDS.filter(d => (d.organization_id === orgId) && (d.studentId === student.id || (student.db_id && d.studentId === student.db_id) || d.studentName === student.name));
+  const payments = ERP_FEE_PAYMENTS.filter(p => (p.organization_id === orgId) && (p.studentId === student.id || (student.db_id && p.studentId === student.db_id) || p.studentName === student.name));
+  const concessions = ERP_FEE_CONCESSIONS.filter(c => (c.organization_id === orgId) && (c.studentId === student.id || (student.db_id && c.studentId === student.db_id) || c.studentName === student.name));
 
   const totalInvoiced = demands.reduce((sum, d) => sum + (Number(d.netAmount) || 0), 0);
   const totalPaid = payments.filter(p => p.status === "completed").reduce((sum, p) => sum + (Number(p.amountPaid) || 0), 0);
@@ -16409,7 +17834,7 @@ app.post("/api/erp/fees/collect", async (req, res) => {
     return res.status(400).json({ success: false, message: "demandId and amountPaid are required" });
   }
 
-  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
+  const demand = ERP_FEE_DEMANDS.find(d => (d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
   if (!demand) {
     return res.status(404).json({ success: false, message: "Fee demand/invoice not found" });
   }
@@ -16499,7 +17924,7 @@ app.post("/api/erp/fees/payments/:id/reverse", async (req, res) => {
     return res.status(400).json({ success: false, message: "A valid administrative reason (min 5 characters) is required for payment reversal" });
   }
 
-  const payment = ERP_FEE_PAYMENTS.find(p => (!p.organization_id || p.organization_id === orgId) && (p.id === id || p.db_id === id || p.receiptNo === id));
+  const payment = ERP_FEE_PAYMENTS.find(p => (p.organization_id === orgId) && (p.id === id || p.db_id === id || p.receiptNo === id));
   if (!payment) {
     return res.status(404).json({ success: false, message: "Payment record not found" });
   }
@@ -16552,7 +17977,7 @@ app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
   const { receiptNo } = req.params;
 
   const payment = ERP_FEE_PAYMENTS.find(p =>
-    (!p.organization_id || p.organization_id === orgId) &&
+    (p.organization_id === orgId) &&
     (p.receiptNo.toLowerCase() === receiptNo.toLowerCase() || p.id === receiptNo || p.db_id === receiptNo)
   );
 
@@ -16921,7 +18346,7 @@ app.get("/api/erp/fees/reports/collection", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { startDate, endDate, paymentMode } = req.query;
 
-  let payments = ERP_FEE_PAYMENTS.filter(p => (!p.organization_id || p.organization_id === orgId) && p.status === "completed");
+  let payments = ERP_FEE_PAYMENTS.filter(p => (p.organization_id === orgId) && p.status === "completed");
 
   if (startDate) payments = payments.filter(p => p.paymentDate >= startDate);
   if (endDate) payments = payments.filter(p => p.paymentDate <= endDate);
@@ -16943,7 +18368,7 @@ app.get("/api/erp/fees/reports/outstanding", (req, res) => {
   const { grade, aging } = req.query;
   const today = new Date().toISOString().slice(0, 10);
 
-  let demands = ERP_FEE_DEMANDS.filter(d => (!d.organization_id || d.organization_id === orgId) && Number(d.balanceAmount) > 0);
+  let demands = ERP_FEE_DEMANDS.filter(d => (d.organization_id === orgId) && Number(d.balanceAmount) > 0);
 
   if (grade && grade !== "all") demands = demands.filter(d => d.grade.toLowerCase() === grade.toLowerCase());
 
@@ -16982,7 +18407,7 @@ app.get("/api/erp/fees/reports/outstanding", (req, res) => {
 // 6n. GET /api/erp/fees/reports/class-summary - Class-wise Performance
 app.get("/api/erp/fees/reports/class-summary", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const demands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+  const demands = ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
 
   const gradeMap = {};
   for (const d of demands) {
@@ -17017,7 +18442,7 @@ app.get("/api/erp/fees/reports/class-summary", (req, res) => {
 // 6o. GET /api/erp/fees/reversals - Reversal Audit Log
 app.get("/api/erp/fees/reversals", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const reversals = ERP_FEE_REVERSALS.filter(r => !r.organization_id || r.organization_id === orgId);
+  const reversals = ERP_FEE_REVERSALS.filter(r => r.organization_id === orgId);
   res.json({ success: true, reversals, count: reversals.length });
 });
 
@@ -17030,7 +18455,7 @@ app.post("/api/erp/fees/online/create-order", async (req, res) => {
     return res.status(400).json({ success: false, message: "demandId is required" });
   }
 
-  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
+  const demand = ERP_FEE_DEMANDS.find(d => (d.organization_id === orgId) && (d.id === demandId || d.db_id === demandId));
   if (!demand) {
     return res.status(404).json({ success: false, message: "Fee demand/invoice not found" });
   }
@@ -17040,9 +18465,19 @@ app.post("/api/erp/fees/online/create-order", async (req, res) => {
     return res.status(400).json({ success: false, message: "amountINR must be a positive number" });
   }
 
+  // Production Security: Disallow simulator in production
+  const isProd = process.env.NODE_ENV === "production";
+  if (isProd && (simulator === true || req.query?.simulator === "true")) {
+    return res.status(403).json({
+      success: false,
+      code: "SIMULATOR_DISALLOWED_IN_PRODUCTION",
+      message: "Payment simulator is disabled in production environments. Please configure live Razorpay merchant credentials."
+    });
+  }
+
   // Multi-Tenant Per-School Gateway Isolation
   const gateway = await getTenantPaymentGateway(orgId);
-  const isSimulator = simulator === true || req.query?.simulator === "true";
+  const isSimulator = !isProd && (simulator === true || req.query?.simulator === "true");
 
   if (!gateway?.keyId && !isSimulator) {
     return res.status(400).json({
@@ -17102,17 +18537,27 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
     return res.status(400).json({ success: false, message: "orderId and paymentId are required" });
   }
 
-  const order = ERP_ONLINE_ORDERS.find(o => (!o.organization_id || o.organization_id === orgId) && o.orderId === orderId);
+  const order = ERP_ONLINE_ORDERS.find(o => (o.organization_id === orgId) && o.orderId === orderId);
   const targetDemandId = demandId || order?.demandId;
-  const demand = ERP_FEE_DEMANDS.find(d => (!d.organization_id || d.organization_id === orgId) && (d.id === targetDemandId || d.db_id === targetDemandId));
+  const demand = ERP_FEE_DEMANDS.find(d => (d.organization_id === orgId) && (d.id === targetDemandId || d.db_id === targetDemandId));
 
   if (!demand) {
     return res.status(404).json({ success: false, message: "Fee demand not found" });
   }
 
+  // Production Security: Disallow simulator in production
+  const isProd = process.env.NODE_ENV === "production";
+  if (isProd && (order?.isSimulator || req.body?.isSimulator)) {
+    return res.status(403).json({
+      success: false,
+      code: "SIMULATOR_DISALLOWED_IN_PRODUCTION",
+      message: "Simulator payments cannot be verified in production environments."
+    });
+  }
+
   // Multi-Tenant Dynamic Secret Resolution (School Specific Secret)
   const gateway = await getTenantPaymentGateway(orgId);
-  const secret = gateway?.keySecret || (order?.isSimulator ? "simulator_secret" : process.env.RAZORPAY_KEY_SECRET);
+  const secret = gateway?.keySecret || (!isProd && order?.isSimulator ? "simulator_secret" : (process.env.RAZORPAY_KEY_SECRET || (!isProd ? "dakshora_gateway_production_secret" : null)));
 
   if (!secret) {
     return res.status(400).json({
@@ -17122,10 +18567,19 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
     });
   }
 
-  // Cryptographic signature verification
-  const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
+  // Timing-safe cryptographic signature verification
+  let isValidSignature = false;
+  try {
+    const expectedSignature = crypto.createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
+    const sigBuf = Buffer.from(signature || "", "utf8");
+    const expBuf = Buffer.from(expectedSignature, "utf8");
+    if (sigBuf.length === expBuf.length && sigBuf.length > 0) {
+      isValidSignature = crypto.timingSafeEqual(sigBuf, expBuf);
+    }
+  } catch (_) {
+    isValidSignature = false;
+  }
   
-  const isValidSignature = Boolean(signature && signature === expectedSignature);
   if (!isValidSignature) {
     return res.status(400).json({ success: false, message: "Invalid payment signature verification failed" });
   }
@@ -17188,29 +18642,142 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
   });
 });
 
-// 6r. Legacy Compatibility Route: GET /api/erp/fees
-app.get("/api/erp/fees", (req, res) => {
-  const totalDues = ERP_FEES.filter(f => f.status !== "paid").reduce((acc, f) => acc + (Number(f.balanceAmount !== undefined ? f.balanceAmount : f.amountINR) || 0), 0);
-  const totalCollected = ERP_FEES.reduce((acc, f) => acc + (Number(f.paidAmount !== undefined ? f.paidAmount : (f.status === "paid" ? f.amountINR : 0)) || 0), 0);
-  res.json({ success: true, invoices: ERP_FEES, summary: { totalDues, totalCollected } });
+// 6r. Legacy Compatibility Route: GET /api/erp/fees (Tenant-Scoped & DB Persisted)
+app.get("/api/erp/fees", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  let tenantInvoices = [];
+
+  if (supabase) {
+    try {
+      const { data: dbFees, error } = await supabase
+        .from("student_fees")
+        .select(`
+          id,
+          organization_id,
+          student_id,
+          fee_structure_id,
+          amount_due,
+          discount,
+          amount_paid,
+          status,
+          due_date,
+          created_at,
+          students:student_id ( id, first_name, last_name, admission_no ),
+          fee_structures:fee_structure_id ( id, name )
+        `)
+        .eq("organization_id", orgId);
+
+      if (!error && Array.isArray(dbFees) && dbFees.length > 0) {
+        tenantInvoices = dbFees.map(f => {
+          const studentName = f.students ? `${f.students.first_name || ""} ${f.students.last_name || ""}`.trim() : "Student";
+          const feeHead = f.fee_structures ? f.fee_structures.name : "Tuition Fee";
+          const netAmount = Number(f.amount_due || 0);
+          const paidAmount = Number(f.amount_paid || 0);
+          const balanceAmount = Math.max(0, netAmount - paidAmount);
+          return {
+            id: f.id,
+            db_id: f.id,
+            organization_id: f.organization_id,
+            studentId: f.student_id,
+            studentName,
+            admissionNo: f.students?.admission_no || "",
+            feeHead,
+            amountINR: netAmount,
+            netAmount,
+            paidAmount,
+            balanceAmount,
+            status: f.status === "partial" ? "partially_paid" : f.status,
+            dueDate: f.due_date,
+            created_at: f.created_at
+          };
+        });
+      }
+    } catch (_) {}
+  }
+
+  // Merge with any in-memory demands for this specific tenant if not already present
+  const memoryInvoices = ERP_FEES.filter(f => f.organization_id === orgId);
+  const seenIds = new Set(tenantInvoices.map(i => i.id));
+  for (const m of memoryInvoices) {
+    if (!seenIds.has(m.id) && !seenIds.has(m.db_id)) {
+      tenantInvoices.push(m);
+    }
+  }
+
+  // If this is seed org and no records exist yet, fallback to seed ERP_FEES
+  if (tenantInvoices.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    tenantInvoices = ERP_FEES.filter(f => !f.organization_id || f.organization_id === orgId);
+  }
+
+  const totalDues = tenantInvoices.filter(f => f.status !== "paid").reduce((acc, f) => acc + (Number(f.balanceAmount !== undefined ? f.balanceAmount : f.amountINR) || 0), 0);
+  const totalCollected = tenantInvoices.reduce((acc, f) => acc + (Number(f.paidAmount !== undefined ? f.paidAmount : (f.status === "paid" ? f.amountINR : 0)) || 0), 0);
+  res.json({ success: true, invoices: tenantInvoices, summary: { totalDues, totalCollected } });
 });
 
-// 6s. Legacy Compatibility Route: POST /api/erp/fees/pay
-app.post("/api/erp/fees/pay", (req, res) => {
-  const { invoiceId, paymentMethod } = req.body;
-  const inv = ERP_FEES.find(f => f.id === invoiceId);
+// 6s. Legacy Compatibility Route: POST /api/erp/fees/pay (Tenant-Isolated & DB Persisted)
+app.post("/api/erp/fees/pay", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { invoiceId, paymentMethod, amount } = req.body;
+  if (!invoiceId) {
+    return res.status(400).json({ success: false, message: "invoiceId is required" });
+  }
+
+  // Check in-memory for this organization
+  let inv = ERP_FEES.find(f => (f.organization_id === orgId) && (f.id === invoiceId || f.db_id === invoiceId));
+
+  // Check in Supabase if not found in memory
+  let dbFeeRecord = null;
+  if (supabase) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(invoiceId);
+    let q = supabase.from("student_fees").select("*").eq("organization_id", orgId);
+    if (isUuid) {
+      q = q.eq("id", invoiceId);
+    }
+    const { data } = await q.maybeSingle();
+    dbFeeRecord = data;
+  }
+
+  if (!inv && !dbFeeRecord) {
+    return res.status(404).json({ success: false, message: "Invoice not found or does not belong to this organization" });
+  }
+
+  const payAmt = Number(amount || inv?.balanceAmount || inv?.amountINR || dbFeeRecord?.amount_due || 0);
+  const receiptNo = `RCP-${Math.floor(100000 + Math.random() * 900000)}`;
+
   if (inv) {
     inv.status = "paid";
     inv.paidAt = new Date().toISOString().slice(0, 10);
     inv.paymentMethod = paymentMethod || "UPI";
-    inv.receiptNo = `RCP-${Math.floor(100000 + Math.random() * 900000)}`;
+    inv.receiptNo = receiptNo;
     if (inv.balanceAmount !== undefined) {
-      inv.paidAmount = inv.netAmount;
-      inv.balanceAmount = 0;
+      inv.paidAmount = (Number(inv.paidAmount) || 0) + payAmt;
+      inv.balanceAmount = Math.max(0, (Number(inv.netAmount) || Number(inv.amountINR)) - inv.paidAmount);
+      if (inv.balanceAmount > 0) inv.status = "partially_paid";
     }
-    return res.json({ success: true, message: "Payment processed successfully", invoice: inv });
   }
-  res.status(404).json({ success: false, message: "Invoice not found" });
+
+  // Persist to DB fee_payments & update student_fees
+  if (supabase && (dbFeeRecord || inv?.db_id)) {
+    const targetFeeId = dbFeeRecord ? dbFeeRecord.id : inv.db_id;
+    await recordDbFeePayment(orgId, {
+      studentFeeId: targetFeeId,
+      receiptNo,
+      amountPaid: payAmt,
+      paymentMode: paymentMethod || "upi"
+    });
+  }
+
+  res.json({
+    success: true,
+    message: "Payment processed successfully",
+    invoice: inv || {
+      id: dbFeeRecord.id,
+      organization_id: orgId,
+      status: "paid",
+      receiptNo,
+      paidAmount: payAmt
+    }
+  });
 });
 
 // =========================================================================
@@ -17228,10 +18795,10 @@ app.get("/api/erp/admissions/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const session = req.query.session || "2026-27";
 
-  const tenantApps = ERP_ADMISSIONS.filter(a => (!a.organization_id || a.organization_id === orgId) && (!session || a.academicSession === session));
-  const tenantLeads = IN_MEMORY_LEADS.filter(l => !l.organization_id || l.organization_id === orgId);
+  const tenantApps = ERP_ADMISSIONS.filter(a => (a.organization_id === orgId) && (!session || a.academicSession === session));
+  const tenantLeads = IN_MEMORY_LEADS.filter(l => l.organization_id === orgId);
   const appIds = new Set(tenantApps.map(a => a.id));
-  const tenantDocs = ERP_ADMISSION_DOCUMENTS.filter(d => (!d.organization_id || d.organization_id === orgId) && appIds.has(d.admissionId));
+  const tenantDocs = ERP_ADMISSION_DOCUMENTS.filter(d => (d.organization_id === orgId) && appIds.has(d.admissionId));
 
   const totalApplications = tenantApps.length;
   const newCount = tenantApps.filter(a => a.status === "new").length;
@@ -17303,7 +18870,7 @@ app.get("/api/erp/admissions", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { session, grade, status, source, search } = req.query;
 
-  let list = ERP_ADMISSIONS.filter(a => !a.organization_id || a.organization_id === orgId);
+  let list = ERP_ADMISSIONS.filter(a => a.organization_id === orgId);
 
   if (session) {
     list = list.filter(a => a.academicSession === session);
@@ -17343,7 +18910,7 @@ app.get("/api/erp/admissions", (req, res) => {
   res.json({
     success: true,
     count: enrichedList.length,
-    total: ERP_ADMISSIONS.filter(a => !a.organization_id || a.organization_id === orgId).length,
+    total: ERP_ADMISSIONS.filter(a => a.organization_id === orgId).length,
     admissions: enrichedList
   });
 });
@@ -17358,7 +18925,7 @@ app.get("/api/erp/admissions/merit-list", (req, res) => {
   const quotaLimit = Number(limit) || 50;
 
   let apps = ERP_ADMISSIONS.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (!session || a.academicSession === currentSession)
   );
 
@@ -17442,7 +19009,7 @@ app.get("/api/erp/admissions/:id", (req, res) => {
   const { id } = req.params;
 
   const adm = ERP_ADMISSIONS.find(a =>
-    (!a.organization_id || a.organization_id === orgId) &&
+    (a.organization_id === orgId) &&
     (a.id === id || a.applicationNo === id)
   );
 
@@ -17567,7 +19134,7 @@ app.patch("/api/erp/admissions/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
 
-  const adm = ERP_ADMISSIONS.find(a => (!a.organization_id || a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
+  const adm = ERP_ADMISSIONS.find(a => (a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
   if (!adm) {
     return res.status(404).json({ success: false, message: "Admission application not found" });
   }
@@ -17608,7 +19175,7 @@ const handleAdmissionStatusChange = (req, res) => {
     return res.status(400).json({ success: false, message: "Application ID and Status are required" });
   }
 
-  const adm = ERP_ADMISSIONS.find(a => (!a.organization_id || a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
+  const adm = ERP_ADMISSIONS.find(a => (a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
   if (!adm) {
     return res.status(404).json({ success: false, message: "Admission application not found" });
   }
@@ -17649,7 +19216,7 @@ app.post("/api/erp/admissions/:id/documents", (req, res) => {
     return res.status(400).json({ success: false, message: "documentType and documentName are required" });
   }
 
-  const adm = ERP_ADMISSIONS.find(a => (!a.organization_id || a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
+  const adm = ERP_ADMISSIONS.find(a => (a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
   if (!adm) {
     return res.status(404).json({ success: false, message: "Admission application not found" });
   }
@@ -17699,7 +19266,7 @@ app.patch("/api/erp/admissions/:id/documents/:docId", (req, res) => {
     return res.status(400).json({ success: false, message: "Rejection reason is mandatory when rejecting a document" });
   }
 
-  const doc = ERP_ADMISSION_DOCUMENTS.find(d => (!d.organization_id || d.organization_id === orgId) && d.id === docId && d.admissionId === id);
+  const doc = ERP_ADMISSION_DOCUMENTS.find(d => (d.organization_id === orgId) && d.id === docId && d.admissionId === id);
   if (!doc) {
     return res.status(404).json({ success: false, message: "Document not found" });
   }
@@ -17746,7 +19313,7 @@ app.post("/api/erp/admissions/:id/notes", (req, res) => {
     return res.status(400).json({ success: false, message: "Note content is required" });
   }
 
-  const adm = ERP_ADMISSIONS.find(a => (!a.organization_id || a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
+  const adm = ERP_ADMISSIONS.find(a => (a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
   if (!adm) {
     return res.status(404).json({ success: false, message: "Admission application not found" });
   }
@@ -17788,7 +19355,7 @@ app.get("/api/erp/admissions/:id/timeline", (req, res) => {
   const { id } = req.params;
 
   const timeline = ERP_ADMISSION_TIMELINE
-    .filter(t => (!t.organization_id || t.organization_id === orgId) && t.admissionId === id)
+    .filter(t => (t.organization_id === orgId) && t.admissionId === id)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   res.json({ success: true, timeline });
@@ -17799,7 +19366,7 @@ const handleDuplicateCheck = (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentName, dob, parentPhone, admissionNo } = req.body;
 
-  const tenantStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   const matches = [];
 
   for (const std of tenantStudents) {
@@ -17852,7 +19419,7 @@ const handleLeadConversion = async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const leadId = req.params.leadId || req.params.id;
 
-  let lead = IN_MEMORY_LEADS.find(l => (!l.organization_id || l.organization_id === orgId) && l.id === leadId);
+  let lead = IN_MEMORY_LEADS.find(l => (l.organization_id === orgId) && l.id === leadId);
   if (!lead && supabase) {
     const { data: dbLead } = await supabase.from("leads").select("*").eq("organization_id", orgId).eq("id", leadId).maybeSingle();
     if (dbLead) lead = dbLead;
@@ -17989,7 +19556,7 @@ const handleConfirmAdmission = async (req, res) => {
     return res.status(403).json({ success: false, message: "Forbidden: Only School Administrators or Admissions Officers can confirm admissions" });
   }
 
-  const adm = ERP_ADMISSIONS.find(a => (!a.organization_id || a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
+  const adm = ERP_ADMISSIONS.find(a => (a.organization_id === orgId) && (a.id === id || a.applicationNo === id));
   if (!adm) {
     return res.status(404).json({ success: false, message: "Admission application not found" });
   }
@@ -18003,10 +19570,34 @@ const handleConfirmAdmission = async (req, res) => {
   const academicSession = adm.academicSession || "2026-27";
 
   // 1. Check or Reuse Parent Record
-  let parentRecord = ERP_PARENTS.find(p => (!p.organization_id || p.organization_id === orgId) && (
+  let parentRecord = ERP_PARENTS.find(p => (p.organization_id === orgId) && (
     (adm.phone && p.phone === adm.phone) ||
     (adm.parentEmail && p.email && p.email.toLowerCase() === adm.parentEmail.toLowerCase())
   ));
+
+  if (!parentRecord && supabase) {
+    try {
+      let q = supabase.from("parents").select("*").eq("organization_id", orgId);
+      if (adm.phone) {
+        q = q.eq("phone", adm.phone);
+      }
+      const { data: dbP } = await q.maybeSingle();
+      if (dbP) {
+        parentRecord = {
+          id: dbP.id,
+          db_id: dbP.id,
+          name: dbP.name,
+          relation: dbP.relation,
+          phone: dbP.phone,
+          email: dbP.email,
+          occupation: dbP.occupation,
+          address: dbP.address,
+          organization_id: orgId
+        };
+        ERP_PARENTS.unshift(parentRecord);
+      }
+    } catch (_) {}
+  }
 
   if (!parentRecord) {
     parentRecord = {
@@ -18020,6 +19611,27 @@ const handleConfirmAdmission = async (req, res) => {
       organization_id: orgId,
       created_at: new Date().toISOString()
     };
+    if (supabase) {
+      try {
+        const { data: insP } = await supabase
+          .from("parents")
+          .insert([{
+            organization_id: orgId,
+            name: parentRecord.name,
+            relation: parentRecord.relation,
+            phone: parentRecord.phone,
+            email: parentRecord.email || null,
+            occupation: parentRecord.occupation,
+            address: parentRecord.address
+          }])
+          .select()
+          .maybeSingle();
+        if (insP) {
+          parentRecord.db_id = insP.id;
+          parentRecord.id = insP.id;
+        }
+      } catch (_) {}
+    }
     ERP_PARENTS.unshift(parentRecord);
   }
 
@@ -18144,12 +19756,12 @@ const handleConfirmAdmission = async (req, res) => {
 
   // 4. Generate Admission Fee Demand via Fees & Finance Module
   let targetFeeStruct = ERP_FEE_STRUCTURES.find(fs => 
-    (!fs.organization_id || fs.organization_id === orgId) &&
+    (fs.organization_id === orgId) &&
     fs.status === "active" &&
     (fs.grade === assignedGrade || fs.grade.toLowerCase().includes(assignedGrade.toLowerCase())) &&
     fs.feeHead.toLowerCase().includes("admission")
   ) || ERP_FEE_STRUCTURES.find(fs =>
-    (!fs.organization_id || fs.organization_id === orgId) &&
+    (fs.organization_id === orgId) &&
     fs.status === "active" &&
     (fs.grade === assignedGrade || fs.grade.toLowerCase().includes(assignedGrade.toLowerCase()))
   );
@@ -18261,6 +19873,23 @@ const handleConfirmAdmission = async (req, res) => {
 app.post("/api/erp/admissions/:id/confirm", handleConfirmAdmission);
 app.post("/api/erp/admissions/:id/convert-to-student", handleConfirmAdmission);
 
+// 7m. GET /api/erp/parents - List Tenant Parents with DB Persistence
+app.get("/api/erp/parents", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  if (supabase) {
+    try {
+      const { data: dbParents, error } = await supabase
+        .from("parents")
+        .select("*")
+        .eq("organization_id", orgId);
+      if (!error && Array.isArray(dbParents) && dbParents.length > 0) {
+        return res.json({ success: true, parents: dbParents, count: dbParents.length });
+      }
+    } catch (_) {}
+  }
+  const tenantParents = ERP_PARENTS.filter(p => p.organization_id === orgId);
+  res.json({ success: true, parents: tenantParents, count: tenantParents.length });
+});
 
 // =========================================================================
 // 📢 8. COMMUNICATION & NOTIFICATION REST API SUITE (Production SaaS Grade)
@@ -18478,10 +20107,10 @@ async function deleteNotificationDb(orgId, notifDbId) {
 // 8a. GET /api/erp/communication/overview - Server-side aggregate metrics
 app.get("/api/erp/communication/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const tenantNotices = ERP_NOTICES.filter(n => !n.organization_id || n.organization_id === orgId);
-  const tenantMessages = ERP_COMMUNICATION_MESSAGES.filter(m => !m.organization_id || m.organization_id === orgId);
-  const tenantDeliveries = ERP_MESSAGE_DELIVERIES.filter(d => !d.organization_id || d.organization_id === orgId);
-  const tenantNotifications = ERP_NOTIFICATIONS.filter(n => !n.organization_id || n.organization_id === orgId);
+  const tenantNotices = ERP_NOTICES.filter(n => n.organization_id === orgId);
+  const tenantMessages = ERP_COMMUNICATION_MESSAGES.filter(m => m.organization_id === orgId);
+  const tenantDeliveries = ERP_MESSAGE_DELIVERIES.filter(d => d.organization_id === orgId);
+  const tenantNotifications = ERP_NOTIFICATIONS.filter(n => n.organization_id === orgId);
 
   const totalMessages = tenantMessages.length;
   const sent = tenantMessages.filter(m => m.status === 'sent').length;
@@ -18545,7 +20174,7 @@ app.get("/api/erp/communication/overview", (req, res) => {
 app.get("/api/erp/communication/notices", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, priority, status, search, audienceType } = req.query;
-  let notices = ERP_NOTICES.filter(n => !n.organization_id || n.organization_id === orgId);
+  let notices = ERP_NOTICES.filter(n => n.organization_id === orgId);
 
   // Synchronize live notices from Supabase PostgreSQL if table has records
   if (supabase) {
@@ -18692,7 +20321,7 @@ app.post("/api/erp/communication/notices", async (req, res) => {
 
 app.get("/api/erp/communication/notices/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const notice = ERP_NOTICES.find(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
@@ -18702,7 +20331,7 @@ app.get("/api/erp/communication/notices/:id", (req, res) => {
 app.patch("/api/erp/communication/notices/:id", async (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const notice = ERP_NOTICES.find(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
@@ -18723,7 +20352,7 @@ app.patch("/api/erp/communication/notices/:id", async (req, res) => {
 app.post("/api/erp/communication/notices/:id/publish", async (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const notice = ERP_NOTICES.find(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
@@ -18765,7 +20394,7 @@ app.post("/api/erp/communication/notices/:id/publish", async (req, res) => {
 app.post("/api/erp/communication/notices/:id/archive", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const notice = ERP_NOTICES.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const notice = ERP_NOTICES.find(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notice) {
     return res.status(404).json({ success: false, message: "Notice not found" });
   }
@@ -18781,7 +20410,7 @@ app.post("/api/erp/communication/notices/:id/archive", (req, res) => {
 app.delete("/api/erp/communication/notices/:id", async (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const index = ERP_NOTICES.findIndex(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const index = ERP_NOTICES.findIndex(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   
   let targetNotice = null;
   if (index !== -1) {
@@ -18817,7 +20446,7 @@ app.post("/api/erp/communication/audience/preview", (req, res) => {
 app.get("/api/erp/communication/messages", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status, channel, search } = req.query;
-  let messages = ERP_COMMUNICATION_MESSAGES.filter(m => !m.organization_id || m.organization_id === orgId);
+  let messages = ERP_COMMUNICATION_MESSAGES.filter(m => m.organization_id === orgId);
 
   if (status && status !== 'all') messages = messages.filter(m => m.status === status);
   if (channel && channel !== 'all') messages = messages.filter(m => m.channel === channel);
@@ -18830,7 +20459,7 @@ app.get("/api/erp/communication/messages", (req, res) => {
 
   res.json({
     success: true,
-    total: ERP_COMMUNICATION_MESSAGES.filter(m => !m.organization_id || m.organization_id === orgId).length,
+    total: ERP_COMMUNICATION_MESSAGES.filter(m => m.organization_id === orgId).length,
     count: messages.length,
     messages
   });
@@ -18890,12 +20519,12 @@ app.post("/api/erp/communication/messages", (req, res) => {
 
 app.get("/api/erp/communication/messages/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const message = ERP_COMMUNICATION_MESSAGES.find(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
+  const message = ERP_COMMUNICATION_MESSAGES.find(m => (m.organization_id === orgId) && m.id === req.params.id);
   if (!message) {
     return res.status(404).json({ success: false, message: "Message not found" });
   }
 
-  const deliveries = ERP_MESSAGE_DELIVERIES.filter(d => (!d.organization_id || d.organization_id === orgId) && d.messageId === message.id);
+  const deliveries = ERP_MESSAGE_DELIVERIES.filter(d => (d.organization_id === orgId) && d.messageId === message.id);
   const stats = {
     total: deliveries.length,
     delivered: deliveries.filter(d => d.status === 'delivered' || d.status === 'read').length,
@@ -18909,7 +20538,7 @@ app.get("/api/erp/communication/messages/:id", (req, res) => {
 app.post("/api/erp/communication/messages/:id/send", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const message = ERP_COMMUNICATION_MESSAGES.find(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
+  const message = ERP_COMMUNICATION_MESSAGES.find(m => (m.organization_id === orgId) && m.id === req.params.id);
   if (!message) {
     return res.status(404).json({ success: false, message: "Message not found" });
   }
@@ -18951,7 +20580,7 @@ app.post("/api/erp/communication/messages/:id/send", (req, res) => {
 app.post("/api/erp/communication/messages/:id/cancel", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const message = ERP_COMMUNICATION_MESSAGES.find(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
+  const message = ERP_COMMUNICATION_MESSAGES.find(m => (m.organization_id === orgId) && m.id === req.params.id);
   if (!message) {
     return res.status(404).json({ success: false, message: "Message not found" });
   }
@@ -18967,7 +20596,7 @@ app.post("/api/erp/communication/messages/:id/cancel", (req, res) => {
 app.delete("/api/erp/communication/messages/:id", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const mIdx = ERP_COMMUNICATION_MESSAGES.findIndex(m => (!m.organization_id || m.organization_id === orgId) && m.id === req.params.id);
+  const mIdx = ERP_COMMUNICATION_MESSAGES.findIndex(m => (m.organization_id === orgId) && m.id === req.params.id);
   if (mIdx !== -1) {
     ERP_COMMUNICATION_MESSAGES.splice(mIdx, 1);
   }
@@ -18983,7 +20612,7 @@ app.delete("/api/erp/communication/messages/:id", (req, res) => {
 app.get("/api/erp/communication/templates", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, channel, search } = req.query;
-  let templates = ERP_MESSAGE_TEMPLATES.filter(t => !t.organization_id || t.organization_id === orgId);
+  let templates = ERP_MESSAGE_TEMPLATES.filter(t => t.organization_id === orgId);
 
   if (category && category !== 'all') templates = templates.filter(t => t.category === category);
   if (channel && channel !== 'all') templates = templates.filter(t => t.channel === channel || t.channel === 'all');
@@ -19004,7 +20633,7 @@ app.post("/api/erp/communication/templates", async (req, res) => {
     return res.status(400).json({ success: false, message: "Code, name, and body are required" });
   }
 
-  const existing = ERP_MESSAGE_TEMPLATES.find(t => (!t.organization_id || t.organization_id === orgId) && t.code === code.toUpperCase().trim());
+  const existing = ERP_MESSAGE_TEMPLATES.find(t => (t.organization_id === orgId) && t.code === code.toUpperCase().trim());
   if (existing) {
     return res.status(400).json({ success: false, message: `Template with code ${code} already exists` });
   }
@@ -19060,7 +20689,7 @@ app.post("/api/erp/communication/templates", async (req, res) => {
 
 app.get("/api/erp/communication/templates/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const template = ERP_MESSAGE_TEMPLATES.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
+  const template = ERP_MESSAGE_TEMPLATES.find(t => (t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
   if (!template) {
     return res.status(404).json({ success: false, message: "Template not found" });
   }
@@ -19070,7 +20699,7 @@ app.get("/api/erp/communication/templates/:id", (req, res) => {
 app.patch("/api/erp/communication/templates/:id", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const template = ERP_MESSAGE_TEMPLATES.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
+  const template = ERP_MESSAGE_TEMPLATES.find(t => (t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
   if (!template) {
     return res.status(404).json({ success: false, message: "Template not found" });
   }
@@ -19083,7 +20712,7 @@ app.patch("/api/erp/communication/templates/:id", (req, res) => {
 app.delete("/api/erp/communication/templates/:id", (req, res) => {
   if (!checkCommunicationAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const tIdx = ERP_MESSAGE_TEMPLATES.findIndex(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
+  const tIdx = ERP_MESSAGE_TEMPLATES.findIndex(t => (t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
   if (tIdx !== -1) {
     ERP_MESSAGE_TEMPLATES.splice(tIdx, 1);
   }
@@ -19092,7 +20721,7 @@ app.delete("/api/erp/communication/templates/:id", (req, res) => {
 
 app.post("/api/erp/communication/templates/:id/preview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const template = ERP_MESSAGE_TEMPLATES.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
+  const template = ERP_MESSAGE_TEMPLATES.find(t => (t.organization_id === orgId) && (t.id === req.params.id || t.code === req.params.id));
   if (!template) {
     return res.status(404).json({ success: false, message: "Template not found" });
   }
@@ -19149,7 +20778,7 @@ app.post("/api/erp/communication/templates/:id/preview", (req, res) => {
 app.get("/api/erp/communication/scheduled", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const scheduled = ERP_COMMUNICATION_MESSAGES
-    .filter(m => (!m.organization_id || m.organization_id === orgId) && m.status === 'scheduled')
+    .filter(m => (m.organization_id === orgId) && m.status === 'scheduled')
     .sort((a, b) => new Date(a.scheduledAt || a.createdAt) - new Date(b.scheduledAt || b.createdAt));
 
   res.json({ success: true, count: scheduled.length, scheduled });
@@ -19159,7 +20788,7 @@ app.get("/api/erp/communication/scheduled", (req, res) => {
 app.get("/api/erp/communication/delivery-logs", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status, channel, messageId, search } = req.query;
-  let deliveries = ERP_MESSAGE_DELIVERIES.filter(d => !d.organization_id || d.organization_id === orgId);
+  let deliveries = ERP_MESSAGE_DELIVERIES.filter(d => d.organization_id === orgId);
 
   if (status && status !== 'all') deliveries = deliveries.filter(d => d.status === status);
   if (channel && channel !== 'all') deliveries = deliveries.filter(d => d.channel === channel);
@@ -19173,7 +20802,7 @@ app.get("/api/erp/communication/delivery-logs", (req, res) => {
 
   res.json({
     success: true,
-    total: ERP_MESSAGE_DELIVERIES.filter(d => !d.organization_id || d.organization_id === orgId).length,
+    total: ERP_MESSAGE_DELIVERIES.filter(d => d.organization_id === orgId).length,
     count: deliveries.length,
     deliveries
   });
@@ -19243,7 +20872,7 @@ app.get("/api/erp/communication/notifications", async (req, res) => {
 
 app.patch("/api/erp/communication/notifications/:id/read", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const notif = ERP_NOTIFICATIONS.find(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const notif = ERP_NOTIFICATIONS.find(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (!notif) {
     return res.status(404).json({ success: false, message: "Notification not found" });
   }
@@ -19253,7 +20882,7 @@ app.patch("/api/erp/communication/notifications/:id/read", async (req, res) => {
     await markNotificationReadDb(orgId, notif.db_id || req.params.id, req.user?.id);
   }
 
-  const unreadCount = ERP_NOTIFICATIONS.filter(n => (!n.organization_id || n.organization_id === orgId) && !n.readAt).length;
+  const unreadCount = ERP_NOTIFICATIONS.filter(n => (n.organization_id === orgId) && !n.readAt).length;
 
   res.json({ success: true, message: "Notification marked as read", notification: notif, unreadCount });
 });
@@ -19264,7 +20893,7 @@ app.post("/api/erp/communication/notifications/read-all", (req, res) => {
   let count = 0;
 
   ERP_NOTIFICATIONS.forEach(n => {
-    if (!n.organization_id || n.organization_id === orgId) {
+    if (n.organization_id === orgId) {
       if (role === 'admin' || role === 'superadmin' || n.recipientRole === role || n.recipientRole === 'all' || n.recipientUserId === req.user?.id) {
         if (!n.readAt) {
           n.readAt = new Date().toISOString();
@@ -19280,7 +20909,7 @@ app.post("/api/erp/communication/notifications/read-all", (req, res) => {
 // DELETE /api/erp/communication/notifications/:id - Teardown notification
 app.delete("/api/erp/communication/notifications/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const idx = ERP_NOTIFICATIONS.findIndex(n => (!n.organization_id || n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
+  const idx = ERP_NOTIFICATIONS.findIndex(n => (n.organization_id === orgId) && (n.id === req.params.id || n.db_id === req.params.id));
   if (idx !== -1) {
     ERP_NOTIFICATIONS.splice(idx, 1);
   }
@@ -19310,7 +20939,7 @@ app.patch("/api/erp/communication/settings", (req, res) => {
 app.get("/api/erp/communication/preferences", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const userId = req.user?.id || req.user?.role || "admin";
-  let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (!p.organization_id || p.organization_id === orgId) && p.userId === userId);
+  let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (p.organization_id === orgId) && p.userId === userId);
   if (!pref) {
     pref = {
       organization_id: orgId,
@@ -19329,7 +20958,7 @@ app.get("/api/erp/communication/preferences", (req, res) => {
 app.patch("/api/erp/communication/preferences", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const userId = req.user?.id || req.user?.role || "admin";
-  let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (!p.organization_id || p.organization_id === orgId) && p.userId === userId);
+  let pref = ERP_COMMUNICATION_PREFERENCES.find(p => (p.organization_id === orgId) && p.userId === userId);
   if (!pref) {
     pref = { organization_id: orgId, userId };
     ERP_COMMUNICATION_PREFERENCES.push(pref);
@@ -19643,7 +21272,7 @@ app.get("/api/erp/communication/gateway/logs", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { provider, status, limit = 50 } = req.query;
 
-  let logs = ERP_GATEWAY_LOGS.filter(l => !l.organization_id || l.organization_id === orgId);
+  let logs = ERP_GATEWAY_LOGS.filter(l => l.organization_id === orgId);
   if (provider && provider !== "all") logs = logs.filter(l => l.provider === provider);
   if (status && status !== "all") logs = logs.filter(l => l.status === status);
 
@@ -19854,7 +21483,7 @@ app.post("/api/erp/communication/trigger/absence", async (req, res) => {
     return res.status(400).json({ success: false, message: "studentId is required" });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.id === studentId);
   const studentName = student ? student.name : "Student";
   const parentPhone = student?.parentPhone || student?.phone || "+919876543210";
   const className = student ? `${student.grade || student.class}-${student.section || "A"}` : "Class 10-A";
@@ -19910,7 +21539,7 @@ app.post("/api/erp/communication/trigger/fee-receipt", async (req, res) => {
     return res.status(400).json({ success: false, message: "studentId and amount are required" });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.id === studentId);
   const studentName = student ? student.name : "Student";
   const parentPhone = student?.parentPhone || student?.phone || "+919876543210";
   const rNo = receiptNo || `RCP-AUTO-${Date.now().toString().slice(-6)}`;
@@ -19959,7 +21588,7 @@ app.post("/api/erp/communication/trigger/fee-receipt", async (req, res) => {
 // Legacy routes preserved for 100% backward compatibility
 app.get("/api/erp/communication", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const notices = ERP_NOTICES.filter(n => !n.organization_id || n.organization_id === orgId);
+  const notices = ERP_NOTICES.filter(n => n.organization_id === orgId);
   res.json({ success: true, notices });
 });
 
@@ -20126,7 +21755,7 @@ async function resolveOrCreateStudentTransportDbId(orgId, studentIdentifier) {
   if (!supabase) return null;
 
   const memStd = ERP_STUDENTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.id === studentIdentifier || s.db_id === studentIdentifier || s.admissionNo === studentIdentifier)
   );
 
@@ -20166,7 +21795,7 @@ async function recordStudentTransportAllocationDb(orgId, studentIdentifier, rout
       if (isUuid.test(routeId)) {
         routeDbId = routeId;
       } else {
-        const r = ERP_TRANSPORT.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === routeId || t.routeNumber === routeId));
+        const r = ERP_TRANSPORT.find(t => (t.organization_id === orgId) && (t.id === routeId || t.routeNumber === routeId));
         if (r) {
           const dbR = await resolveOrCreateTransportRouteDb(orgId, r);
           routeDbId = dbR?.id || null;
@@ -20181,7 +21810,7 @@ async function recordStudentTransportAllocationDb(orgId, studentIdentifier, rout
         vehicleDbId = vehicleId;
       } else {
         const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(veh => 
-          (!veh.organization_id || veh.organization_id === orgId) && 
+          (veh.organization_id === orgId) && 
           (veh.id === vehicleId || veh.registrationNumber === vehicleId)
         );
         if (v) {
@@ -20238,7 +21867,7 @@ async function deleteTransportRouteDb(orgId, routeIdentifier) {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let routeDbId = isUuid.test(routeIdentifier) ? routeIdentifier : null;
     if (!routeDbId) {
-      const r = ERP_TRANSPORT.find(t => (!t.organization_id || t.organization_id === orgId) && (t.id === routeIdentifier || t.routeNumber === routeIdentifier));
+      const r = ERP_TRANSPORT.find(t => (t.organization_id === orgId) && (t.id === routeIdentifier || t.routeNumber === routeIdentifier));
       if (r && r.db_id) routeDbId = r.db_id;
     }
 
@@ -20262,7 +21891,7 @@ async function deleteVehicleDb(orgId, vehicleIdentifier) {
     let vehicleDbId = isUuid.test(vehicleIdentifier) ? vehicleIdentifier : null;
     if (!vehicleDbId) {
       const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(veh => 
-        (!veh.organization_id || veh.organization_id === orgId) && 
+        (veh.organization_id === orgId) && 
         (veh.id === vehicleIdentifier || veh.registrationNumber === vehicleIdentifier)
       );
       if (v && v.db_id) vehicleDbId = v.db_id;
@@ -20285,9 +21914,9 @@ async function deleteVehicleDb(orgId, vehicleIdentifier) {
 // -------------------------------------------------------------------------
 app.get("/api/erp/transport/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
-  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => !v.organization_id || v.organization_id === orgId);
-  const allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(s => !s.organization_id || s.organization_id === orgId);
+  const routes = ERP_TRANSPORT.filter(r => r.organization_id === orgId);
+  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => v.organization_id === orgId);
+  const allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(s => s.organization_id === orgId);
 
   const totalRoutes = routes.length;
   const totalVehicles = vehicles.length;
@@ -20325,7 +21954,7 @@ app.get("/api/erp/transport/routes", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { q, status } = req.query;
 
-  let routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  let routes = ERP_TRANSPORT.filter(r => r.organization_id === orgId);
 
   if (status) {
     routes = routes.filter(r => (r.currentStatus || "depot").toLowerCase() === status.toLowerCase());
@@ -20423,7 +22052,7 @@ app.get("/api/erp/transport/routes/:id", (req, res) => {
   const { id } = req.params;
 
   const route = ERP_TRANSPORT.find(r => 
-    (!r.organization_id || r.organization_id === orgId) && 
+    (r.organization_id === orgId) && 
     (r.id === id || r.db_id === id || r.routeNumber === id)
   );
 
@@ -20437,18 +22066,18 @@ app.get("/api/erp/transport/routes/:id", (req, res) => {
 
   // Resolve assigned vehicle
   const vehicle = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
-    (!v.organization_id || v.organization_id === orgId) && 
+    (v.organization_id === orgId) && 
     (v.registrationNumber === route.vehicleNumber || v.assignedRouteId === route.id || v.assignedRouteId === route.db_id)
   );
 
   // Resolve passengers list
   const allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.routeId === route.id || a.routeId === route.db_id)
   );
 
   const passengers = allocations.map(a => {
-    const s = ERP_STUDENTS.find(std => (!std.organization_id || std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
+    const s = ERP_STUDENTS.find(std => (std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
     return {
       studentId: a.studentId,
       studentName: s?.name || "Student",
@@ -20476,7 +22105,7 @@ app.patch("/api/erp/transport/routes/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_TRANSPORT.findIndex(r => 
-    (!r.organization_id || r.organization_id === orgId) && 
+    (r.organization_id === orgId) && 
     (r.id === id || r.db_id === id)
   );
 
@@ -20525,7 +22154,7 @@ app.delete("/api/erp/transport/routes/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_TRANSPORT.findIndex(r => 
-    (!r.organization_id || r.organization_id === orgId) && 
+    (r.organization_id === orgId) && 
     (r.id === id || r.db_id === id)
   );
 
@@ -20554,7 +22183,7 @@ app.delete("/api/erp/transport/routes/:id", requireAuth, async (req, res) => {
 // -------------------------------------------------------------------------
 app.get("/api/erp/transport/vehicles", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => !v.organization_id || v.organization_id === orgId);
+  const vehicles = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).filter(v => v.organization_id === orgId);
 
   res.json({
     success: true,
@@ -20590,7 +22219,7 @@ app.post("/api/erp/transport/vehicles", requireAuth, async (req, res) => {
 
   // Prevent duplicate registration numbers in tenant
   const existingVeh = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
-    (!v.organization_id || v.organization_id === orgId) && 
+    (v.organization_id === orgId) && 
     v.registrationNumber.toUpperCase() === finalRegNo
   );
   if (existingVeh) {
@@ -20638,7 +22267,7 @@ app.patch("/api/erp/transport/vehicles/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
 
   const idx = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).findIndex(v => 
-    (!v.organization_id || v.organization_id === orgId) && 
+    (v.organization_id === orgId) && 
     (v.id === id || v.db_id === id)
   );
 
@@ -20688,7 +22317,7 @@ app.delete("/api/erp/transport/vehicles/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
 
   const idx = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).findIndex(v => 
-    (!v.organization_id || v.organization_id === orgId) && 
+    (v.organization_id === orgId) && 
     (v.id === id || v.db_id === id)
   );
 
@@ -20720,16 +22349,16 @@ app.get("/api/erp/transport/students", (req, res) => {
   const { routeId, vehicleId, grade, section, q } = req.query;
 
   let allocations = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
-    !a.organization_id || a.organization_id === orgId
+    a.organization_id === orgId
   );
 
   if (routeId) allocations = allocations.filter(a => a.routeId === routeId);
   if (vehicleId) allocations = allocations.filter(a => a.vehicleId === vehicleId);
 
   const results = allocations.map(a => {
-    const s = ERP_STUDENTS.find(std => (!std.organization_id || std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
-    const r = ERP_TRANSPORT.find(rt => (!rt.organization_id || rt.organization_id === orgId) && (rt.id === a.routeId || rt.db_id === a.routeId));
-    const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(vh => (!vh.organization_id || vh.organization_id === orgId) && (vh.id === a.vehicleId || vh.db_id === a.vehicleId));
+    const s = ERP_STUDENTS.find(std => (std.organization_id === orgId) && (std.id === a.studentId || std.db_id === a.studentId));
+    const r = ERP_TRANSPORT.find(rt => (rt.organization_id === orgId) && (rt.id === a.routeId || rt.db_id === a.routeId));
+    const v = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(vh => (vh.organization_id === orgId) && (vh.id === a.vehicleId || vh.db_id === a.vehicleId));
 
     return {
       id: a.id,
@@ -20782,7 +22411,7 @@ app.post("/api/erp/transport/students/allocate", requireAuth, async (req, res) =
   }
 
   const route = ERP_TRANSPORT.find(r => 
-    (!r.organization_id || r.organization_id === orgId) && 
+    (r.organization_id === orgId) && 
     (r.id === routeId || r.db_id === routeId)
   );
 
@@ -20796,7 +22425,7 @@ app.post("/api/erp/transport/students/allocate", requireAuth, async (req, res) =
 
   // Capacity overload validation
   const currentAssigned = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.routeId === route.id || a.routeId === route.db_id)
   ).length;
 
@@ -20809,7 +22438,7 @@ app.post("/api/erp/transport/students/allocate", requireAuth, async (req, res) =
 
   // Resolve vehicle
   const targetVeh = (typeof ERP_VEHICLES !== "undefined" ? ERP_VEHICLES : []).find(v => 
-    (!v.organization_id || v.organization_id === orgId) && 
+    (v.organization_id === orgId) && 
     (v.id === vehicleId || v.registrationNumber === route.vehicleNumber)
   );
 
@@ -20842,7 +22471,7 @@ app.post("/api/erp/transport/students/allocate", requireAuth, async (req, res) =
 
   // Update in-memory collections
   const existIdx = ERP_STUDENT_TRANSPORT.findIndex(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.studentId === studentId)
   );
   if (existIdx !== -1) {
@@ -20875,7 +22504,7 @@ app.delete("/api/erp/transport/students/:studentId", requireAuth, async (req, re
   const { studentId } = req.params;
 
   const idx = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).findIndex(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.studentId === studentId)
   );
 
@@ -20905,12 +22534,12 @@ app.get("/api/erp/transport/students/:studentId/pass", (req, res) => {
   const { studentId } = req.params;
 
   const alloc = (typeof ERP_STUDENT_TRANSPORT !== "undefined" ? ERP_STUDENT_TRANSPORT : []).find(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.studentId === studentId)
   );
 
   const student = ERP_STUDENTS.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === studentId || s.db_id === studentId || s.admissionNo === studentId)
   );
 
@@ -20962,7 +22591,7 @@ app.get("/api/erp/transport/students/:studentId/pass", (req, res) => {
 // -------------------------------------------------------------------------
 app.get("/api/erp/transport/tracking", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  const routes = ERP_TRANSPORT.filter(r => r.organization_id === orgId);
 
   const fleetLocations = routes.map(r => ({
     routeId: r.id,
@@ -20991,7 +22620,7 @@ app.post("/api/erp/transport/tracking/ping", requireAuth, (req, res) => {
   const { routeId, vehicleNumber, latitude, longitude, speedKmH, statusText, status } = req.body;
 
   const route = ERP_TRANSPORT.find(r => 
-    (!r.organization_id || r.organization_id === orgId) && 
+    (r.organization_id === orgId) && 
     (r.id === routeId || r.routeNumber === routeId || r.vehicleNumber === vehicleNumber)
   );
 
@@ -21028,7 +22657,7 @@ app.post("/api/erp/transport/tracking/ping", requireAuth, (req, res) => {
 // -------------------------------------------------------------------------
 app.get("/api/erp/transport", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  const routes = ERP_TRANSPORT.filter(r => r.organization_id === orgId);
   res.json({ success: true, routes });
 });
 
@@ -21044,7 +22673,7 @@ async function resolveOrCreateLibraryBook(orgId, bookData) {
   const targetId = bookData.id || bookData.bookId;
 
   let memoryBook = ERP_LIBRARY_BOOKS.find(b => 
-    (!b.organization_id || b.organization_id === orgId) && 
+    (b.organization_id === orgId) && 
     (b.id === targetId || b.db_id === targetId || (b.isbn && bookData.isbn && b.isbn === bookData.isbn) || (b.title && b.title.toLowerCase() === bookData.title.toLowerCase()))
   );
 
@@ -21180,7 +22809,7 @@ async function resolveLibraryBorrowerDbId(orgId, memberType, memberId) {
 
   if (memberType === "student") {
     const st = ERP_STUDENTS.find(s => 
-      (!s.organization_id || s.organization_id === orgId) && 
+      (s.organization_id === orgId) && 
       (s.id === memberId || s.admissionNo === memberId || s.db_id === memberId)
     );
     if (st && st.db_id) {
@@ -21198,7 +22827,7 @@ async function resolveLibraryBorrowerDbId(orgId, memberType, memberId) {
     }
   } else {
     const sf = ERP_STAFF.find(s => 
-      (!s.organization_id || s.organization_id === orgId) && 
+      (s.organization_id === orgId) && 
       (s.id === memberId || s.empId === memberId || s.db_id === memberId)
     );
     if (sf && sf.db_id) {
@@ -21264,7 +22893,7 @@ async function updateLibraryTransactionReturnDb(orgId, txId, returnedAt, fine = 
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let memoryTx = ERP_LIBRARY_TRANSACTIONS.find(t => 
-    (!t.organization_id || t.organization_id === orgId) && 
+    (t.organization_id === orgId) && 
     (t.id === txId || t.db_id === txId)
   );
 
@@ -22730,9 +24359,9 @@ app.post("/api/erp/library/return", (req, res) => {
 app.get("/api/erp/payroll/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const month = (req.query.month || new Date().toISOString().slice(0, 7)).trim(); // YYYY-MM
-  const orgStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  const orgStaff = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.status !== "resigned");
   const orgPayroll = ERP_PAYROLL.filter(p => 
-    (!p.organization_id || p.organization_id === orgId) && 
+    (p.organization_id === orgId) && 
     (p.salaryMonth?.startsWith(month) || p.monthYear?.includes(month))
   );
 
@@ -22767,7 +24396,7 @@ app.get("/api/erp/payroll/records", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { month, status, department } = req.query;
 
-  let records = ERP_PAYROLL.filter(p => !p.organization_id || p.organization_id === orgId);
+  let records = ERP_PAYROLL.filter(p => p.organization_id === orgId);
 
   // Sync from Supabase public.payroll
   if (supabase) {
@@ -22837,7 +24466,7 @@ app.post("/api/erp/payroll/generate", async (req, res) => {
     : `${new Date().toISOString().slice(0, 7)}-01`;
   const monthPrefix = monthDate.slice(0, 7);
 
-  let targetStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.status !== "resigned");
+  let targetStaff = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.status !== "resigned");
   if (Array.isArray(staffIds) && staffIds.length > 0) {
     targetStaff = targetStaff.filter(s => staffIds.includes(s.id) || staffIds.includes(s.empId) || staffIds.includes(s.db_id));
   }
@@ -22848,7 +24477,7 @@ app.post("/api/erp/payroll/generate", async (req, res) => {
 
   const generatedRecords = [];
   const monthAtt = ERP_STAFF_ATTENDANCE.filter(a => 
-    (!a.organization_id || a.organization_id === orgId) && 
+    (a.organization_id === orgId) && 
     (a.attendanceDate && a.attendanceDate.startsWith(monthPrefix))
   );
 
@@ -22866,7 +24495,7 @@ app.post("/api/erp/payroll/generate", async (req, res) => {
     
     // Check if payroll already exists for this staff in this month
     let payrollRecord = ERP_PAYROLL.find(p => 
-      (!p.organization_id || p.organization_id === orgId) && 
+      (p.organization_id === orgId) && 
       (p.staffId === stf.id || p.empId === stf.empId) && 
       (p.salaryMonth === monthDate || p.salaryMonth?.startsWith(monthPrefix))
     );
@@ -22975,7 +24604,7 @@ app.post("/api/erp/payroll/disburse", async (req, res) => {
 
   for (const pid of idsToDisburse) {
     const p = ERP_PAYROLL.find(item => 
-      (!item.organization_id || item.organization_id === orgId) && 
+      (item.organization_id === orgId) && 
       (item.id === pid || item.db_id === pid)
     );
     if (p) {
@@ -23030,14 +24659,14 @@ app.get("/api/erp/payroll/payslip/:id", (req, res) => {
   const { format, month } = req.query;
 
   let p = ERP_PAYROLL.find(item => 
-    (!item.organization_id || item.organization_id === orgId) && 
+    (item.organization_id === orgId) && 
     (item.id === id || item.db_id === id)
   );
 
   // If not found by payroll ID, check if id is a staffId
   if (!p) {
     p = ERP_PAYROLL.find(item => 
-      (!item.organization_id || item.organization_id === orgId) && 
+      (item.organization_id === orgId) && 
       (item.staffId === id || item.empId === id) &&
       (!month || item.salaryMonth?.startsWith(month) || item.monthYear?.includes(month))
     );
@@ -23048,7 +24677,7 @@ app.get("/api/erp/payroll/payslip/:id", (req, res) => {
   }
 
   const staff = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === p.staffId || s.empId === p.empId || s.db_id === p.staffId)
   ) || {
     name: p.staffName,
@@ -23099,7 +24728,7 @@ app.get("/api/erp/payroll/payslip/:id", (req, res) => {
 // 11f. Legacy GET /api/erp/payroll for backward compatibility
 app.get("/api/erp/payroll", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const orgPayroll = ERP_PAYROLL.filter(p => !p.organization_id || p.organization_id === orgId);
+  const orgPayroll = ERP_PAYROLL.filter(p => p.organization_id === orgId);
   const totalDisbursed = orgPayroll
     .filter(p => p.status === "paid" || p.paymentStatus === "processed")
     .reduce((acc, p) => acc + (Number(p.netSalary || p.net_salary || p.netPayoutINR) || 0), 0);
@@ -23165,7 +24794,7 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
 
   // Student metrics
-  const students = isForeignEmpty ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const students = isForeignEmpty ? [] : ERP_STUDENTS.filter(s => s.organization_id === orgId);
   const totalStudents = students.length;
   const activeStudents = students.filter(s => s.status === "active").length;
   const inactiveStudents = totalStudents - activeStudents;
@@ -23173,14 +24802,14 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const femaleStudents = students.filter(s => (s.gender || "").toLowerCase() === "female").length;
 
   // Staff metrics
-  const staff = isForeignEmpty ? [] : ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  const staff = isForeignEmpty ? [] : ERP_STAFF.filter(s => s.organization_id === orgId);
   const totalStaff = staff.length;
   const teachers = staff.filter(s => (s.staffType || s.role || "").toLowerCase().includes("teacher")).length;
   const nonTeaching = totalStaff - teachers;
   const onLeaveStaff = staff.filter(s => s.status === "on_leave").length;
 
   // Attendance metrics
-  const studentAtt = isForeignEmpty ? [] : (ERP_ATTENDANCE || []).filter(a => !a.organization_id || a.organization_id === orgId);
+  const studentAtt = isForeignEmpty ? [] : (ERP_ATTENDANCE || []).filter(a => a.organization_id === orgId);
   const today = new Date().toISOString().split("T")[0];
   const todayRecords = studentAtt.filter(a => a.date === today);
   const markedStudents = todayRecords.length > 0 ? todayRecords.length : (totalStudents > 0 ? totalStudents : 0);
@@ -23189,34 +24818,34 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const attendanceRate = markedStudents > 0 ? Math.round((presentStudents / markedStudents) * 1000) / 10 : 0;
 
   // Fees metrics
-  const demands = isForeignEmpty ? [] : ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+  const demands = isForeignEmpty ? [] : ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
   const totalDemanded = demands.reduce((acc, d) => acc + (d.netAmount || d.amountINR || d.baseAmount || d.finalAmount || d.amount || 0), 0);
   const totalCollected = demands.reduce((acc, d) => acc + (d.paidAmount || 0), 0);
   const totalOutstanding = demands.reduce((acc, d) => acc + (d.balanceAmount || 0), 0);
   const collectionRate = totalDemanded > 0 ? Math.round((totalCollected / totalDemanded) * 1000) / 10 : 0;
 
   // Exams metrics
-  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
+  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => e.organization_id === orgId);
   const totalExams = exams.length;
   const completedExams = exams.filter(e => e.status === "completed" || e.status === "published" || e.isLocked).length;
-  const distinctionsCount = isForeignEmpty ? 0 : (ERP_EXAM_RESULTS || []).filter(r => (!r.organization_id || r.organization_id === orgId) && (r.percentage || 0) >= 80).length;
+  const distinctionsCount = isForeignEmpty ? 0 : (ERP_EXAM_RESULTS || []).filter(r => (r.organization_id === orgId) && (r.percentage || 0) >= 80).length;
 
   // Library metrics
-  const books = isForeignEmpty ? [] : ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
-  const copies = isForeignEmpty ? [] : ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
+  const books = isForeignEmpty ? [] : ERP_LIBRARY_BOOKS.filter(b => b.organization_id === orgId);
+  const copies = isForeignEmpty ? [] : ERP_LIBRARY_COPIES.filter(c => c.organization_id === orgId);
   const totalBooks = books.length;
   const totalCopies = copies.length;
   const issuedCopies = copies.filter(c => c.status === "issued").length;
-  const overdueLoans = isForeignEmpty ? 0 : (ERP_LIBRARY_TRANSACTIONS || []).filter(t => (!t.organization_id || t.organization_id === orgId) && t.status === "issued" && new Date(t.dueDate) < new Date()).length;
+  const overdueLoans = isForeignEmpty ? 0 : (ERP_LIBRARY_TRANSACTIONS || []).filter(t => (t.organization_id === orgId) && t.status === "issued" && new Date(t.dueDate) < new Date()).length;
 
   // Transport metrics
-  const routes = isForeignEmpty ? [] : ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  const routes = isForeignEmpty ? [] : ERP_TRANSPORT.filter(r => r.organization_id === orgId);
   const totalCapacity = routes.reduce((acc, r) => acc + (r.capacity || 0), 0);
   const assignedStudents = routes.reduce((acc, r) => acc + (r.assignedStudentsCount || 0), 0);
   const transportOccupancy = totalCapacity > 0 ? Math.round((assignedStudents / totalCapacity) * 1000) / 10 : 0;
 
   // Admissions metrics
-  const admissions = isForeignEmpty ? [] : (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
+  const admissions = isForeignEmpty ? [] : (ERP_ADMISSIONS || []).filter(a => a.organization_id === orgId);
   const totalApplications = admissions.length;
   const admittedCount = admissions.filter(a => a.status === "admitted").length;
   const underReviewCount = admissions.filter(a => a.status === "under_review" || a.status === "new").length;
@@ -23224,13 +24853,13 @@ app.get("/api/erp/reports/overview", (req, res) => {
   const conversionRate = totalApplications > 0 ? Math.round((admittedCount / totalApplications) * 1000) / 10 : 0;
 
   // Communication metrics
-  const messages = isForeignEmpty ? [] : (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
+  const messages = isForeignEmpty ? [] : (ERP_COMMUNICATION_MESSAGES || []).filter(m => m.organization_id === orgId);
   const totalMessages = messages.length;
   const deliveredMessages = messages.filter(m => m.status === "delivered" || m.status === "read").length;
   const commDeliveryRate = totalMessages > 0 ? Math.round((deliveredMessages / totalMessages) * 1000) / 10 : (isForeignEmpty ? 0 : 98.4);
-  const unreadNotifs = isForeignEmpty ? 0 : (ERP_NOTIFICATIONS || []).filter(n => (!n.organization_id || n.organization_id === orgId) && !n.isRead).length;
+  const unreadNotifs = isForeignEmpty ? 0 : (ERP_NOTIFICATIONS || []).filter(n => (n.organization_id === orgId) && !n.isRead).length;
 
-  const tenantAuditLogs = isForeignEmpty ? [] : IN_MEMORY_AUDIT_LOGS.filter(l => !l.organization_id || l.organization_id === orgId);
+  const tenantAuditLogs = isForeignEmpty ? [] : IN_MEMORY_AUDIT_LOGS.filter(l => l.organization_id === orgId);
 
   res.json({
     success: true,
@@ -23254,7 +24883,7 @@ app.get("/api/erp/reports/students", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { className, section, gender, status, search, session } = req.query;
 
-  let filtered = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let filtered = ERP_STUDENTS.filter(s => s.organization_id === orgId);
 
   // Cross-tenant protection
   if (orgId === "00000000-0000-0000-0000-000000000000") {
@@ -23328,7 +24957,7 @@ app.get("/api/erp/reports/attendance", (req, res) => {
   const { date, className, section, threshold = 75 } = req.query;
 
   const targetDate = date || new Date().toISOString().split("T")[0];
-  let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") students = [];
 
   if (className && className !== "all") {
@@ -23376,7 +25005,7 @@ app.get("/api/erp/reports/attendance", (req, res) => {
   ] : [];
 
   // Staff summary
-  const staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  const staff = ERP_STAFF.filter(s => s.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") staff.length = 0;
   const staffPresent = staff.filter(s => s.status === "active").length;
   const staffOnLeave = staff.filter(s => s.status === "on_leave").length;
@@ -23409,10 +25038,10 @@ app.get("/api/erp/reports/academics", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
-  const classes = isForeignEmpty ? [] : (ERP_CLASSES || []).filter(c => !c.organization_id || c.organization_id === orgId);
-  const sections = isForeignEmpty ? [] : (ERP_SECTIONS || []).filter(s => !s.organization_id || s.organization_id === orgId);
-  const subjects = isForeignEmpty ? [] : (ERP_SUBJECTS || []).filter(sub => !sub.organization_id || sub.organization_id === orgId);
-  const homework = isForeignEmpty ? [] : (ERP_HOMEWORK || []).filter(h => !h.organization_id || h.organization_id === orgId);
+  const classes = isForeignEmpty ? [] : (ERP_CLASSES || []).filter(c => c.organization_id === orgId);
+  const sections = isForeignEmpty ? [] : (ERP_SECTIONS || []).filter(s => s.organization_id === orgId);
+  const subjects = isForeignEmpty ? [] : (ERP_SUBJECTS || []).filter(sub => sub.organization_id === orgId);
+  const homework = isForeignEmpty ? [] : (ERP_HOMEWORK || []).filter(h => h.organization_id === orgId);
 
   const teacherAllocations = isForeignEmpty ? [] : [
     { teacherId: "stf-02", teacherName: "Rajeev Malhotra", subjectName: "Mathematics", subjectCode: "MATH-01", className: "Class 10", section: "A" },
@@ -23427,7 +25056,7 @@ app.get("/api/erp/reports/academics", (req, res) => {
       name: c.name,
       grade: c.grade,
       sectionsCount: sections.filter(sec => sec.classId === c.id).length || 1,
-      studentCount: ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.grade === c.grade).length,
+      studentCount: ERP_STUDENTS.filter(s => (s.organization_id === orgId) && s.grade === c.grade).length,
       subjectsCount: subjects.filter(sub => sub.classId === c.id || sub.grade === c.grade).length || 5
     })),
     teacherAllocations,
@@ -23449,8 +25078,8 @@ app.get("/api/erp/reports/exams", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
-  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
-  const results = isForeignEmpty ? [] : ERP_EXAM_RESULTS.filter(r => !r.organization_id || r.organization_id === orgId);
+  const exams = isForeignEmpty ? [] : ERP_EXAMS.filter(e => e.organization_id === orgId);
+  const results = isForeignEmpty ? [] : ERP_EXAM_RESULTS.filter(r => r.organization_id === orgId);
 
   const conductedExams = exams.filter(e => e.status === "completed" || e.status === "published" || e.isLocked).length;
   const totalResults = results.length;
@@ -23497,7 +25126,7 @@ app.get("/api/erp/reports/fees", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { className, status, startDate, endDate } = req.query;
 
-  let demands = ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+  let demands = ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") demands = [];
 
   if (className && className !== "all") {
@@ -23513,7 +25142,7 @@ app.get("/api/erp/reports/fees", (req, res) => {
   const collectionRate = totalDemanded > 0 ? Math.round((totalCollected / totalDemanded) * 1000) / 10 : 0;
 
   // Payments register
-  let payments = (ERP_FEE_PAYMENTS || []).filter(p => !p.organization_id || p.organization_id === orgId);
+  let payments = (ERP_FEE_PAYMENTS || []).filter(p => p.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") payments = [];
   const paymentModeMap = { upi: 0, cash: 0, bank_transfer: 0, card: 0, cheque: 0 };
   payments.forEach(p => {
@@ -23561,10 +25190,10 @@ app.get("/api/erp/reports/fees", (req, res) => {
 app.get("/api/erp/reports/admissions", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  let admissions = (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
+  let admissions = (ERP_ADMISSIONS || []).filter(a => a.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") admissions = [];
 
-  const leads = (typeof IN_MEMORY_LEADS !== "undefined" ? IN_MEMORY_LEADS : []).filter(l => !l.organization_id || l.organization_id === orgId);
+  const leads = (typeof IN_MEMORY_LEADS !== "undefined" ? IN_MEMORY_LEADS : []).filter(l => l.organization_id === orgId);
   const totalLeads = admissions.length > 0 ? leads.length + 15 : 0;
   const totalApplications = admissions.length;
   const admitted = admissions.filter(a => a.status === "admitted").length;
@@ -23613,7 +25242,7 @@ app.get("/api/erp/reports/admissions", (req, res) => {
 app.get("/api/erp/reports/staff", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  let staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+  let staff = ERP_STAFF.filter(s => s.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") staff = [];
 
   const teachers = staff.filter(s => (s.staffType || s.role || "").toLowerCase().includes("teacher")).length;
@@ -23659,7 +25288,7 @@ app.get("/api/erp/reports/staff", (req, res) => {
 app.get("/api/erp/reports/transport", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  let routes = ERP_TRANSPORT.filter(r => !r.organization_id || r.organization_id === orgId);
+  let routes = ERP_TRANSPORT.filter(r => r.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") routes = [];
 
   const totalCapacity = routes.reduce((acc, r) => acc + (r.capacity || 0), 0);
@@ -23694,9 +25323,9 @@ app.get("/api/erp/reports/transport", (req, res) => {
 app.get("/api/erp/reports/library", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  let books = ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
-  let copies = ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
-  let txs = (ERP_LIBRARY_TRANSACTIONS || []).filter(t => !t.organization_id || t.organization_id === orgId);
+  let books = ERP_LIBRARY_BOOKS.filter(b => b.organization_id === orgId);
+  let copies = ERP_LIBRARY_COPIES.filter(c => c.organization_id === orgId);
+  let txs = (ERP_LIBRARY_TRANSACTIONS || []).filter(t => t.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") {
     books = []; copies = []; txs = [];
   }
@@ -23741,12 +25370,12 @@ app.get("/api/erp/reports/library", (req, res) => {
 app.get("/api/erp/reports/communication", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  let messages = (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
+  let messages = (ERP_COMMUNICATION_MESSAGES || []).filter(m => m.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") messages = [];
 
   const delivered = messages.filter(m => m.status === "delivered" || m.status === "read").length;
   const failed = messages.filter(m => m.status === "failed").length;
-  const unread = (ERP_NOTIFICATIONS || []).filter(n => (!n.organization_id || n.organization_id === orgId) && !n.isRead).length;
+  const unread = (ERP_NOTIFICATIONS || []).filter(n => (n.organization_id === orgId) && !n.isRead).length;
 
   res.json({
     success: true,
@@ -23815,7 +25444,7 @@ app.get("/api/erp/reports/audit", async (req, res) => {
   // Merge with in-memory logs (dedup by ID)
   let memLogs = [...IN_MEMORY_AUDIT_LOGS];
   if (orgId && orgId !== "00000000-0000-0000-0000-000000000000") {
-    memLogs = memLogs.filter(l => !l.organization_id || l.organization_id === orgId);
+    memLogs = memLogs.filter(l => l.organization_id === orgId);
   } else if (orgId === "00000000-0000-0000-0000-000000000000") {
     memLogs = [];
   }
@@ -23850,19 +25479,19 @@ app.get("/api/erp/reports/export", async (req, res) => {
 
   let csvContent = "";
   if (reportType === "students") {
-    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => s.organization_id === orgId);
     csvContent = "Admission No,Roll No,Name,Grade,Section,Gender,Parent Name,Parent Phone,Status\n" +
       students.map(s => `"${s.admissionNo}","${s.rollNo}","${s.name}","${s.grade}","${s.section}","${s.gender}","${s.parentName || ""}","${s.parentPhone || ""}","${s.status}"`).join("\n");
   } else if (reportType === "fees") {
-    const demands = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_FEE_DEMANDS.filter(d => !d.organization_id || d.organization_id === orgId);
+    const demands = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_FEE_DEMANDS.filter(d => d.organization_id === orgId);
     csvContent = "Demand ID,Student Name,Grade,Total Demanded,Paid Amount,Balance,Due Date,Status\n" +
       demands.map(d => `"${d.id}","${d.studentName}","${d.grade}",${d.finalAmount || d.amount},${d.paidAmount || 0},${d.balanceAmount || 0},"${d.dueDate}","${d.status}"`).join("\n");
   } else if (reportType === "attendance") {
-    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    const students = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STUDENTS.filter(s => s.organization_id === orgId);
     csvContent = "Roll No,Student Name,Grade,Section,Attendance Rate,Parent Phone\n" +
       students.map(s => `"${s.rollNo}","${s.name}","${s.grade}","${s.section}",${s.attendancePercent || 92},"${s.parentPhone || ""}"`).join("\n");
   } else if (reportType === "staff") {
-    const staff = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+    const staff = orgId === "00000000-0000-0000-0000-000000000000" ? [] : ERP_STAFF.filter(s => s.organization_id === orgId);
     csvContent = "Emp ID,Name,Designation,Department,Staff Type,Qualification,Experience,Phone,Email,Status\n" +
       staff.map(s => `"${s.empId}","${s.name}","${s.designation}","${s.department}","${s.staffType || s.role}","${s.qualification || ""}",${s.experienceYears || 0},"${s.phone}","${s.email}","${s.status}"`).join("\n");
   } else {
@@ -23880,7 +25509,7 @@ app.get("/api/erp/reports/presets", (req, res) => {
   if (!checkReportsAccessPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const { reportType } = req.query;
-  let presets = ERP_REPORT_PRESETS.filter(p => !p.organization_id || p.organization_id === orgId);
+  let presets = ERP_REPORT_PRESETS.filter(p => p.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") presets = [];
   if (reportType) presets = presets.filter(p => p.reportType === reportType);
   res.json({ success: true, presets });
@@ -24054,8 +25683,8 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
 
   // 3. Domain Tools Implementations
   if (toolName === "get_school_summary") {
-    let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
-    let staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+    let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    let staff = ERP_STAFF.filter(s => s.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") { students = []; staff = []; }
 
     const presentStudents = students.filter(s => s.id !== "std-103" && s.id !== "std-106").length;
@@ -24078,7 +25707,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_student_count") {
-    let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") students = [];
 
     const className = args.className;
@@ -24105,7 +25734,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "search_students") {
-    let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") students = [];
 
     const q = (args.query || "").toLowerCase();
@@ -24133,7 +25762,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_student_profile") {
-    let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+    let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
     const targetId = args.studentId || (role === "parent" || role === "student" ? "std-101" : "std-101");
     const s = students.find(x => x.id === targetId || x.rollNo === targetId || (x.name || "").toLowerCase().includes(targetId.toLowerCase()));
     if (!s) return { error: `Student '${targetId}' not found in active organization records.` };
@@ -24157,8 +25786,8 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_attendance_summary") {
-    let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
-    let staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+    let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    let staff = ERP_STAFF.filter(s => s.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") { students = []; staff = []; }
 
     const threshold = args.threshold || 75;
@@ -24201,7 +25830,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_academic_overview") {
-    const classes = (ERP_CLASSES || []).filter(c => !c.organization_id || c.organization_id === orgId);
+    const classes = (ERP_CLASSES || []).filter(c => c.organization_id === orgId);
     return {
       totalClasses: classes.length || 2,
       classes: classes.map(c => ({
@@ -24217,7 +25846,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_exam_summary") {
-    let exams = (ERP_EXAMS || []).filter(e => !e.organization_id || e.organization_id === orgId);
+    let exams = (ERP_EXAMS || []).filter(e => e.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") exams = [];
 
     const averagePercent = 86.8;
@@ -24234,7 +25863,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_fee_overview") {
-    let demands = (ERP_FEE_DEMANDS || []).filter(d => !d.organization_id || d.organization_id === orgId);
+    let demands = (ERP_FEE_DEMANDS || []).filter(d => d.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") demands = [];
 
     const totalDemanded = demands.reduce((acc, d) => acc + (d.amount || 0), 0) || 128000;
@@ -24254,7 +25883,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_admission_summary") {
-    let admissions = (ERP_ADMISSIONS || []).filter(a => !a.organization_id || a.organization_id === orgId);
+    let admissions = (ERP_ADMISSIONS || []).filter(a => a.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") admissions = [];
 
     const totalLeads = 18;
@@ -24275,7 +25904,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_staff_summary") {
-    let staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId);
+    let staff = ERP_STAFF.filter(s => s.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") staff = [];
 
     const teachers = staff.filter(s => (s.staffType || s.role || "").toLowerCase().includes("teacher")).length;
@@ -24299,7 +25928,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_transport_summary") {
-    let routes = (typeof ERP_TRANSPORT !== "undefined" ? ERP_TRANSPORT : []).filter(r => !r.organization_id || r.organization_id === orgId);
+    let routes = (typeof ERP_TRANSPORT !== "undefined" ? ERP_TRANSPORT : []).filter(r => r.organization_id === orgId);
     if (orgId === "00000000-0000-0000-0000-000000000000") routes = [];
     const totalCapacity = routes.reduce((acc, r) => acc + (r.capacity || 0), 0) || 84;
     const assignedRiders = routes.reduce((acc, r) => acc + (r.assignedStudentsCount || 0), 0) || 42;
@@ -24316,8 +25945,8 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_library_summary") {
-    let books = ERP_LIBRARY_BOOKS.filter(b => !b.organization_id || b.organization_id === orgId);
-    let copies = ERP_LIBRARY_COPIES.filter(c => !c.organization_id || c.organization_id === orgId);
+    let books = ERP_LIBRARY_BOOKS.filter(b => b.organization_id === orgId);
+    let copies = ERP_LIBRARY_COPIES.filter(c => c.organization_id === orgId);
     const issued = copies.filter(c => c.status === "issued").length;
     return {
       totalTitles: books.length || 6,
@@ -24331,7 +25960,7 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
   }
 
   if (toolName === "get_communication_summary") {
-    let msgs = (ERP_COMMUNICATION_MESSAGES || []).filter(m => !m.organization_id || m.organization_id === orgId);
+    let msgs = (ERP_COMMUNICATION_MESSAGES || []).filter(m => m.organization_id === orgId);
     return {
       totalDispatched: msgs.length || 5,
       deliverySuccessRate: 98.4,
@@ -24791,7 +26420,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
 
   // Save to Conversation History
   let convId = conversationId;
-  let conv = ERP_AI_CONVERSATIONS.find(c => c.id === convId && (!c.organization_id || c.organization_id === orgId));
+  let conv = ERP_AI_CONVERSATIONS.find(c => c.id === convId && (c.organization_id === orgId));
   if (!conv) {
     convId = `conv-${Date.now()}`;
     conv = {
@@ -24851,7 +26480,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
 // 3. List Conversations: GET /api/erp/ai/conversations
 app.get("/api/erp/ai/conversations", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  let convs = ERP_AI_CONVERSATIONS.filter(c => !c.organization_id || c.organization_id === orgId);
+  let convs = ERP_AI_CONVERSATIONS.filter(c => c.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") convs = [];
 
   res.json({
@@ -24886,7 +26515,7 @@ app.post("/api/erp/ai/conversations", (req, res) => {
 // 5. Retrieve Conversation Details & Messages: GET /api/erp/ai/conversations/:id
 app.get("/api/erp/ai/conversations/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const conv = ERP_AI_CONVERSATIONS.find(c => c.id === req.params.id && (!c.organization_id || c.organization_id === orgId));
+  const conv = ERP_AI_CONVERSATIONS.find(c => c.id === req.params.id && (c.organization_id === orgId));
   if (!conv) {
     return res.status(404).json({ success: false, message: "Conversation not found in active organization" });
   }
@@ -24902,7 +26531,7 @@ app.get("/api/erp/ai/conversations/:id", (req, res) => {
 // 6. Delete Conversation Thread: DELETE /api/erp/ai/conversations/:id
 app.delete("/api/erp/ai/conversations/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const idx = ERP_AI_CONVERSATIONS.findIndex(c => c.id === req.params.id && (!c.organization_id || c.organization_id === orgId));
+  const idx = ERP_AI_CONVERSATIONS.findIndex(c => c.id === req.params.id && (c.organization_id === orgId));
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Conversation not found" });
   }
@@ -25033,7 +26662,7 @@ let IN_MEMORY_KNOWLEDGE_BASE = [
 // GET /api/erp/ai/knowledge-base
 app.get("/api/erp/ai/knowledge-base", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const docs = IN_MEMORY_KNOWLEDGE_BASE.filter(d => !d.organization_id || d.organization_id === orgId);
+  const docs = IN_MEMORY_KNOWLEDGE_BASE.filter(d => d.organization_id === orgId);
   res.json({
     success: true,
     total: docs.length,
@@ -25081,7 +26710,7 @@ app.post("/api/erp/ai/knowledge-base", (req, res) => {
 // DELETE /api/erp/ai/knowledge-base/:id
 app.delete("/api/erp/ai/knowledge-base/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const idx = IN_MEMORY_KNOWLEDGE_BASE.findIndex(d => d.id === req.params.id && (!d.organization_id || d.organization_id === orgId));
+  const idx = IN_MEMORY_KNOWLEDGE_BASE.findIndex(d => d.id === req.params.id && (d.organization_id === orgId));
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Document not found." });
   }
@@ -25099,7 +26728,7 @@ app.post("/api/erp/ai/knowledge-base/query", (req, res) => {
   }
 
   const q = question.toLowerCase();
-  const docs = IN_MEMORY_KNOWLEDGE_BASE.filter(d => !d.organization_id || d.organization_id === orgId);
+  const docs = IN_MEMORY_KNOWLEDGE_BASE.filter(d => d.organization_id === orgId);
 
   let matchedDocs = docs.filter(d => 
     d.title.toLowerCase().includes(q) ||
@@ -25443,10 +27072,10 @@ app.get("/api/erp/robotics/overview", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const isForeignEmpty = orgId === "00000000-0000-0000-0000-000000000000";
 
-  const inventory = isForeignEmpty ? [] : ERP_ROBOTICS_INVENTORY.filter(k => !k.organization_id || k.organization_id === orgId);
-  const loans = isForeignEmpty ? [] : ERP_ROBOTICS_LOANS.filter(l => !l.organization_id || l.organization_id === orgId);
-  const projects = isForeignEmpty ? [] : ERP_ROBOTICS_PROJECTS.filter(p => !p.organization_id || p.organization_id === orgId);
-  const competitions = isForeignEmpty ? [] : ERP_ROBOTICS_COMPETITIONS.filter(c => !c.organization_id || c.organization_id === orgId);
+  const inventory = isForeignEmpty ? [] : ERP_ROBOTICS_INVENTORY.filter(k => k.organization_id === orgId);
+  const loans = isForeignEmpty ? [] : ERP_ROBOTICS_LOANS.filter(l => l.organization_id === orgId);
+  const projects = isForeignEmpty ? [] : ERP_ROBOTICS_PROJECTS.filter(p => p.organization_id === orgId);
+  const competitions = isForeignEmpty ? [] : ERP_ROBOTICS_COMPETITIONS.filter(c => c.organization_id === orgId);
 
   const totalEquipment = inventory.reduce((acc, k) => acc + (k.totalQty || 0), 0);
   const totalAvailable = inventory.reduce((acc, k) => acc + (k.availableQty || 0), 0);
@@ -25475,7 +27104,7 @@ app.get("/api/erp/robotics/inventory", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, condition, search } = req.query;
 
-  let items = ERP_ROBOTICS_INVENTORY.filter(k => !k.organization_id || k.organization_id === orgId);
+  let items = ERP_ROBOTICS_INVENTORY.filter(k => k.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") items = [];
 
   if (category && category !== "all") {
@@ -25529,7 +27158,7 @@ app.post("/api/erp/robotics/inventory", async (req, res) => {
 app.patch("/api/erp/robotics/inventory/:id", async (req, res) => {
   if (!checkRoboticsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === req.params.id && (!k.organization_id || k.organization_id === orgId));
+  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === req.params.id && (k.organization_id === orgId));
 
   if (!kit) {
     return res.status(404).json({ success: false, message: "Equipment kit not found" });
@@ -25554,7 +27183,7 @@ app.patch("/api/erp/robotics/inventory/:id", async (req, res) => {
 app.delete("/api/erp/robotics/inventory/:id", async (req, res) => {
   if (!checkRoboticsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const idx = ERP_ROBOTICS_INVENTORY.findIndex(k => k.id === req.params.id && (!k.organization_id || k.organization_id === orgId));
+  const idx = ERP_ROBOTICS_INVENTORY.findIndex(k => k.id === req.params.id && (k.organization_id === orgId));
 
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Equipment kit not found" });
@@ -25570,7 +27199,7 @@ app.get("/api/erp/robotics/loans", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status, studentId } = req.query;
 
-  let loans = ERP_ROBOTICS_LOANS.filter(l => !l.organization_id || l.organization_id === orgId);
+  let loans = ERP_ROBOTICS_LOANS.filter(l => l.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") loans = [];
 
   if (status && status !== "all") {
@@ -25593,7 +27222,7 @@ app.post("/api/erp/robotics/loans/issue", async (req, res) => {
     return res.status(400).json({ success: false, message: "kitId and studentName are required" });
   }
 
-  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === kitId && (!k.organization_id || k.organization_id === orgId));
+  const kit = ERP_ROBOTICS_INVENTORY.find(k => k.id === kitId && (k.organization_id === orgId));
   if (!kit) {
     return res.status(404).json({ success: false, message: "Equipment kit not found in lab" });
   }
@@ -25631,7 +27260,7 @@ app.post("/api/erp/robotics/loans/issue", async (req, res) => {
 app.post("/api/erp/robotics/loans/:id/return", async (req, res) => {
   if (!checkRoboticsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const loan = ERP_ROBOTICS_LOANS.find(l => l.id === req.params.id && (!l.organization_id || l.organization_id === orgId));
+  const loan = ERP_ROBOTICS_LOANS.find(l => l.id === req.params.id && (l.organization_id === orgId));
 
   if (!loan) {
     return res.status(404).json({ success: false, message: "Loan record not found" });
@@ -25666,7 +27295,7 @@ app.get("/api/erp/robotics/projects", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, status, studentId } = req.query;
 
-  let projects = ERP_ROBOTICS_PROJECTS.filter(p => !p.organization_id || p.organization_id === orgId);
+  let projects = ERP_ROBOTICS_PROJECTS.filter(p => p.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") projects = [];
 
   if (category && category !== "all") {
@@ -25716,7 +27345,7 @@ app.post("/api/erp/robotics/projects", async (req, res) => {
 app.patch("/api/erp/robotics/projects/:id/review", async (req, res) => {
   if (!checkRoboticsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const prj = ERP_ROBOTICS_PROJECTS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+  const prj = ERP_ROBOTICS_PROJECTS.find(p => p.id === req.params.id && (p.organization_id === orgId));
 
   if (!prj) {
     return res.status(404).json({ success: false, message: "Project not found" });
@@ -25737,7 +27366,7 @@ app.patch("/api/erp/robotics/projects/:id/review", async (req, res) => {
 // 13. Competitions Registry: GET /api/erp/robotics/competitions
 app.get("/api/erp/robotics/competitions", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  let comps = ERP_ROBOTICS_COMPETITIONS.filter(c => !c.organization_id || c.organization_id === orgId);
+  let comps = ERP_ROBOTICS_COMPETITIONS.filter(c => c.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") comps = [];
   res.json({ success: true, competitions: comps });
 });
@@ -25745,7 +27374,7 @@ app.get("/api/erp/robotics/competitions", (req, res) => {
 // 14. Register Team for Competition: POST /api/erp/robotics/competitions/:id/register
 app.post("/api/erp/robotics/competitions/:id/register", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const comp = ERP_ROBOTICS_COMPETITIONS.find(c => c.id === req.params.id && (!c.organization_id || c.organization_id === orgId));
+  const comp = ERP_ROBOTICS_COMPETITIONS.find(c => c.id === req.params.id && (c.organization_id === orgId));
 
   if (!comp) {
     return res.status(404).json({ success: false, message: "Competition not found" });
@@ -26209,7 +27838,7 @@ app.get("/api/erp/solutions/proposals", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status } = req.query;
 
-  let proposals = ERP_PROPOSALS.filter(p => !p.organization_id || p.organization_id === orgId);
+  let proposals = ERP_PROPOSALS.filter(p => p.organization_id === orgId);
   if (orgId === "00000000-0000-0000-0000-000000000000") proposals = [];
 
   if (status && status !== "all") {
@@ -26256,7 +27885,7 @@ app.post("/api/erp/solutions/proposals", async (req, res) => {
 app.patch("/api/erp/solutions/proposals/:id/status", async (req, res) => {
   if (!checkSolutionsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (p.organization_id === orgId));
 
   if (!prop) {
     return res.status(404).json({ success: false, message: "Proposal not found" });
@@ -26279,7 +27908,7 @@ app.patch("/api/erp/solutions/proposals/:id/status", async (req, res) => {
 app.post("/api/erp/solutions/proposals/:id/discount", async (req, res) => {
   if (!checkSolutionsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+  const prop = ERP_PROPOSALS.find(p => p.id === req.params.id && (p.organization_id === orgId));
 
   if (!prop) {
     return res.status(404).json({ success: false, message: "Proposal not found" });
@@ -26310,7 +27939,7 @@ app.post("/api/erp/solutions/proposals/:id/discount", async (req, res) => {
 app.delete("/api/erp/solutions/proposals/:id", async (req, res) => {
   if (!checkSolutionsAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const idx = ERP_PROPOSALS.findIndex(p => p.id === req.params.id && (!p.organization_id || p.organization_id === orgId));
+  const idx = ERP_PROPOSALS.findIndex(p => p.id === req.params.id && (p.organization_id === orgId));
 
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Proposal not found" });
@@ -26376,7 +28005,7 @@ app.get("/api/erp/teaching-journal", (req, res) => {
   const { staffId, grade, section, date, subject } = req.query;
   const role = req.user?.role || "school-admin";
 
-  let list = IN_MEMORY_TEACHING_JOURNAL.filter(j => !j.organization_id || j.organization_id === orgId);
+  let list = IN_MEMORY_TEACHING_JOURNAL.filter(j => j.organization_id === orgId);
   if (role === "teacher" && staffId) {
     list = list.filter(j => j.staff_id === staffId);
   } else if (staffId) {
@@ -26455,7 +28084,7 @@ app.post("/api/erp/teaching-journal", (req, res) => {
 // PUT /api/erp/teaching-journal/:id
 app.put("/api/erp/teaching-journal/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const idx = IN_MEMORY_TEACHING_JOURNAL.findIndex(j => j.id === req.params.id && (!j.organization_id || j.organization_id === orgId));
+  const idx = IN_MEMORY_TEACHING_JOURNAL.findIndex(j => j.id === req.params.id && (j.organization_id === orgId));
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Teaching journal entry not found." });
   }
@@ -26476,7 +28105,7 @@ app.put("/api/erp/teaching-journal/:id", (req, res) => {
 // DELETE /api/erp/teaching-journal/:id
 app.delete("/api/erp/teaching-journal/:id", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const idx = IN_MEMORY_TEACHING_JOURNAL.findIndex(j => j.id === req.params.id && (!j.organization_id || j.organization_id === orgId));
+  const idx = IN_MEMORY_TEACHING_JOURNAL.findIndex(j => j.id === req.params.id && (j.organization_id === orgId));
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Teaching journal entry not found." });
   }
@@ -26688,7 +28317,7 @@ app.get("/api/erp/settings/master", (req, res) => {
     organizationId: orgId,
     role,
     settings: ERP_MASTER_SETTINGS,
-    campuses: ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId),
+    campuses: ERP_CAMPUSES.filter(c => c.organization_id === orgId),
     departments: ERP_DEPARTMENTS,
     designations: ERP_DESIGNATIONS,
     permissions
@@ -26801,20 +28430,20 @@ app.get(["/api/erp/multi-campus/overview", "/api/erp/multi-campus/trust-cockpit"
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
-  const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
+  const campuses = ERP_CAMPUSES.filter(c => c.organization_id === orgId);
   const totalCampuses = campuses.length;
   const activeCampuses = campuses.filter(c => c.status === "active").length;
   const totalCapacity = campuses.reduce((sum, c) => sum + (c.capacity || 0), 0);
 
-  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   const totalEnrolled = orgStudents.length || campuses.reduce((sum, c) => sum + (c.studentCount || 0), 0);
-  const totalStaff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId).length || campuses.reduce((sum, c) => sum + (c.staffCount || 0), 0);
+  const totalStaff = ERP_STAFF.filter(s => s.organization_id === orgId).length || campuses.reduce((sum, c) => sum + (c.staffCount || 0), 0);
 
   const capacityUtilization = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0;
   const studentTeacherRatio = totalStaff > 0 ? Math.round(totalEnrolled / totalStaff) : 15;
 
-  const transfers = ERP_CAMPUS_TRANSFERS.filter(t => !t.organization_id || t.organization_id === orgId);
-  const deputations = ERP_FACULTY_DEPUTATIONS.filter(d => !d.organization_id || d.organization_id === orgId);
+  const transfers = ERP_CAMPUS_TRANSFERS.filter(t => t.organization_id === orgId);
+  const deputations = ERP_FACULTY_DEPUTATIONS.filter(d => d.organization_id === orgId);
 
   const feeStructures = typeof ERP_FEE_STRUCTURES !== "undefined" ? ERP_FEE_STRUCTURES : [];
   const demanded = feeStructures.reduce((acc, f) => acc + (f.amountINR || 0), 0) * (totalEnrolled || 1);
@@ -26873,7 +28502,7 @@ app.get(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { city, status, q } = req.query;
 
-  let campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
+  let campuses = ERP_CAMPUSES.filter(c => c.organization_id === orgId);
 
   if (city) {
     campuses = campuses.filter(c => (c.city || "").toLowerCase() === city.trim().toLowerCase());
@@ -26898,14 +28527,14 @@ app.get(["/api/erp/multi-campus/campuses", "/api/erp/campuses"], (req, res) => {
 app.get(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], (req, res) => {
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const campus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
+  const campus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === req.params.id);
 
   if (!campus) {
     return res.status(404).json({ success: false, message: "Campus not found" });
   }
 
-  const campusStudents = ERP_STUDENTS.filter(s => (!s.organization_id || s.organization_id === orgId) && s.campusId === campus.id);
-  const campusStaff = ERP_STAFF.filter(s => (!s.organization_id || s.organization_id === orgId) && s.campusId === campus.id);
+  const campusStudents = ERP_STUDENTS.filter(s => (s.organization_id === orgId) && s.campusId === campus.id);
+  const campusStaff = ERP_STAFF.filter(s => (s.organization_id === orgId) && s.campusId === campus.id);
 
   res.json({
     success: true,
@@ -27002,7 +28631,7 @@ app.patch(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], async
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
-  const campus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
+  const campus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === req.params.id);
   if (!campus) {
     return res.status(404).json({ success: false, message: "Campus not found" });
   }
@@ -27011,7 +28640,7 @@ app.patch(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], async
 
   if (isMain === true) {
     ERP_CAMPUSES.forEach(c => {
-      if (!c.organization_id || c.organization_id === orgId) c.isMain = false;
+      if (c.organization_id === orgId) c.isMain = false;
     });
     campus.isMain = true;
   }
@@ -27039,14 +28668,14 @@ app.delete(["/api/erp/multi-campus/campuses/:id", "/api/erp/campuses/:id"], asyn
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
-  const idx = ERP_CAMPUSES.findIndex(c => (!c.organization_id || c.organization_id === orgId) && c.id === req.params.id);
+  const idx = ERP_CAMPUSES.findIndex(c => (c.organization_id === orgId) && c.id === req.params.id);
   if (idx === -1) {
     return res.status(404).json({ success: false, message: "Campus not found" });
   }
 
   const targetCampus = ERP_CAMPUSES[idx];
   if (targetCampus.isMain) {
-    const otherCampuses = ERP_CAMPUSES.filter(c => (!c.organization_id || c.organization_id === orgId) && c.id !== targetCampus.id);
+    const otherCampuses = ERP_CAMPUSES.filter(c => (c.organization_id === orgId) && c.id !== targetCampus.id);
     if (otherCampuses.length > 0) {
       return res.status(400).json({
         success: false,
@@ -27067,7 +28696,7 @@ app.get("/api/erp/multi-campus/transfers", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { status, studentId } = req.query;
 
-  let list = ERP_CAMPUS_TRANSFERS.filter(t => !t.organization_id || t.organization_id === orgId);
+  let list = ERP_CAMPUS_TRANSFERS.filter(t => t.organization_id === orgId);
   if (status) {
     list = list.filter(t => t.status === status.trim().toLowerCase());
   }
@@ -27099,10 +28728,10 @@ app.post("/api/erp/multi-campus/transfers", async (req, res) => {
     });
   }
 
-  const sourceCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === sourceCampusId);
-  const targetCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === targetCampusId);
+  const sourceCampus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === sourceCampusId);
+  const targetCampus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === targetCampusId);
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.id === studentId);
 
   const newTransfer = {
     id: `trf-${Date.now()}`,
@@ -27139,7 +28768,7 @@ app.patch("/api/erp/multi-campus/transfers/:id/status", async (req, res) => {
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
-  const transfer = ERP_CAMPUS_TRANSFERS.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === req.params.id);
+  const transfer = ERP_CAMPUS_TRANSFERS.find(t => (t.organization_id === orgId) && t.id === req.params.id);
   if (!transfer) {
     return res.status(404).json({ success: false, message: "Transfer request not found" });
   }
@@ -27160,7 +28789,7 @@ app.patch("/api/erp/multi-campus/transfers/:id/status", async (req, res) => {
 
   if (status.toLowerCase() === "completed") {
     transfer.completedAt = new Date().toISOString();
-    const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === transfer.studentId);
+    const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.id === transfer.studentId);
     if (student) {
       student.campusId = transfer.targetCampusId;
       student.updated_at = new Date().toISOString();
@@ -27180,7 +28809,7 @@ app.patch("/api/erp/multi-campus/transfers/:id/status", async (req, res) => {
 app.get("/api/erp/multi-campus/deputations", (req, res) => {
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const list = ERP_FACULTY_DEPUTATIONS.filter(d => !d.organization_id || d.organization_id === orgId);
+  const list = ERP_FACULTY_DEPUTATIONS.filter(d => d.organization_id === orgId);
   res.json({ success: true, count: list.length, deputations: list });
 });
 
@@ -27209,10 +28838,10 @@ app.post("/api/erp/multi-campus/deputations", async (req, res) => {
     });
   }
 
-  const homeCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === homeCampusId);
-  const hostCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.id === hostCampusId);
+  const homeCampus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === homeCampusId);
+  const hostCampus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.id === hostCampusId);
 
-  const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+  const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
 
   const newDeputation = {
     id: `dep-${Date.now()}`,
@@ -27249,8 +28878,8 @@ app.get("/api/erp/multi-campus/finance/consolidated", (req, res) => {
   if (!checkTrustAdminPrivilege(req, res)) return;
   const orgId = resolveTenantOrgId(req);
 
-  const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
-  const orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  const campuses = ERP_CAMPUSES.filter(c => c.organization_id === orgId);
+  const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
 
   const campusLedgers = campuses.map(c => {
     const studentCount = orgStudents.filter(s => s.campusId === c.id).length || c.studentCount || 0;
@@ -27327,7 +28956,7 @@ app.get("/api/erp/search", (req, res) => {
   // 1. Students (Admin, Teacher, Reception, Parent/Student own)
   if (["admin", "teacher", "reception"].includes(role)) {
     results.students = ERP_STUDENTS
-      .filter(s => (!s.organization_id || s.organization_id === orgId) && (
+      .filter(s => (s.organization_id === orgId) && (
         s.name.toLowerCase().includes(q) ||
         s.rollNo.toLowerCase().includes(q) ||
         (s.admissionNo && s.admissionNo.toLowerCase().includes(q)) ||
@@ -27350,7 +28979,7 @@ app.get("/api/erp/search", (req, res) => {
   // 2. Staff (Admin, Reception, Teacher limited)
   if (["admin", "reception"].includes(role)) {
     results.staff = ERP_STAFF
-      .filter(st => (!st.organization_id || st.organization_id === orgId) && (
+      .filter(st => (st.organization_id === orgId) && (
         st.name.toLowerCase().includes(q) ||
         st.empId.toLowerCase().includes(q) ||
         st.department.toLowerCase().includes(q) ||
@@ -27373,7 +29002,7 @@ app.get("/api/erp/search", (req, res) => {
   // 3. Admissions (Admin, Reception)
   if (["admin", "reception"].includes(role)) {
     results.admissions = ERP_ADMISSIONS
-      .filter(a => (!a.organization_id || a.organization_id === orgId) && (
+      .filter(a => (a.organization_id === orgId) && (
         a.studentName.toLowerCase().includes(q) ||
         a.inquiryNo.toLowerCase().includes(q) ||
         a.parentName.toLowerCase().includes(q) ||
@@ -27394,7 +29023,7 @@ app.get("/api/erp/search", (req, res) => {
   // 4. Fees (Strictly Admin and Account)
   if (["admin", "account"].includes(role)) {
     results.fees = ERP_FEE_DEMANDS
-      .filter(f => (!f.organization_id || f.organization_id === orgId) && (
+      .filter(f => (f.organization_id === orgId) && (
         (f.studentName && f.studentName.toLowerCase().includes(q)) ||
         (f.invoiceNo && f.invoiceNo.toLowerCase().includes(q)) ||
         (f.feeHead && f.feeHead.toLowerCase().includes(q))
@@ -27417,7 +29046,7 @@ app.get("/api/erp/search", (req, res) => {
   // 5. Exams (Admin, Teacher, Account)
   if (["admin", "teacher"].includes(role)) {
     results.exams = ERP_EXAMS
-      .filter(ex => (!ex.organization_id || ex.organization_id === orgId) && (
+      .filter(ex => (ex.organization_id === orgId) && (
         (ex.title && ex.title.toLowerCase().includes(q)) ||
         (ex.grade && ex.grade.toLowerCase().includes(q)) ||
         (ex.term && ex.term.toLowerCase().includes(q))
@@ -27436,7 +29065,7 @@ app.get("/api/erp/search", (req, res) => {
   // 6. Transport (Admin, Reception, Parent)
   if (["admin", "reception", "parent"].includes(role)) {
     results.transport = (typeof ERP_TRANSPORT !== "undefined" ? ERP_TRANSPORT : [])
-      .filter(t => (!t.organization_id || t.organization_id === orgId) && (
+      .filter(t => (t.organization_id === orgId) && (
         (t.routeName && t.routeName.toLowerCase().includes(q)) ||
         (t.routeNumber && t.routeNumber.toLowerCase().includes(q)) ||
         (t.vehicleNumber && t.vehicleNumber.toLowerCase().includes(q)) ||
@@ -27455,7 +29084,7 @@ app.get("/api/erp/search", (req, res) => {
 
   // 7. Library (Admin, Teacher, Reception, Student)
   results.library = ERP_LIBRARY_BOOKS
-    .filter(b => (!b.organization_id || b.organization_id === orgId) && (
+    .filter(b => (b.organization_id === orgId) && (
       (b.title && b.title.toLowerCase().includes(q)) ||
       (b.isbn && b.isbn.toLowerCase().includes(q)) ||
       (Array.isArray(b.authors) && b.authors.some(a => a.toLowerCase().includes(q))) ||
@@ -27473,7 +29102,7 @@ app.get("/api/erp/search", (req, res) => {
 
   // 8. Timetable Slots (Admin, Teacher, Student, Parent)
   results.timetable = ERP_TIMETABLE_SLOTS
-    .filter(s => (!s.organization_id || s.organization_id === orgId) && (
+    .filter(s => (s.organization_id === orgId) && (
       (s.subjectName && s.subjectName.toLowerCase().includes(q)) ||
       (s.grade && s.grade.toLowerCase().includes(q)) ||
       (s.teacherName && s.teacherName.toLowerCase().includes(q)) ||
@@ -27573,12 +29202,12 @@ app.get("/api/erp/onboarding/checklist", (req, res) => {
   if (!checkOnboardingAdminRole(req, res)) return;
   const orgId = resolveTenantOrgId(req);
   const profileComplete = !!(ERP_SETTINGS.schoolName && ERP_SETTINGS.affiliationNo && ERP_SETTINGS.principalName && ERP_SETTINGS.contactEmail);
-  const campusesCount = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId).length;
-  const sessionsCount = ERP_ACADEMIC_SESSIONS.filter(s => !s.organization_id || s.organization_id === orgId).length;
-  const classesCount = ERP_CLASSES.filter(c => !c.organization_id || c.organization_id === orgId).length;
-  const subjectsCount = ERP_SUBJECTS.filter(s => !s.organization_id || s.organization_id === orgId).length;
-  const staffCount = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === orgId).length;
-  const studentsCount = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId).length;
+  const campusesCount = ERP_CAMPUSES.filter(c => c.organization_id === orgId).length;
+  const sessionsCount = ERP_ACADEMIC_SESSIONS.filter(s => s.organization_id === orgId).length;
+  const classesCount = ERP_CLASSES.filter(c => c.organization_id === orgId).length;
+  const subjectsCount = ERP_SUBJECTS.filter(s => s.organization_id === orgId).length;
+  const staffCount = ERP_STAFF.filter(s => s.organization_id === orgId).length;
+  const studentsCount = ERP_STUDENTS.filter(s => s.organization_id === orgId).length;
   const feeHeadsCount = (ERP_MASTER_SETTINGS.fee_settings?.feeHeads || []).length;
   const gradingCount = (ERP_MASTER_SETTINGS.examination_settings?.gradeRanges || []).length;
   const commChannels = ERP_MASTER_SETTINGS.communication_settings?.enabledChannels;
@@ -27731,7 +29360,7 @@ async function resolveTimetableTeacherDbId(orgId, teacherId) {
 
   // Check in-memory staff first
   const sf = ERP_STAFF.find(s => 
-    (!s.organization_id || s.organization_id === orgId) && 
+    (s.organization_id === orgId) && 
     (s.id === teacherId || s.empId === teacherId || s.db_id === teacherId)
   );
   if (sf && sf.db_id) return sf.db_id;
@@ -27900,7 +29529,7 @@ app.get("/api/erp/timetable/classes", requireAuth, (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { grade, section, day, session = "2026-27" } = req.query;
 
-  let filtered = ERP_TIMETABLE_SLOTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let filtered = ERP_TIMETABLE_SLOTS.filter(s => s.organization_id === orgId);
 
   if (session) {
     filtered = filtered.filter(s => s.session === session);
@@ -28288,7 +29917,7 @@ app.get("/api/erp/timetable/substitutions", requireAuth, (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { date = new Date().toISOString().split("T")[0], status } = req.query;
 
-  let filtered = ERP_SUBSTITUTIONS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let filtered = ERP_SUBSTITUTIONS.filter(s => s.organization_id === orgId);
   if (date) {
     filtered = filtered.filter(s => s.date === date);
   }
@@ -28868,7 +30497,7 @@ app.get("/api/erp/portal/ward-students", (req, res) => {
   if (!parentPhone && !parentEmail && !studentId) {
     return res.status(400).json({ success: false, error: "MISSING_PARAM", message: "parentPhone, parentEmail, or studentId is required." });
   }
-  let orgStudents = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
   let wards = [];
 
   if (parentPhone) {
@@ -28913,7 +30542,7 @@ app.get("/api/erp/portal/ward-students", (req, res) => {
 app.get("/api/erp/portal/profile/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -28963,12 +30592,12 @@ app.get("/api/erp/portal/profile/:studentId", (req, res) => {
 app.get("/api/erp/portal/attendance/:studentId", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  let studentRecords = ERP_ATTENDANCE.filter(a => (!a.organization_id || a.organization_id === orgId) && (a.studentId === student.id || a.studentId === studentId));
+  let studentRecords = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId) && (a.studentId === student.id || a.studentId === studentId));
 
   // Sync with Supabase public.student_attendance if available
   if (supabase) {
@@ -29074,7 +30703,7 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
     });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -29126,7 +30755,7 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
 app.get("/api/erp/portal/leave-applications", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId, status } = req.query;
-  let list = ERP_PORTAL_LEAVE_APPLICATIONS.filter(a => !a.organization_id || a.organization_id === orgId);
+  let list = ERP_PORTAL_LEAVE_APPLICATIONS.filter(a => a.organization_id === orgId);
 
   if (studentId) {
     list = list.filter(a => (a.studentId || a.student_id) === studentId);
@@ -29155,7 +30784,7 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
   }
 
   const appItem = ERP_PORTAL_LEAVE_APPLICATIONS.find(a => 
-    (!a.organization_id || a.organization_id === orgId) && a.id === id
+    (a.organization_id === orgId) && a.id === id
   );
   if (!appItem) {
     return res.status(404).json({ success: false, error: "NOT_FOUND", message: `Leave application '${id}' not found.` });
@@ -29174,7 +30803,7 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
     while (cur <= end) {
       const dStr = cur.toISOString().split("T")[0];
       const existing = ERP_ATTENDANCE.find(a => 
-        (!a.organization_id || a.organization_id === orgId) && 
+        (a.organization_id === orgId) && 
         (a.studentId || a.student_id) === appItem.studentId && 
         (a.attendanceDate || a.date) === dStr
       );
@@ -29228,7 +30857,7 @@ app.delete("/api/erp/portal/leave-applications/:id", async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_PORTAL_LEAVE_APPLICATIONS.findIndex(a => 
-    (!a.organization_id || a.organization_id === orgId) && a.id === id
+    (a.organization_id === orgId) && a.id === id
   );
 
   if (idx !== -1) {
@@ -29245,7 +30874,7 @@ app.delete("/api/erp/portal/leave-applications/:id", async (req, res) => {
 app.get("/api/erp/portal/report-cards/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -29342,14 +30971,14 @@ app.get("/api/erp/portal/report-cards/:studentId", (req, res) => {
 app.get("/api/erp/portal/fees/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   // Filter demands for this student
   let demands = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).filter(d =>
-    (!d.organization_id || d.organization_id === orgId) &&
+    (d.organization_id === orgId) &&
     (d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase()))
   );
 
@@ -29381,7 +31010,7 @@ app.get("/api/erp/portal/fees/:studentId", (req, res) => {
   const balance = Math.max(0, totalInvoiced - totalPaid);
 
   const payments = (typeof ERP_FEE_PAYMENTS !== "undefined" ? ERP_FEE_PAYMENTS : []).filter(p =>
-    (!p.organization_id || p.organization_id === orgId) &&
+    (p.organization_id === orgId) &&
     (p.studentId === student.id || (p.studentName || "").toLowerCase().includes(student.name.toLowerCase()))
   );
 
@@ -29411,17 +31040,17 @@ app.post("/api/erp/portal/pay-fee", async (req, res) => {
     return res.status(400).json({ success: false, error: "MISSING_STUDENT", message: "studentId is required." });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   let demand = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).find(d => 
-    (!d.organization_id || d.organization_id === orgId) && d.id === demandId
+    (d.organization_id === orgId) && d.id === demandId
   );
   if (!demand) {
     demand = (typeof ERP_FEE_DEMANDS !== "undefined" ? ERP_FEE_DEMANDS : []).find(
-      d => (!d.organization_id || d.organization_id === orgId) &&
+      d => (d.organization_id === orgId) &&
            (d.studentId === student.id || (d.studentName || "").toLowerCase().includes(student.name.toLowerCase())) &&
            (d.status === "pending" || d.balanceAmount > 0)
     );
@@ -29504,14 +31133,14 @@ app.get("/api/erp/portal/homework", (req, res) => {
   let student = null;
 
   if (studentId) {
-    student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+    student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
     if (student) {
       targetGrade = student.grade;
       targetSection = student.section;
     }
   }
 
-  let items = ERP_PORTAL_HOMEWORK.filter(h => !h.organization_id || h.organization_id === orgId);
+  let items = ERP_PORTAL_HOMEWORK.filter(h => h.organization_id === orgId);
   if (targetGrade) {
     items = items.filter(h => (h.grade || "").toLowerCase() === targetGrade.toLowerCase());
   }
@@ -29608,7 +31237,7 @@ app.delete("/api/erp/portal/homework/:id", async (req, res) => {
   const { id } = req.params;
 
   const idx = ERP_PORTAL_HOMEWORK.findIndex(h => 
-    (!h.organization_id || h.organization_id === orgId) &&
+    (h.organization_id === orgId) &&
     (h.id === id || h.db_id === id)
   );
 
@@ -29643,12 +31272,12 @@ app.post("/api/erp/portal/homework/submit", async (req, res) => {
     return res.status(400).json({ success: false, error: "MISSING_FIELDS", message: "homeworkId and studentId are required." });
   }
 
-  const hw = ERP_PORTAL_HOMEWORK.find(h => (!h.organization_id || h.organization_id === orgId) && (h.id === homeworkId || h.db_id === homeworkId));
+  const hw = ERP_PORTAL_HOMEWORK.find(h => (h.organization_id === orgId) && (h.id === homeworkId || h.db_id === homeworkId));
   if (!hw) {
     return res.status(404).json({ success: false, error: "HOMEWORK_NOT_FOUND", message: `Homework '${homeworkId}' not found.` });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -29698,7 +31327,7 @@ app.post("/api/erp/portal/homework/acknowledge", async (req, res) => {
     return res.status(400).json({ success: false, error: "MISSING_FIELDS", message: "homeworkId and studentId are required." });
   }
 
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && (s.studentId === studentId || (student && s.studentId === student.id)));
 
   if (!sub) {
@@ -29736,13 +31365,13 @@ app.post("/api/erp/portal/homework/acknowledge", async (req, res) => {
 app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   const slots = ERP_TIMETABLE_SLOTS.filter(s =>
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     (s.grade || "").toLowerCase() === (student.grade || "").toLowerCase() &&
     (s.section || "").toLowerCase() === (student.section || "").toLowerCase()
   );
@@ -29787,15 +31416,15 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
 app.get("/api/erp/portal/transport/:studentId", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { studentId } = req.params;
-  const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
   const route = ERP_TRANSPORT.find(t => 
-    (!t.organization_id || t.organization_id === orgId) && 
+    (t.organization_id === orgId) && 
     ((t.assignedStudentIds || []).includes(student.id) || (t.assignedStudentIds || []).includes(studentId))
-  ) || ERP_TRANSPORT.find(t => !t.organization_id || t.organization_id === orgId) || ERP_TRANSPORT[0];
+  ) || ERP_TRANSPORT.find(t => t.organization_id === orgId) || ERP_TRANSPORT[0];
 
   res.json({
     success: true,
@@ -29894,20 +31523,23 @@ app.get("/api/erp/portal/notices", async (req, res) => {
   });
 });
 
-// 14i. Backward-Compatible Legacy Settings Endpoints
-app.get("/api/erp/settings", (req, res) => {
-  res.json({ success: true, settings: ERP_SETTINGS });
+// 14i. Backward-Compatible Legacy Settings Endpoints (Tenant Scoped & DB Persisted)
+app.get("/api/erp/settings", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const settings = await getTenantSettings(orgId);
+  res.json({ success: true, settings });
 });
 
-app.put("/api/erp/settings", (req, res) => {
-  ERP_SETTINGS = { ...ERP_SETTINGS, ...req.body };
-  if (ERP_MASTER_SETTINGS.school_profile) {
+app.put("/api/erp/settings", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const settings = await updateTenantSettings(orgId, req.body || {});
+  if (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" && ERP_MASTER_SETTINGS.school_profile) {
     ERP_MASTER_SETTINGS.school_profile = {
       ...ERP_MASTER_SETTINGS.school_profile,
       ...req.body
     };
   }
-  res.json({ success: true, message: "School ERP settings updated successfully", settings: ERP_SETTINGS });
+  res.json({ success: true, message: "School ERP settings updated successfully", settings });
 });
 
 
@@ -29946,13 +31578,13 @@ function evaluateOnboardingChecklist(orgId) {
   };
 
   const profile = ERP_MASTER_SETTINGS.school_profile || ERP_SETTINGS || {};
-  const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === orgId);
-  const sessions = ERP_ACADEMIC_SESSIONS.filter(s => !s.organization_id || s.organization_id === orgId);
-  const classes = ERP_CLASSES.filter(c => !c.organization_id || c.organization_id === orgId);
-  const subjects = ERP_SUBJECTS.filter(s => !s.organization_id || s.organization_id === orgId);
-  const staff = ERP_STAFF.filter(st => !st.organization_id || st.organization_id === orgId);
-  const students = ERP_STUDENTS.filter(std => !std.organization_id || std.organization_id === orgId);
-  const feeStructures = ERP_FEE_STRUCTURES.filter(f => !f.organization_id || f.organization_id === orgId);
+  const campuses = ERP_CAMPUSES.filter(c => c.organization_id === orgId);
+  const sessions = ERP_ACADEMIC_SESSIONS.filter(s => s.organization_id === orgId);
+  const classes = ERP_CLASSES.filter(c => c.organization_id === orgId);
+  const subjects = ERP_SUBJECTS.filter(s => s.organization_id === orgId);
+  const staff = ERP_STAFF.filter(st => st.organization_id === orgId);
+  const students = ERP_STUDENTS.filter(std => std.organization_id === orgId);
+  const feeStructures = ERP_FEE_STRUCTURES.filter(f => f.organization_id === orgId);
   const commSettings = ERP_COMMUNICATION_SETTINGS[orgId] || ERP_COMMUNICATION_SETTINGS["b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"] || {};
   const aiSettings = ERP_AI_SETTINGS || {};
 
@@ -30194,7 +31826,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           return res.status(400).json({ success: false, message: "Campus Name and Campus Code are required." });
         }
 
-        const existingCampus = ERP_CAMPUSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.code.toLowerCase() === code.trim().toLowerCase());
+        const existingCampus = ERP_CAMPUSES.find(c => (c.organization_id === orgId) && c.code.toLowerCase() === code.trim().toLowerCase());
         if (existingCampus) {
           existingCampus.name = name.trim();
           existingCampus.address = address || existingCampus.address;
@@ -30203,7 +31835,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
         } else {
           if (isMain) {
             ERP_CAMPUSES.forEach(c => {
-              if (!c.organization_id || c.organization_id === orgId) c.isMain = false;
+              if (c.organization_id === orgId) c.isMain = false;
             });
           }
           ERP_CAMPUSES.push({
@@ -30236,7 +31868,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           return res.status(400).json({ success: false, message: "Session Start Date must be strictly before End Date." });
         }
 
-        const existingSession = ERP_ACADEMIC_SESSIONS.find(s => (!s.organization_id || s.organization_id === orgId) && s.name === name.trim());
+        const existingSession = ERP_ACADEMIC_SESSIONS.find(s => (s.organization_id === orgId) && s.name === name.trim());
         if (existingSession) {
           existingSession.startDate = startDate;
           existingSession.endDate = endDate;
@@ -30245,7 +31877,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
         } else {
           if (isCurrent) {
             ERP_ACADEMIC_SESSIONS.forEach(s => {
-              if (!s.organization_id || s.organization_id === orgId) s.isCurrent = false;
+              if (s.organization_id === orgId) s.isCurrent = false;
             });
           }
           ERP_ACADEMIC_SESSIONS.push({
@@ -30272,7 +31904,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
         classesToAdd.forEach(cls => {
           const grade = cls.grade || cls.name;
           const section = cls.section || "A";
-          const exists = ERP_CLASSES.find(c => (!c.organization_id || c.organization_id === orgId) && c.grade === grade && c.section === section);
+          const exists = ERP_CLASSES.find(c => (c.organization_id === orgId) && c.grade === grade && c.section === section);
           if (!exists) {
             ERP_CLASSES.push({
               id: `cls-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -30294,7 +31926,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           subjectsToAdd.forEach(sub => {
             const subjectName = sub.subjectName || sub.name;
             const subjectCode = (sub.subjectCode || sub.code || `SUB-${subjectName.slice(0, 3).toUpperCase()}`).toUpperCase();
-            const exists = ERP_SUBJECTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.subjectCode === subjectCode);
+            const exists = ERP_SUBJECTS.find(s => (s.organization_id === orgId) && s.subjectCode === subjectCode);
             if (!exists) {
               ERP_SUBJECTS.push({
                 id: `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -30317,7 +31949,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           payload.staff.forEach(st => {
             if (st.name && st.email) {
               const empId = st.empId || `EMP-${Date.now().toString().slice(-4)}`;
-              const exists = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.empId === empId);
+              const exists = ERP_STAFF.find(s => (s.organization_id === orgId) && s.empId === empId);
               if (!exists) {
                 ERP_STAFF.push({
                   id: `stf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -30345,7 +31977,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           payload.students.forEach(std => {
             if (std.name && std.grade) {
               const rollNo = std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`;
-              const exists = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.rollNo === rollNo);
+              const exists = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.rollNo === rollNo);
               if (!exists) {
                 ERP_STUDENTS.push({
                   id: `std-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -30375,7 +32007,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
         if (feeHeads.length > 0) {
           feeHeads.forEach(f => {
             if (f.feeHead && f.amountInr !== undefined) {
-              const exists = ERP_FEE_STRUCTURES.find(fs => (!fs.organization_id || fs.organization_id === orgId) && fs.feeHead === f.feeHead && fs.grade === (f.grade || "all"));
+              const exists = ERP_FEE_STRUCTURES.find(fs => (fs.organization_id === orgId) && fs.feeHead === f.feeHead && fs.grade === (f.grade || "all"));
               if (!exists) {
                 ERP_FEE_STRUCTURES.push({
                   id: `fs-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -30746,7 +32378,7 @@ app.post("/api/erp/onboarding/import/students", async (req, res) => {
     }
 
     // Check duplicate
-    const isDup = ERP_STUDENTS.some(s => (!s.organization_id || s.organization_id === orgId) && s.rollNo === rollNo);
+    const isDup = ERP_STUDENTS.some(s => (s.organization_id === orgId) && s.rollNo === rollNo);
     if (isDup) {
       duplicateRecords.push({ row: rowNum, rollNo, name, message: `Roll number '${rollNo}' already exists in tenant` });
       return;
@@ -30835,7 +32467,7 @@ app.post("/api/erp/onboarding/import/staff", async (req, res) => {
       return;
     }
 
-    const isDup = ERP_STAFF.some(st => (!st.organization_id || st.organization_id === orgId) && (st.empId === empId || st.email === email));
+    const isDup = ERP_STAFF.some(st => (st.organization_id === orgId) && (st.empId === empId || st.email === email));
     if (isDup) {
       duplicateRecords.push({ row: rowNum, empId, email, message: `Employee ID or email already exists in tenant` });
       return;
@@ -30962,7 +32594,7 @@ let PLATFORM_SETTINGS = {
 
 // Security Guard: Enforce SuperAdmin / Platform Administrator Role
 function checkPlatformAdminRole(req, res) {
-  if (req.user?.isSuperAdmin === true || req.user?.role === "superadmin" || req.headers['x-platform-role'] === 'superadmin' || req.headers['x-role'] === 'superadmin') {
+  if (req.user?.isSuperAdmin === true || req.user?.role === "superadmin") {
     return true;
   }
 
@@ -31243,9 +32875,9 @@ app.get("/api/admin/organizations/:id", async (req, res) => {
     }
   ];
 
-  const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === org.id);
-  const studentsCount = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === org.id).length;
-  const staffCount = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === org.id).length;
+  const campuses = ERP_CAMPUSES.filter(c => c.organization_id === org.id);
+  const studentsCount = ERP_STUDENTS.filter(s => s.organization_id === org.id).length;
+  const staffCount = ERP_STAFF.filter(s => s.organization_id === org.id).length;
   const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active", amountINR: 1499 };
   const onboarding = ERP_ONBOARDING[org.id] || { status: "active", current_step: 16 };
   const auditLogs = IN_MEMORY_AUDIT_LOGS.filter(l => l.organization_id === org.id).slice(0, 15);
@@ -31449,9 +33081,9 @@ app.get("/api/admin/schools", (req, res) => {
   const term = (q || search || "").trim().toLowerCase();
 
   const schools = IN_MEMORY_ORGANIZATIONS.map(org => {
-    const campuses = ERP_CAMPUSES.filter(c => !c.organization_id || c.organization_id === org.id);
-    const students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === org.id);
-    const staff = ERP_STAFF.filter(s => !s.organization_id || s.organization_id === org.id);
+    const campuses = ERP_CAMPUSES.filter(c => c.organization_id === org.id);
+    const students = ERP_STUDENTS.filter(s => s.organization_id === org.id);
+    const staff = ERP_STAFF.filter(s => s.organization_id === org.id);
     const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active" };
 
     return {
@@ -31697,7 +33329,7 @@ app.get("/api/admin/usage", (req, res) => {
       organizationId: o.id,
       name: o.name,
       plan: o.plan || "starter",
-      studentCount: ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === o.id).length
+      studentCount: ERP_STUDENTS.filter(s => s.organization_id === o.id).length
     }))
   };
 
@@ -32619,11 +34251,11 @@ class AuthorizationService {
     const userEmail = (req.user?.email || "").toLowerCase();
 
     if (rawStaffId) {
-      const sf = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === rawStaffId);
+      const sf = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === rawStaffId);
       if (sf) return sf;
     }
     if (userEmail) {
-      const sf = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && (s.email || "").toLowerCase() === userEmail);
+      const sf = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.email || "").toLowerCase() === userEmail);
       if (sf) return sf;
     }
     return null;
@@ -32637,11 +34269,11 @@ class AuthorizationService {
   }
 
   static getStaffContext(staffId, orgId) {
-    const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+    const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
     if (!staff) return null;
 
-    const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (!a.organization_id || a.organization_id === orgId) && a.staffId === staffId);
-    const responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => (!r.organization_id || r.organization_id === orgId) && r.staff_id === staffId && r.status === "active");
+    const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (a.organization_id === orgId) && a.staffId === staffId);
+    const responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => (r.organization_id === orgId) && r.staff_id === staffId && r.status === "active");
 
     return {
       staff,
@@ -32655,7 +34287,7 @@ class AuthorizationService {
 
   static getActiveResponsibilities(staffId, orgId, sessionId = "2026-27") {
     return ERP_STAFF_RESPONSIBILITIES.filter(r => 
-      (!r.organization_id || r.organization_id === orgId) &&
+      (r.organization_id === orgId) &&
       r.staff_id === staffId &&
       r.status === "active" &&
       (!sessionId || r.academic_session_id === sessionId)
@@ -32664,14 +34296,14 @@ class AuthorizationService {
 
   static getTeachingAssignments(staffId, orgId, sessionId = "2026-27") {
     return ERP_TEACHER_ASSIGNMENTS.filter(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       a.staffId === staffId &&
       (!sessionId || a.academicSession === sessionId)
     );
   }
 
   static getEffectivePermissions(staffId, orgId, sessionId = "2026-27") {
-    const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+    const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
     if (!staff) return [];
 
     const permsSet = new Set();
@@ -32736,7 +34368,7 @@ class AuthorizationService {
 
     // 1. Check teaching assignment
     const isAssigned = ERP_TEACHER_ASSIGNMENTS.some(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       a.staffId === staffId &&
       a.grade.toLowerCase().trim() === cleanGrade &&
       a.section.toLowerCase().trim() === cleanSec &&
@@ -32767,7 +34399,7 @@ class AuthorizationService {
 
     // 3. Check ERP_SECTIONS legacy classTeacherId
     const secObj = ERP_SECTIONS.find(s =>
-      (!s.organization_id || s.organization_id === orgId) &&
+      (s.organization_id === orgId) &&
       s.grade.toLowerCase().trim() === cleanGrade &&
       s.section.toLowerCase().trim() === cleanSec &&
       s.classTeacherId === staffId
@@ -32778,7 +34410,7 @@ class AuthorizationService {
   }
 
   static canAccessStudent(staffId, studentId, orgId, sessionId = "2026-27") {
-    const student = ERP_STUDENTS.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === studentId);
+    const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.id === studentId);
     if (!student) return false;
     return this.canAccessSection(staffId, student.grade, student.section, orgId, sessionId);
   }
@@ -32786,7 +34418,7 @@ class AuthorizationService {
   static canManageAttendance(staffId, grade, section, orgId, sessionId = "2026-27") {
     // Class teacher or Attendance incharge
     const isAttendanceIncharge = ERP_STAFF_RESPONSIBILITIES.some(r =>
-      (!r.organization_id || r.organization_id === orgId) &&
+      (r.organization_id === orgId) &&
       r.staff_id === staffId &&
       r.status === "active" &&
       r.responsibility_code === "ATTENDANCE_INCHARGE" &&
@@ -32798,12 +34430,12 @@ class AuthorizationService {
   }
 
   static canAccessExam(staffId, examId, orgId, sessionId = "2026-27") {
-    const exam = ERP_EXAMS.find(e => (!e.organization_id || e.organization_id === orgId) && e.id === examId);
+    const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && e.id === examId);
     if (!exam) return false;
 
     // Exam Incharge has school-wide exam access
     const isExamIncharge = ERP_STAFF_RESPONSIBILITIES.some(r =>
-      (!r.organization_id || r.organization_id === orgId) &&
+      (r.organization_id === orgId) &&
       r.staff_id === staffId &&
       r.status === "active" &&
       r.responsibility_code === "EXAM_INCHARGE" &&
@@ -32813,7 +34445,7 @@ class AuthorizationService {
 
     // Teacher assigned to exam grade
     return ERP_TEACHER_ASSIGNMENTS.some(a =>
-      (!a.organization_id || a.organization_id === orgId) &&
+      (a.organization_id === orgId) &&
       a.staffId === staffId &&
       a.grade.toLowerCase() === (exam.grade || "").toLowerCase()
     );
@@ -32821,7 +34453,7 @@ class AuthorizationService {
 
   static canAccessProgram(staffId, programCode, orgId, sessionId = "2026-27") {
     return ERP_STAFF_RESPONSIBILITIES.some(r =>
-      (!r.organization_id || r.organization_id === orgId) &&
+      (r.organization_id === orgId) &&
       r.staff_id === staffId &&
       r.status === "active" &&
       (r.scope_type === "PROGRAM" || r.responsibility_code.includes(programCode.toUpperCase())) &&
@@ -32841,7 +34473,7 @@ app.get("/api/erp/responsibilities", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, active, search, q } = req.query;
 
-  let list = ERP_RESPONSIBILITY_TYPES.filter(t => !t.organization_id || t.organization_id === orgId);
+  let list = ERP_RESPONSIBILITY_TYPES.filter(t => t.organization_id === orgId);
 
   if (category && category !== "all") {
     list = list.filter(t => (t.category || "").toLowerCase() === category.toLowerCase());
@@ -32858,7 +34490,7 @@ app.get("/api/erp/responsibilities", (req, res) => {
   // Enrich with active holder counts and permissions
   const enriched = list.map(t => {
     const activeHolders = ERP_STAFF_RESPONSIBILITIES.filter(r => 
-      (!r.organization_id || r.organization_id === orgId) &&
+      (r.organization_id === orgId) &&
       r.responsibility_code === t.code &&
       r.status === "active"
     ).length;
@@ -32891,7 +34523,7 @@ app.post("/api/erp/responsibilities", async (req, res) => {
 
   const cleanCode = code.trim().toUpperCase().replace(/\s+/g, "_");
   const duplicate = ERP_RESPONSIBILITY_TYPES.find(t => 
-    (!t.organization_id || t.organization_id === orgId) && t.code === cleanCode
+    (t.organization_id === orgId) && t.code === cleanCode
   );
   if (duplicate) {
     return res.status(400).json({ success: false, message: `Responsibility type '${cleanCode}' already exists.` });
@@ -32934,7 +34566,7 @@ app.patch("/api/erp/responsibilities/:id", async (req, res) => {
     return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Only School Administrators can modify responsibility types." });
   }
 
-  const target = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === req.params.id);
+  const target = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.id === req.params.id);
   if (!target) {
     return res.status(404).json({ success: false, message: "Responsibility type not found." });
   }
@@ -32959,7 +34591,7 @@ app.patch("/api/erp/responsibilities/:id", async (req, res) => {
 // 4. Permissions Mapping: GET & PATCH /api/erp/responsibilities/:id/permissions
 app.get("/api/erp/responsibilities/:id/permissions", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const target = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === req.params.id);
+  const target = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.id === req.params.id);
   if (!target) {
     return res.status(404).json({ success: false, message: "Responsibility type not found." });
   }
@@ -32979,7 +34611,7 @@ app.patch("/api/erp/responsibilities/:id/permissions", async (req, res) => {
     return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Only School Administrators can modify responsibility permissions." });
   }
 
-  const target = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === req.params.id);
+  const target = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.id === req.params.id);
   if (!target) {
     return res.status(404).json({ success: false, message: "Responsibility type not found." });
   }
@@ -33006,13 +34638,13 @@ app.get("/api/erp/staff/:staffId/responsibilities", (req, res) => {
   const { staffId } = req.params;
   const { session } = req.query;
 
-  const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+  const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found." });
   }
 
   let responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => 
-    (!r.organization_id || r.organization_id === orgId) && r.staff_id === staffId
+    (r.organization_id === orgId) && r.staff_id === staffId
   );
 
   if (session && session !== "all") {
@@ -33037,7 +34669,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   }
 
   const { staffId } = req.params;
-  const staff = ERP_STAFF.find(s => (!s.organization_id || s.organization_id === orgId) && s.id === staffId);
+  const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found in tenant organization." });
   }
@@ -33061,11 +34693,11 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
 
   let respType = null;
   if (responsibility_type_id) {
-    respType = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === responsibility_type_id);
+    respType = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.id === responsibility_type_id);
   }
   if (!respType && responsibility_code) {
     const cleanCode = responsibility_code.trim().toUpperCase();
-    respType = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.code === cleanCode);
+    respType = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.code === cleanCode);
   }
   if (!respType) {
     return res.status(400).json({ success: false, message: "Invalid responsibility type." });
@@ -33082,7 +34714,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
 
   // Conflict detection: Same staff, same responsibility, same scope, same session
   const existingActive = ERP_STAFF_RESPONSIBILITIES.find(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     r.staff_id === staffId &&
     r.responsibility_code === cleanCode &&
     r.scope_id.toLowerCase() === scope_id.trim().toLowerCase() &&
@@ -33155,7 +34787,7 @@ app.patch("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
   }
 
   const assignment = ERP_STAFF_RESPONSIBILITIES.find(r => 
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     r.staff_id === req.params.staffId &&
     r.id === req.params.id
   );
@@ -33198,7 +34830,7 @@ app.delete("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
   }
 
   const idx = ERP_STAFF_RESPONSIBILITIES.findIndex(r => 
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     r.staff_id === req.params.staffId &&
     r.id === req.params.id
   );
@@ -33224,7 +34856,7 @@ app.get("/api/erp/me/responsibilities", (req, res) => {
   }
 
   const responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => 
-    (!r.organization_id || r.organization_id === orgId) && r.staff_id === staff.id
+    (r.organization_id === orgId) && r.staff_id === staff.id
   );
 
   res.json({
@@ -33295,7 +34927,7 @@ app.get("/api/erp/teacher/students", (req, res) => {
     }
   }
 
-  let students = ERP_STUDENTS.filter(s => !s.organization_id || s.organization_id === orgId);
+  let students = ERP_STUDENTS.filter(s => s.organization_id === orgId);
 
   // Scoped filtering: Filter down to sections authorized for this teacher
   students = students.filter(s => AuthorizationService.canAccessSection(staff.id, s.grade, s.section, orgId));
@@ -33327,7 +34959,7 @@ app.get("/api/erp/teacher/attendance", (req, res) => {
   const targetDate = date || new Date().toISOString().split("T")[0];
 
   let attRecords = ERP_ATTENDANCE.filter(a =>
-    (!a.organization_id || a.organization_id === orgId) && a.attendanceDate === targetDate
+    (a.organization_id === orgId) && a.attendanceDate === targetDate
   );
 
   // Filter to authorized sections
@@ -33356,11 +34988,11 @@ app.get("/api/erp/teacher/exams", (req, res) => {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
 
-  let exams = ERP_EXAMS.filter(e => !e.organization_id || e.organization_id === orgId);
+  let exams = ERP_EXAMS.filter(e => e.organization_id === orgId);
 
   // If not School Exam Incharge, limit to exams where teacher has teaching assignments
   const isExamIncharge = ERP_STAFF_RESPONSIBILITIES.some(r =>
-    (!r.organization_id || r.organization_id === orgId) &&
+    (r.organization_id === orgId) &&
     r.staff_id === staff.id &&
     r.status === "active" &&
     r.responsibility_code === "EXAM_INCHARGE"
@@ -33392,13 +35024,13 @@ app.get("/api/erp/teacher/workload", (req, res) => {
 
   // Count total distinct students in teacher's authorized sections
   const authorizedStudents = ERP_STUDENTS.filter(s => 
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     AuthorizationService.canAccessSection(staff.id, s.grade, s.section, orgId)
   );
 
   // Active homework created by this teacher
   const activeHomework = ERP_HOMEWORK.filter(h =>
-    (!h.organization_id || h.organization_id === orgId) && h.teacherId === staff.id
+    (h.organization_id === orgId) && h.teacherId === staff.id
   );
 
   res.json({
@@ -33443,12 +35075,12 @@ app.get("/api/erp/teacher/workload-summary", (req, res) => {
   const scopes = AuthorizationService.getAccessibleScopes(staff.id, orgId);
 
   const authorizedStudents = ERP_STUDENTS.filter(s => 
-    (!s.organization_id || s.organization_id === orgId) &&
+    (s.organization_id === orgId) &&
     AuthorizationService.canAccessSection(staff.id, s.grade, s.section, orgId)
   );
 
   const activeHomework = ERP_HOMEWORK.filter(h =>
-    (!h.organization_id || h.organization_id === orgId) && h.teacherId === staff.id
+    (h.organization_id === orgId) && h.teacherId === staff.id
   );
 
   const summary = {
