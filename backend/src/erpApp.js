@@ -10793,11 +10793,11 @@ app.get("/api/erp/students", async (req, res) => {
   } = req.query;
 
   // Strict tenant organization isolation & live DB query
-  let tenantStudents = orgId ? ERP_STUDENTS.filter(s => s.organization_id === orgId) : [];
+  let tenantStudents = (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") ? ERP_STUDENTS.filter(s => s.organization_id === orgId) : [];
 
   if (supabase) {
     try {
-      let query = supabase.from("students").select("*");
+      let query = supabase.from("students").select("*, student_enrollments(*, classes(name), sections(name)), student_parents(*, parents(*))");
       if (orgId) {
         query = query.eq("organization_id", orgId);
       }
@@ -10805,17 +10805,21 @@ app.get("/api/erp/students", async (req, res) => {
       if (dbStudents && dbStudents.length > 0) {
         const mappedDbStudents = dbStudents.map(s => {
           const fullName = [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ") || s.admission_no;
+          const enr = (s.student_enrollments && s.student_enrollments[0]) || null;
+          const par = (s.student_parents && s.student_parents[0]?.parents) || null;
           return {
             id: s.id,
             admissionNo: s.admission_no || "ADM-001",
             penNo: s.pen_no || "",
-            rollNo: s.roll_no || s.admission_no?.slice(-3) || "01",
+            rollNo: enr?.roll_no || s.roll_no || s.admission_no?.slice(-3) || "01",
             firstName: s.first_name || fullName.split(" ")[0],
             middleName: s.middle_name || "",
             lastName: s.last_name || fullName.split(" ").slice(1).join(" "),
             name: fullName,
-            grade: s.grade || "Class 10",
-            section: s.section || "A",
+            grade: enr?.classes?.name || s.grade || "Class 10",
+            section: enr?.sections?.name || s.section || "A",
+            class_id: enr?.class_id || null,
+            section_id: enr?.section_id || null,
             gender: s.gender || "Not specified",
             dob: s.date_of_birth || "2012-01-01",
             bloodGroup: s.blood_group || "B+",
@@ -10825,18 +10829,26 @@ app.get("/api/erp/students", async (req, res) => {
             status: s.admission_status === "admitted" ? "active" : (s.admission_status || "active"),
             phone: s.phone || "",
             email: s.email || "",
-            parentName: `${s.last_name ? s.last_name + ' Parent' : 'Guardian'}`,
-            parentPhone: s.phone || "",
+            parentName: par?.name || `${s.last_name ? s.last_name + ' Parent' : 'Guardian'}`,
+            parentPhone: par?.phone || s.phone || "",
+            parentEmail: par?.email || "",
+            parentRelation: par?.relation || "Parent",
+            parentAddress: par?.address || s.address || "",
             duesINR: 0,
             attendancePercent: 94.5,
             organization_id: s.organization_id
           };
         });
 
-        // Merge: DB records take precedence, avoid duplicate admissionNo
-        const existingNos = new Set(mappedDbStudents.map(m => m.admissionNo?.toLowerCase()));
-        const uniqueMemStudents = tenantStudents.filter(m => !existingNos.has(m.admissionNo?.toLowerCase()));
-        tenantStudents = [...mappedDbStudents, ...uniqueMemStudents];
+        if (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+          const existingNos = new Set(mappedDbStudents.map(m => m.admissionNo?.toLowerCase()));
+          const uniqueMemStudents = tenantStudents.filter(m => !existingNos.has(m.admissionNo?.toLowerCase()));
+          tenantStudents = [...mappedDbStudents, ...uniqueMemStudents];
+        } else {
+          tenantStudents = mappedDbStudents;
+        }
+      } else if (orgId !== "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+        tenantStudents = [];
       }
     } catch (dbErr) {
       console.warn("[Students DB] Live students fetch note:", dbErr.message);
@@ -11305,6 +11317,72 @@ app.post("/api/erp/students", async (req, res) => {
         console.warn("[DB] Student persistence note:", dbErr.message);
       } else if (dbStudent) {
         newStd.db_id = dbStudent.id;
+        newStd.id = dbStudent.id;
+
+        // 1. Cascade enrollment with real foreign keys (class_id, section_id, academic_session_id)
+        try {
+          const classId = await resolveOrCreateClass(orgId, newStd.grade);
+          const sectionId = classId ? await resolveOrCreateSection(orgId, classId, newStd.section || "A") : null;
+          const sessionId = await resolveOrCreateSession(orgId, newStd.academicSession || "2026-27");
+
+          if (classId && sectionId && sessionId) {
+            await supabase
+              .from("student_enrollments")
+              .upsert([{
+                organization_id: orgId,
+                student_id: dbStudent.id,
+                academic_session_id: sessionId,
+                class_id: classId,
+                section_id: sectionId,
+                roll_no: newStd.rollNo || null,
+                joined_on: newStd.admissionDate || new Date().toISOString().split("T")[0]
+              }], { onConflict: "student_id, academic_session_id" });
+          }
+        } catch (enrErr) {
+          console.warn("[Student Enrollment DB Cascade Error]:", enrErr.message);
+        }
+
+        // 2. Cascade parent record if parent details provided
+        if (newStd.parentName || newStd.parentPhone || newStd.parentEmail) {
+          try {
+            await resolveOrCreateParentDb(orgId, {
+              name: newStd.parentName || "Parent",
+              phone: newStd.parentPhone || newStd.phone || "",
+              email: newStd.parentEmail || "",
+              relation: newStd.parentRelation || "Father",
+              address: newStd.parentAddress || newStd.address || ""
+            }, dbStudent.id);
+          } catch (parErr) {
+            console.warn("[Student Parent DB Cascade Error]:", parErr.message);
+          }
+        }
+
+        // 3. Cascade automatic fee demand if active fee structures exist
+        try {
+          const { data: activeFeeStructures } = await supabase
+            .from("fee_structures")
+            .select("*")
+            .eq("organization_id", orgId);
+
+          if (activeFeeStructures && activeFeeStructures.length > 0) {
+            for (const fs of activeFeeStructures) {
+              await supabase
+                .from("student_fees")
+                .insert([{
+                  organization_id: orgId,
+                  student_id: dbStudent.id,
+                  fee_structure_id: fs.id,
+                  amount_due: fs.amount,
+                  discount: 0,
+                  amount_paid: 0,
+                  status: "pending",
+                  due_date: fs.due_date || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0]
+                }]);
+            }
+          }
+        } catch (feeErr) {
+          console.warn("[Student Auto Fee Cascade Error]:", feeErr.message);
+        }
       }
     } catch (e) {
       console.warn("[DB] Student insert exception:", e.message);
@@ -14001,24 +14079,161 @@ app.get("/api/erp/dashboard", async (req, res) => {
     currentDate: selectedDate
   };
 
-  // 2. Filter base data for this tenant
-  let tenantStudents = ERP_STUDENTS.filter(s => (s.organization_id === orgId));
-  let tenantStaff = ERP_STAFF.filter(s => (s.organization_id === orgId));
+  // 2. Filter base data for this tenant from PostgreSQL Single Source of Truth
+  let tenantStudents = [];
+  let tenantStaff = [];
   let tenantAssignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (a.organization_id === orgId));
-  let tenantAttendance = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId));
-  let tenantStaffAttendance = ERP_STAFF_ATTENDANCE.filter(a => (a.organization_id === orgId));
+  let tenantAttendance = [];
+  let tenantStaffAttendance = [];
+  let totalFeeCollected = 0;
+  let totalFeeDue = 0;
+  let upcomingExamsList = [];
+  let recentNoticesList = [];
+  let websiteInfo = null;
+  let dbClassesCount = 0;
+  let dbSectionsCount = 0;
+  let dbSubjectsCount = 0;
+  let dbSessionsCount = 1;
 
-  if (supabase && orgId && !isDemoOrg) {
+  if (supabase && orgId) {
     try {
-      if (tenantStudents.length === 0) {
-        const { data: dbStudents } = await supabase.from("students").select("*").eq("organization_id", orgId);
-        if (dbStudents && dbStudents.length > 0) tenantStudents = dbStudents;
+      const [
+        { data: dbStudents },
+        { data: dbStaff },
+        { data: dbAtt },
+        { data: dbStaffAtt },
+        { data: dbPayments },
+        { data: dbDues },
+        { data: dbExams },
+        { data: dbNotices },
+        { data: dbWebsites },
+        { count: clsCount },
+        { count: secCount },
+        { count: subCount },
+        { count: sesCount }
+      ] = await Promise.all([
+        supabase.from("students").select("*, student_enrollments(*, classes(name), sections(name))").eq("organization_id", orgId),
+        supabase.from("staff").select("*").eq("organization_id", orgId),
+        supabase.from("student_attendance").select("*").eq("organization_id", orgId),
+        supabase.from("staff_attendance").select("*").eq("organization_id", orgId),
+        supabase.from("fee_payments").select("amount").eq("organization_id", orgId),
+        supabase.from("student_fees").select("amount_due, amount_paid").eq("organization_id", orgId).neq("status", "paid"),
+        supabase.from("exams").select("*").eq("organization_id", orgId).order("start_date", { ascending: true }).limit(5),
+        supabase.from("notices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(5),
+        supabase.from("websites").select("*").eq("organization_id", orgId).maybeSingle(),
+        supabase.from("classes").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+        supabase.from("sections").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+        supabase.from("subjects").select("*", { count: "exact", head: true }).eq("organization_id", orgId),
+        supabase.from("academic_sessions").select("*", { count: "exact", head: true }).eq("organization_id", orgId)
+      ]);
+
+      if (dbStudents && dbStudents.length > 0) {
+        tenantStudents = dbStudents.map(s => {
+          const enr = s.student_enrollments && s.student_enrollments[0];
+          return {
+            id: s.id,
+            name: [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ") || s.admission_no,
+            grade: enr?.classes?.name || s.grade || "Class 10",
+            section: enr?.sections?.name || s.section || "A",
+            gender: s.gender,
+            status: s.admission_status === "admitted" ? "active" : (s.admission_status || "active"),
+            admissionNo: s.admission_no,
+            rollNo: enr?.roll_no || s.roll_no || "01",
+            organization_id: s.organization_id
+          };
+        });
       }
-      if (tenantStaff.length === 0) {
-        const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
-        if (dbStaff && dbStaff.length > 0) tenantStaff = dbStaff;
+
+      if (dbStaff && dbStaff.length > 0) {
+        tenantStaff = dbStaff.map(st => ({
+          id: st.id,
+          empId: st.employee_code || "FAC-01",
+          name: [st.first_name, st.last_name].filter(Boolean).join(" ") || "Faculty",
+          role: (st.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+          staff_type: st.employment_type || "Teacher",
+          designation: st.designation || "Faculty",
+          department: st.department || "Academics",
+          is_active: st.is_active !== false,
+          status: st.is_active ? "active" : "inactive",
+          organization_id: st.organization_id
+        }));
       }
-    } catch (_) {}
+
+      if (dbAtt && dbAtt.length > 0) {
+        tenantAttendance = dbAtt.map(a => ({
+          id: a.id,
+          student_id: a.student_id,
+          studentId: a.student_id,
+          attendanceDate: a.attendance_date,
+          date: a.attendance_date,
+          status: a.status,
+          remarks: a.remarks,
+          organization_id: a.organization_id
+        }));
+      }
+
+      if (dbStaffAtt && dbStaffAtt.length > 0) {
+        tenantStaffAttendance = dbStaffAtt.map(sa => ({
+          id: sa.id,
+          staff_id: sa.staff_id,
+          staffId: sa.staff_id,
+          attendanceDate: sa.attendance_date,
+          date: sa.attendance_date,
+          status: sa.status,
+          remarks: sa.remarks,
+          organization_id: sa.organization_id
+        }));
+      }
+
+      if (dbPayments && dbPayments.length > 0) {
+        totalFeeCollected = dbPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      }
+      if (dbDues && dbDues.length > 0) {
+        totalFeeDue = dbDues.reduce((acc, d) => acc + Math.max(0, (Number(d.amount_due) || 0) - (Number(d.amount_paid) || 0)), 0);
+      }
+      if (dbExams && dbExams.length > 0) {
+        upcomingExamsList = dbExams.map(ex => ({
+          id: ex.id,
+          name: ex.name,
+          examType: ex.exam_type,
+          startDate: ex.start_date,
+          endDate: ex.end_date
+        }));
+      }
+      if (dbNotices && dbNotices.length > 0) {
+        recentNoticesList = dbNotices.map(n => ({
+          id: n.id,
+          title: n.title,
+          body: n.body,
+          audience: n.audience,
+          created_at: n.created_at
+        }));
+      }
+      if (dbWebsites) {
+        websiteInfo = {
+          id: dbWebsites.id,
+          name: dbWebsites.name,
+          domain: dbWebsites.domain,
+          status: dbWebsites.status || "live"
+        };
+      }
+      if (clsCount !== null && clsCount !== undefined) dbClassesCount = clsCount;
+      if (secCount !== null && secCount !== undefined) dbSectionsCount = secCount;
+      if (subCount !== null && subCount !== undefined) dbSubjectsCount = subCount;
+      if (sesCount !== null && sesCount !== undefined) dbSessionsCount = sesCount;
+    } catch (dbErr) {
+      console.warn("[Dashboard DB Query Error]:", dbErr.message);
+    }
+  }
+
+  // Only demo organization may fall back to in-memory seeds if DB returned nothing
+  if (isDemoOrg) {
+    if (tenantStudents.length === 0) tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    if (tenantStaff.length === 0) tenantStaff = ERP_STAFF.filter(s => s.organization_id === orgId);
+    if (tenantAttendance.length === 0) tenantAttendance = ERP_ATTENDANCE.filter(a => a.organization_id === orgId);
+    if (tenantStaffAttendance.length === 0) tenantStaffAttendance = ERP_STAFF_ATTENDANCE.filter(a => a.organization_id === orgId);
+    if (totalFeeCollected === 0) totalFeeCollected = 284000;
+    if (totalFeeDue === 0) totalFeeDue = 45000;
   }
 
   // Role Adaptation: Teacher filtering
@@ -14429,14 +14644,14 @@ app.get("/api/erp/dashboard", async (req, res) => {
   ];
 
   const academicOverview = {
-    totalClasses: gradeMap.size,
-    totalSections: Array.from(gradeMap.values()).reduce((acc, g) => acc + Object.keys(g.sectionBreakdown || {}).length, 0),
-    totalSubjects: 18,
-    activeSessions: 1
+    totalClasses: dbClassesCount || gradeMap.size,
+    totalSections: dbSectionsCount || Array.from(gradeMap.values()).reduce((acc, g) => acc + Object.keys(g.sectionBreakdown || {}).length, 0),
+    totalSubjects: dbSubjectsCount || 18,
+    activeSessions: dbSessionsCount || 1
   };
 
   const pendingTasks = {
-    unmarkedAttendanceClasses: Math.max(0, gradeMap.size - (todayStudentAttendance.isMarked ? 1 : 0)),
+    unmarkedAttendanceClasses: Math.max(0, (dbClassesCount || gradeMap.size) - (todayStudentAttendance.isMarked ? 1 : 0)),
     pendingAdmissions: admissionsKPI.newCount,
     staffOnLeave: absentStaffToday.length
   };
@@ -14459,6 +14674,13 @@ app.get("/api/erp/dashboard", async (req, res) => {
       students: todayStudentAttendance,
       staff: todayStaffAttendance
     },
+    fees: {
+      todayCollection: totalFeeCollected,
+      totalDue: totalFeeDue
+    },
+    upcomingExams: upcomingExamsList,
+    recentNotices: recentNoticesList,
+    website: websiteInfo,
     admissions: admissionsKPI,
     studentDistribution,
     attendanceTrend,
@@ -14602,17 +14824,83 @@ app.get("/api/erp/academics/overview", (req, res) => {
   });
 });
 
-// 4b. Academic Sessions Endpoints
-app.get(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], (req, res) => {
+// Helper: Resolve or create academic session in Supabase public.academic_sessions
+async function resolveOrCreateSession(orgId, sessionName = "2026-27") {
+  if (!supabase || !orgId) return null;
+  const name = (sessionName || "2026-27").trim();
+  try {
+    let { data: ses } = await supabase
+      .from("academic_sessions")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("name", name)
+      .maybeSingle();
+
+    if (!ses) {
+      const { data: newSes, error } = await supabase
+        .from("academic_sessions")
+        .insert([{
+          organization_id: orgId,
+          name,
+          start_date: "2026-04-01",
+          end_date: "2027-03-31",
+          is_current: true
+        }])
+        .select()
+        .maybeSingle();
+      if (!error && newSes) ses = newSes;
+    }
+    return ses?.id || null;
+  } catch (e) {
+    console.warn("[Academic Session Resolve Error]:", e.message);
+    return null;
+  }
+}
+
+// 4b. Academic Sessions Endpoints (PostgreSQL Backed)
+app.get(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const sessions = ERP_ACADEMIC_SESSIONS
-    .filter(s => s.organization_id === orgId)
-    .map(s => ({ ...s, name: s.name || s.sessionName, sessionName: s.sessionName || s.name }));
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
+
+  let sessions = [];
+  if (supabase && orgId) {
+    try {
+      const { data: dbSessions, error } = await supabase
+        .from("academic_sessions")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("start_date", { ascending: false });
+
+      if (dbSessions && dbSessions.length > 0) {
+        sessions = dbSessions.map(s => ({
+          id: s.id,
+          name: s.name,
+          sessionName: s.name,
+          startDate: s.start_date,
+          endDate: s.end_date,
+          isCurrent: !!s.is_current,
+          status: s.is_current ? "active" : "upcoming",
+          organization_id: s.organization_id,
+          createdAt: s.created_at
+        }));
+      }
+    } catch (e) {
+      console.warn("[Academic Sessions DB Fetch Error]:", e.message);
+    }
+  }
+
+  if (sessions.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    sessions = ERP_ACADEMIC_SESSIONS
+      .filter(s => s.organization_id === orgId)
+      .map(s => ({ ...s, name: s.name || s.sessionName, sessionName: s.sessionName || s.name }));
+  }
+
   res.json({ success: true, sessions });
 });
 
 app.post(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { name, sessionName, startDate, endDate, isCurrent = false, status = "upcoming" } = req.body;
   const effectiveName = (name || sessionName || "").trim();
 
@@ -14624,55 +14912,155 @@ app.post(["/api/erp/academics/sessions", "/api/erp/academic-sessions"], async (r
     return res.status(400).json({ success: false, message: "Start date must be before end date" });
   }
 
-  const duplicate = ERP_ACADEMIC_SESSIONS.find(s => 
-    (s.organization_id === orgId) && 
-    (s.name || s.sessionName || "").toLowerCase() === effectiveName.toLowerCase()
-  );
-  if (duplicate) {
-    return res.status(400).json({ success: false, message: `Academic session '${effectiveName}' already exists` });
-  }
+  let newSession = null;
+  if (supabase && orgId) {
+    try {
+      // Check duplicate in DB
+      const { data: dup } = await supabase
+        .from("academic_sessions")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("name", effectiveName)
+        .maybeSingle();
 
-  if (isCurrent) {
-    ERP_ACADEMIC_SESSIONS.forEach(s => {
-      if (s.organization_id === orgId) {
-        s.isCurrent = false;
-        if (s.status === "active") s.status = "closed";
+      if (dup) {
+        return res.status(400).json({ success: false, message: `Academic session '${effectiveName}' already exists` });
       }
-    });
+
+      if (isCurrent) {
+        await supabase
+          .from("academic_sessions")
+          .update({ is_current: false })
+          .eq("organization_id", orgId);
+      }
+
+      const { data: dbSes, error: insertErr } = await supabase
+        .from("academic_sessions")
+        .insert([{
+          organization_id: orgId,
+          name: effectiveName,
+          start_date: startDate,
+          end_date: endDate,
+          is_current: !!isCurrent
+        }])
+        .select()
+        .maybeSingle();
+
+      if (dbSes) {
+        newSession = {
+          id: dbSes.id,
+          name: dbSes.name,
+          sessionName: dbSes.name,
+          startDate: dbSes.start_date,
+          endDate: dbSes.end_date,
+          status: dbSes.is_current ? "active" : status,
+          isCurrent: !!dbSes.is_current,
+          organization_id: orgId,
+          createdAt: dbSes.created_at
+        };
+      }
+    } catch (e) {
+      console.warn("[Academic Session DB Insert Error]:", e.message);
+    }
   }
 
-  const newSession = {
-    id: `ses-${Date.now()}`,
-    name: effectiveName,
-    sessionName: effectiveName,
-    startDate,
-    endDate,
-    status: isCurrent ? "active" : status,
-    isCurrent: !!isCurrent,
-    organization_id: orgId,
-    createdAt: new Date().toISOString()
-  };
+  if (!newSession) {
+    const duplicate = ERP_ACADEMIC_SESSIONS.find(s => 
+      (s.organization_id === orgId) && 
+      (s.name || s.sessionName || "").toLowerCase() === effectiveName.toLowerCase()
+    );
+    if (duplicate) {
+      return res.status(400).json({ success: false, message: `Academic session '${effectiveName}' already exists` });
+    }
 
-  ERP_ACADEMIC_SESSIONS.push(newSession);
+    if (isCurrent) {
+      ERP_ACADEMIC_SESSIONS.forEach(s => {
+        if (s.organization_id === orgId) {
+          s.isCurrent = false;
+          if (s.status === "active") s.status = "closed";
+        }
+      });
+    }
+
+    newSession = {
+      id: `ses-${Date.now()}`,
+      name: effectiveName,
+      sessionName: effectiveName,
+      startDate,
+      endDate,
+      status: isCurrent ? "active" : status,
+      isCurrent: !!isCurrent,
+      organization_id: orgId,
+      createdAt: new Date().toISOString()
+    };
+    ERP_ACADEMIC_SESSIONS.push(newSession);
+  }
+
   await recordAuditLog("erp.session_created", req.user?.email || "admin", "academic_session", newSession.id, req);
-
   res.json({ success: true, message: "Academic session created successfully", session: newSession });
 });
 
 app.patch("/api/erp/academics/sessions/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { id } = req.params;
   const { name, sessionName, startDate, endDate, status, isCurrent } = req.body;
+
+  if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+    return res.status(400).json({ success: false, message: "Start date must be before end date" });
+  }
+
+  const updateData = {};
+  const effName = name || sessionName;
+  if (effName !== undefined) updateData.name = effName.trim();
+  if (startDate !== undefined) updateData.start_date = startDate;
+  if (endDate !== undefined) updateData.end_date = endDate;
+  if (isCurrent !== undefined) updateData.is_current = !!isCurrent;
+
+  if (supabase && orgId) {
+    try {
+      if (isCurrent === true) {
+        await supabase
+          .from("academic_sessions")
+          .update({ is_current: false })
+          .eq("organization_id", orgId);
+      }
+
+      const { data: updated, error } = await supabase
+        .from("academic_sessions")
+        .update(updateData)
+        .eq("organization_id", orgId)
+        .or(`id.eq.${id},name.eq.${id}`)
+        .select()
+        .maybeSingle();
+
+      if (updated) {
+        await recordAuditLog("erp.session_updated", req.user?.email || "admin", "academic_session", updated.id, req);
+        return res.json({
+          success: true,
+          message: "Academic session updated successfully",
+          session: {
+            id: updated.id,
+            name: updated.name,
+            sessionName: updated.name,
+            startDate: updated.start_date,
+            endDate: updated.end_date,
+            isCurrent: !!updated.is_current,
+            status: updated.is_current ? "active" : "upcoming",
+            organization_id: orgId
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[Academic Session DB Update Error]:", e.message);
+    }
+  }
 
   const session = ERP_ACADEMIC_SESSIONS.find(s => 
     (s.organization_id === orgId) && s.id === id
   );
   if (!session) {
     return res.status(404).json({ success: false, message: "Academic session not found" });
-  }
-
-  if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
-    return res.status(400).json({ success: false, message: "Start date must be before end date" });
   }
 
   if (isCurrent === true) {
@@ -14685,7 +15073,6 @@ app.patch("/api/erp/academics/sessions/:id", async (req, res) => {
     session.status = "active";
   }
 
-  const effName = (name || sessionName);
   if (effName !== undefined) {
     session.name = effName.trim();
     session.sessionName = effName.trim();
@@ -14701,7 +15088,45 @@ app.patch("/api/erp/academics/sessions/:id", async (req, res) => {
 
 app.post("/api/erp/academics/sessions/:id/activate", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { id } = req.params;
+
+  if (supabase && orgId) {
+    try {
+      await supabase
+        .from("academic_sessions")
+        .update({ is_current: false })
+        .eq("organization_id", orgId);
+
+      const { data: activated, error } = await supabase
+        .from("academic_sessions")
+        .update({ is_current: true })
+        .eq("organization_id", orgId)
+        .or(`id.eq.${id},name.eq.${id}`)
+        .select()
+        .maybeSingle();
+
+      if (activated) {
+        await recordAuditLog("erp.session_activated", req.user?.email || "admin", "academic_session", activated.id, req);
+        return res.json({
+          success: true,
+          message: `Academic session '${activated.name}' is now active`,
+          session: {
+            id: activated.id,
+            name: activated.name,
+            sessionName: activated.name,
+            startDate: activated.start_date,
+            endDate: activated.end_date,
+            isCurrent: true,
+            status: "active",
+            organization_id: orgId
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[Academic Session DB Activate Error]:", e.message);
+    }
+  }
 
   const session = ERP_ACADEMIC_SESSIONS.find(s => 
     (s.organization_id === orgId) && s.id === id
@@ -14748,11 +15173,19 @@ app.get(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) => 
           .eq("organization_id", orgId);
         
         const tenantSecs = dbSecs || [];
-        const tenantStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+        const { data: dbStudents } = await supabase
+          .from("students")
+          .select("id, grade, student_enrollments(class_id)")
+          .eq("organization_id", orgId);
+        const tenantDbStudents = dbStudents || [];
 
         classes = dbClasses.map(c => {
           const classSections = tenantSecs.filter(sec => sec.class_id === c.id || (sec.name && c.name && sec.grade?.toLowerCase() === c.name.toLowerCase()));
-          const totalStudents = tenantStudents.filter(s => s.grade && s.grade.toLowerCase() === c.name.toLowerCase() && s.status === "active").length;
+          const totalStudents = tenantDbStudents.filter(s => {
+            const matchEnr = s.student_enrollments && s.student_enrollments.some(e => e.class_id === c.id);
+            const matchGrade = s.grade && s.grade.toLowerCase() === c.name.toLowerCase();
+            return matchEnr || matchGrade;
+          }).length;
           return {
             id: c.id,
             grade: c.name,
