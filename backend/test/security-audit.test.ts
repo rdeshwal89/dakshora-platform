@@ -240,6 +240,78 @@ describe("Dakshora 2.0 Production Readiness & Security Verification Suite", () =
     assert.strictEqual(res.status, 403);
   });
 
+  // TEST 8b: SuperAdmin Safe Scoped Support Session Engine
+  it("P1: Superadmin can start and end a support session for any selected school, with zero auto-started sessions on boot", async () => {
+    if (!superAdminToken) return;
+
+    // 1. Initial state on boot: no active support session
+    const initRes = await fetch(`${serverUrl}/api/admin/support/session/active`, {
+      headers: { Authorization: `Bearer ${superAdminToken}` }
+    });
+    assert.strictEqual(initRes.status, 200);
+    const initData = await initRes.json();
+    assert.strictEqual(initData.hasActiveSession, false, "Initial support session must be false on boot");
+    assert.strictEqual(initData.activeSession, null);
+
+    // 2. Standard school admin cannot start a support session (403)
+    if (tenantAUserToken) {
+      const forbiddenRes = await fetch(`${serverUrl}/api/admin/support/session/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${tenantAUserToken}`
+        },
+        body: JSON.stringify({
+          target_organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+          reason: "Unauthorized attempt"
+        })
+      });
+      assert.strictEqual(forbiddenRes.status, 403);
+    }
+
+    // 3. SuperAdmin starts a support session for a selected school
+    const startRes = await fetch(`${serverUrl}/api/admin/support/session/start`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${superAdminToken}`
+      },
+      body: JSON.stringify({
+        target_organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+        reason: "Investigating CBSE Grade 10 mark sheet descriptor query"
+      })
+    });
+    assert.strictEqual(startRes.status, 201);
+    const startData = await startRes.json();
+    assert.strictEqual(startData.success, true);
+    assert.strictEqual(startData.session?.status, "active");
+    assert.strictEqual(startData.session?.target_organization_id, "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+
+    // 4. Verify support session is now active
+    const activeRes = await fetch(`${serverUrl}/api/admin/support/session/active`, {
+      headers: { Authorization: `Bearer ${superAdminToken}` }
+    });
+    assert.strictEqual(activeRes.status, 200);
+    const activeData = await activeRes.json();
+    assert.strictEqual(activeData.hasActiveSession, true);
+    assert.strictEqual(activeData.activeSession?.target_school_name, startData.session?.target_school_name);
+
+    // 5. SuperAdmin concludes support session cleanly
+    const endRes = await fetch(`${serverUrl}/api/admin/support/session/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${superAdminToken}` }
+    });
+    assert.strictEqual(endRes.status, 200);
+
+    // 6. Verify support session is now concluded
+    const postEndRes = await fetch(`${serverUrl}/api/admin/support/session/active`, {
+      headers: { Authorization: `Bearer ${superAdminToken}` }
+    });
+    const postEndData = await postEndRes.json();
+    assert.strictEqual(postEndData.hasActiveSession, false);
+    assert.strictEqual(postEndData.activeSession, null);
+  });
+
   // TEST 9: Razorpay webhook invalid signature rejected with 400
   it("P2: Razorpay webhook with invalid signature is rejected with HTTP 400", async () => {
     const payload = {

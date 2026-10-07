@@ -10751,7 +10751,20 @@ function resolveTenantOrgId(req) {
     if (req.body?.organization_id) return req.body.organization_id;
     if (req.headers["x-organization-id"]) return req.headers["x-organization-id"];
     if (req.headers["x-org-id"]) return req.headers["x-org-id"];
+    if (req.headers["x-support-organization-id"]) return req.headers["x-support-organization-id"];
     if (req.query?.organization_id) return req.query.organization_id;
+
+    // Check if there is an active support session for SuperAdmin
+    if (typeof PLATFORM_SUPPORT_SESSIONS !== "undefined" && Array.isArray(PLATFORM_SUPPORT_SESSIONS)) {
+      const activeSupport = PLATFORM_SUPPORT_SESSIONS.find(s =>
+        s.status === "active" &&
+        new Date(s.expires_at) > new Date() &&
+        (s.admin_email === req.user?.email || s.admin_user_id === req.user?.id || !s.admin_user_id || s.admin_user_id === "usr-superadmin")
+      );
+      if (activeSupport?.target_organization_id) {
+        return activeSupport.target_organization_id;
+      }
+    }
     return req.user?.organizationId || null;
   }
   // For standard users, STRICTLY use their authenticated organization ID
@@ -32604,21 +32617,7 @@ app.post("/api/erp/onboarding/import/staff", async (req, res) => {
 // 👑 DAKSHORA PLATFORM CONTROL CENTER (SUPER ADMIN / SAAS OPS) - MIGRATION 020
 // =========================================================================
 
-let PLATFORM_SUPPORT_SESSIONS = [
-  {
-    id: "sess-01",
-    admin_user_id: "usr-superadmin",
-    admin_email: "superadmin@dakshora.ai",
-    target_organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    target_school_name: "Delhi Public Heritage School",
-    reason: "Investigating fee invoice reconciliation query #TICK-101",
-    status: "active",
-    session_token: "tok_sup_demo_9823",
-    started_at: new Date().toISOString(),
-    ended_at: null,
-    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-  }
-];
+let PLATFORM_SUPPORT_SESSIONS = [];
 
 let PLATFORM_SUPPORT_TICKETS = [
   {
@@ -33527,7 +33526,7 @@ app.post("/api/admin/support/session/start", async (req, res) => {
     return res.status(400).json({ success: false, message: "Target organization and legitimate operational reason are required." });
   }
 
-  const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === target_organization_id);
+  const org = await findOrganization(target_organization_id);
   if (!org) {
     return res.status(404).json({ success: false, message: "Target organization not found." });
   }
@@ -33543,7 +33542,7 @@ app.post("/api/admin/support/session/start", async (req, res) => {
   const sessionToken = `tok_sup_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
   const newSession = {
     id: `sess-${Date.now().toString().slice(-4)}`,
-    admin_user_id: "usr-superadmin",
+    admin_user_id: req.user?.id || "usr-superadmin",
     admin_email: req.user?.email || "superadmin@dakshora.ai",
     target_organization_id: org.id,
     target_school_name: org.name,
