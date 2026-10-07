@@ -411,7 +411,7 @@ async function requireAuth(req, res, next) {
     // STRICT: Only trust app_metadata for superadmin role (server-managed claim)
     const isSuperAdmin = user.app_metadata?.role === "superadmin";
     let role = isSuperAdmin ? "superadmin" : (user.app_metadata?.role || null);
-    let organizationId = user.app_metadata?.organization_id || null;
+    let organizationId = user.app_metadata?.organization_id || user.user_metadata?.organization_id || null;
 
     if (!isSuperAdmin && (!organizationId || !role) && supabase) {
       try {
@@ -427,6 +427,17 @@ async function requireAuth(req, res, next) {
           if (!role && membership.roles) {
             const roleData = membership.roles;
             role = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+          }
+        }
+        if (!organizationId) {
+          const { data: dbUser } = await supabase
+            .from("users")
+            .select("organization_id, role")
+            .eq("id", user.id)
+            .maybeSingle();
+          if (dbUser) {
+            organizationId = dbUser.organization_id || organizationId;
+            role = role || dbUser.role;
           }
         }
       } catch (dbErr) {
@@ -786,26 +797,52 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       ? ["*"] 
       : ["websites.view", "websites.edit", "leads.view", "leads.create", "cms.view", "cms.edit", "media.upload", "billing.view"];
 
-    let userOrgId = data.user.app_metadata?.organization_id || null;
+    let userOrgId = data.user.app_metadata?.organization_id || data.user.user_metadata?.organization_id || null;
     if (!isSuperAdmin && !userOrgId && supabase) {
       try {
         const { data: member } = await supabase.from("organization_members").select("organization_id").eq("user_id", data.user.id).limit(1).maybeSingle();
         if (member) userOrgId = member.organization_id;
+        if (!userOrgId) {
+          const { data: dbUser } = await supabase.from("users").select("organization_id").eq("id", data.user.id).maybeSingle();
+          if (dbUser?.organization_id) userOrgId = dbUser.organization_id;
+        }
       } catch (_) {}
     }
 
-    const orgInfo = userOrgId ? (IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || {
-      id: userOrgId,
-      name: "School Organization",
-      slug: "school",
-      board: "CBSE",
-      city: "India",
-      branding: {
-        primaryColor: "#4F46E5",
-        logoUrl: "/logo.svg",
-        motto: "Excellence in Education"
-      }
-    }) : null;
+    let orgInfo = userOrgId ? (IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || null) : null;
+    let schoolInfo = null;
+    if (supabase && userOrgId) {
+      try {
+        if (!orgInfo) {
+          const { data: dbOrg } = await supabase.from("organizations").select("*").eq("id", userOrgId).maybeSingle();
+          if (dbOrg) {
+            orgInfo = dbOrg;
+            const idx = IN_MEMORY_ORGANIZATIONS.findIndex(o => o.id === dbOrg.id);
+            if (idx >= 0) IN_MEMORY_ORGANIZATIONS[idx] = dbOrg;
+            else IN_MEMORY_ORGANIZATIONS.push(dbOrg);
+          }
+        }
+        const { data: dbSchool } = await supabase.from("schools").select("*").eq("organization_id", userOrgId).maybeSingle();
+        if (dbSchool) {
+          schoolInfo = dbSchool;
+        }
+      } catch (_) {}
+    }
+
+    if (!orgInfo && userOrgId) {
+      orgInfo = {
+        id: userOrgId,
+        name: schoolInfo?.name || "School Organization",
+        slug: "school",
+        board: schoolInfo?.board || "CBSE",
+        city: "India",
+        branding: {
+          primaryColor: "#4F46E5",
+          logoUrl: "/logo.svg",
+          motto: "Excellence in Education"
+        }
+      };
+    }
 
     recordAuditLog("user.login", data.user.email, "user", data.user.id, req);
 
@@ -825,14 +862,19 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
         permissions,
         organizationId: userOrgId || null
       },
-      school: orgInfo ? {
-        id: orgInfo.id,
-        name: orgInfo.name,
-        slug: orgInfo.slug,
-        board: orgInfo.board || "CBSE",
-        city: orgInfo.city || "India",
-        logoUrl: orgInfo.branding?.logoUrl || "/logo.svg",
-        branding: orgInfo.branding || { primaryColor: "#4F46E5" }
+      school: (schoolInfo || orgInfo) ? {
+        id: schoolInfo?.id || orgInfo.id,
+        name: schoolInfo?.name || orgInfo.name,
+        schoolName: schoolInfo?.name || orgInfo.name,
+        shortName: schoolInfo?.short_name || orgInfo.name?.split(" ")[0] || "School",
+        slug: orgInfo?.slug || "school",
+        board: schoolInfo?.board || orgInfo?.board || "CBSE",
+        affiliationNo: schoolInfo?.affiliation_no || schoolInfo?.affiliation_number || "CBSE-AFF-2026",
+        schoolCode: schoolInfo?.school_code || "SCH-01",
+        city: schoolInfo?.city || orgInfo?.city || "India",
+        logoUrl: schoolInfo?.logo_url || orgInfo?.branding?.logoUrl || "/logo.svg",
+        themeColor: "indigo",
+        branding: orgInfo?.branding || { primaryColor: "#4F46E5" }
       } : null
     });
   } catch (error) {
@@ -13904,7 +13946,7 @@ app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], async (req, res) 
 // =========================================================================
 // 🚀 MODULE: LIVE SCHOOL ERP DASHBOARD AGGREGATE ENDPOINT (REAL DATABASE METRICS)
 // =========================================================================
-app.get("/api/erp/dashboard", (req, res) => {
+app.get("/api/erp/dashboard", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const selectedDate = req.query.date || new Date().toISOString().split("T")[0];
   const selectedSession = req.query.session || "2026-27";
@@ -13912,16 +13954,36 @@ app.get("/api/erp/dashboard", (req, res) => {
   const callerRole = req.user?.role || req.query.role || "school-admin";
   const callerStaffId = req.user?.staffId || req.query.staffId || null;
 
-  // 1. Resolve Organization & School Context
-  const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId) || {
-    id: orgId,
-    name: "Delhi Public Heritage School"
-  };
+  // 1. Resolve Organization & School Context dynamically from Database
+  let org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId);
+  let schoolRecord = null;
+  if (supabase && orgId) {
+    try {
+      if (!org) {
+        const { data: dbOrg } = await supabase.from("organizations").select("*").eq("id", orgId).maybeSingle();
+        if (dbOrg) {
+          org = dbOrg;
+          const idx = IN_MEMORY_ORGANIZATIONS.findIndex(o => o.id === dbOrg.id);
+          if (idx >= 0) IN_MEMORY_ORGANIZATIONS[idx] = dbOrg;
+          else IN_MEMORY_ORGANIZATIONS.push(dbOrg);
+        }
+      }
+      const { data: dbSchool } = await supabase.from("schools").select("*").eq("organization_id", orgId).maybeSingle();
+      if (dbSchool) {
+        schoolRecord = dbSchool;
+      }
+    } catch (_) {}
+  }
+
+  const isDemoOrg = !orgId || orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const resolvedSchoolName = schoolRecord?.name || org?.name || (isDemoOrg ? "Delhi Public Heritage School" : "School Dashboard");
+  const resolvedAffiliation = schoolRecord?.affiliation_no || schoolRecord?.affiliation_number || (isDemoOrg ? "CBSE-AFF-2026-DEL-8821" : "CBSE-AFF-2026");
 
   const schoolContext = {
-    name: org.name || "Delhi Public Heritage School",
-    campus: "Main Campus",
-    affiliationNo: "CBSE-AFF-2026-DEL-8821",
+    name: resolvedSchoolName,
+    schoolName: resolvedSchoolName,
+    campus: schoolRecord?.campus || "Main Campus",
+    affiliationNo: resolvedAffiliation,
     academicSession: selectedSession,
     currentDate: selectedDate
   };
@@ -13932,6 +13994,19 @@ app.get("/api/erp/dashboard", (req, res) => {
   let tenantAssignments = ERP_TEACHER_ASSIGNMENTS.filter(a => (a.organization_id === orgId));
   let tenantAttendance = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId));
   let tenantStaffAttendance = ERP_STAFF_ATTENDANCE.filter(a => (a.organization_id === orgId));
+
+  if (supabase && orgId && !isDemoOrg) {
+    try {
+      if (tenantStudents.length === 0) {
+        const { data: dbStudents } = await supabase.from("students").select("*").eq("organization_id", orgId);
+        if (dbStudents && dbStudents.length > 0) tenantStudents = dbStudents;
+      }
+      if (tenantStaff.length === 0) {
+        const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
+        if (dbStaff && dbStaff.length > 0) tenantStaff = dbStaff;
+      }
+    } catch (_) {}
+  }
 
   // Role Adaptation: Teacher filtering
   let assignedClasses = [];
@@ -32625,6 +32700,7 @@ async function syncOrganizationsFromDb() {
     console.warn("[Platform] Supabase organizations sync note:", err.message);
   }
 }
+syncOrganizationsFromDb().catch(() => {});
 
 async function findOrganization(idOrSlug) {
   if (!idOrSlug) return null;

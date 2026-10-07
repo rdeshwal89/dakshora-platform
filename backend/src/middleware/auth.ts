@@ -51,9 +51,9 @@ export async function requireAuth(
     ? "superadmin"
     : (user.app_metadata?.role as string);
 
-  let organizationId = user.app_metadata?.organization_id as string | undefined;
+  let organizationId = (user.app_metadata?.organization_id as string | undefined) || (user.user_metadata?.organization_id as string | undefined);
 
-  // If not superadmin and missing from app_metadata, securely resolve from organization_members
+  // If not superadmin and missing from app_metadata, securely resolve from organization_members or users table
   if (!isSuperAdmin && (!organizationId || !role)) {
     try {
       const { data: membership } = await supabase
@@ -68,6 +68,17 @@ export async function requireAuth(
         if (!role && membership.roles) {
           const roleData = membership.roles as any;
           role = Array.isArray(roleData) ? roleData[0]?.name : roleData?.name;
+        }
+      }
+      if (!organizationId) {
+        const { data: dbUser } = await supabase
+          .from("users")
+          .select("organization_id, role")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (dbUser) {
+          organizationId = dbUser.organization_id || organizationId;
+          role = role || dbUser.role;
         }
       }
     } catch {
