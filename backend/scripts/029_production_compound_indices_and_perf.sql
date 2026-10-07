@@ -12,15 +12,15 @@ ON public.student_attendance(organization_id, attendance_date);
 CREATE INDEX IF NOT EXISTS idx_classes_org_name 
 ON public.classes(organization_id, name);
 
--- 3. Student Enrollment Directory Index (Organization + Status)
+-- 3. Student Enrollment Directory Index (Organization + Admission Status)
 -- Accelerates active student filtering and multi-campus directory listings
 CREATE INDEX IF NOT EXISTS idx_students_org_status 
-ON public.students(organization_id, status);
+ON public.students(organization_id, admission_status);
 
--- 4. Faculty & Staff Directory Index (Organization + Status)
+-- 4. Faculty & Staff Directory Index (Organization + Is Active)
 -- Accelerates duty allocation and payroll calculation
-CREATE INDEX IF NOT EXISTS idx_staff_org_status 
-ON public.staff(organization_id, status);
+CREATE INDEX IF NOT EXISTS idx_staff_org_active 
+ON public.staff(organization_id, is_active);
 
 -- 5. Student Fees Ledger Index (Organization + Status)
 -- Optimizes collection reconciliations, demand queries, and fee receipts
