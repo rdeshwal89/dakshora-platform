@@ -80,6 +80,10 @@ export async function buildApp() {
     timeWindow: "1 minute"
   });
 
+  // First-Class Production Auth & Organization Routes
+  await app.register(authRoutes);
+  await app.register(organizationRoutes);
+
   await app.register(fastifyExpress);
   app.use(erpApp);
 
@@ -239,9 +243,6 @@ export async function buildApp() {
     }
   );
 
-  // Authentication routes
-  await app.register(authRoutes);
-  await app.register(organizationRoutes);
   // Authorization test
   app.get(
     "/api/admin/test",
