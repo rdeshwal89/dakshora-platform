@@ -1,55 +1,86 @@
-# DAKSHORA 2.0 — Education SaaS & Enterprise School ERP
+# DAKSHORA 2.0 — Enterprise School ERP & SaaS Platform
 
-> **Modern, AI-powered School ERP & Human Potential SaaS Platform.**  
-> Built with Next.js 16, Fastify 5, and Supabase with Multi-Tenant Row Level Security (RLS).
+[![CI/CD Verification](https://github.com/rdeshwal89/dakshora-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/rdeshwal89/dakshora-platform/actions)
+[![Tests Passing](https://img.shields.io/badge/Tests-39%2F39%20Passing%20(100%25)-brightgreen)](file:///C:/Users/SERVER/dakshora-platform/master-audit-report.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue)](https://www.typescriptlang.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-16.3.3%20Turbopack-black)](https://nextjs.org/)
+[![Fastify](https://img.shields.io/badge/Fastify-5.0-black)](https://fastify.dev/)
+[![Database](https://img.shields.io/badge/Supabase-PostgreSQL%20RLS-emerald)](https://supabase.com/)
+
+> **Next-Generation Multi-Tenant School ERP & Human Potential SaaS Platform.**  
+> Built with Next.js 16, Fastify 5, Express ERP Engine, and Supabase PostgreSQL with Multi-Tenant Row-Level Security (RLS).
 
 ---
 
-## Architecture Overview
+## 📋 Comprehensive Audit & Verification Report
 
+The complete production audit, security verification, and test execution report is available in:  
+👉 **[MASTER CODEBASE & DATABASE AUDIT REPORT](./master-audit-report.md)**
+
+### Final Automated Test Results: 100% Passing (39 / 39 Tests)
+
+```text
+✔ Security Audit Suite (12 tests)
+✔ ERP Multi-Tenant Architecture E2E Suite (9 tests)
+✔ Production Readiness & Security Verification Suite (8 tests)
+✔ Master Onboarding, CMS & 16-Step Wizard Suite (10 tests)
+
+ℹ suites: 4
+ℹ tests:  39
+ℹ pass:   39
+ℹ fail:   0
+ℹ total duration: ~27s
 ```
+
+---
+
+## 🏗️ Architecture Blueprint
+
+```text
                          DAKSHORA 2.0
                               │
              ┌────────────────┴────────────────┐
              ▼                                 ▼
-     Next.js Frontend                  Fastify Backend
-     (www.dakshora.co.in)            (api.dakshora.co.in)
+     Next.js Frontend                  Fastify API Gateway
+   (www.dakshora.co.in)               (api.dakshora.co.in)
+             │                                 │
+             │   Static SPA & PWA (/portal)    ▼
+             │                        Express ERP Core Engine
+             │                       (erpApp.js — 17 Modules)
              │                                 │
              └────────────────┬────────────────┘
                               ▼
-                          Supabase
-                (Postgres + Multi-Tenant RLS)
+                      Supabase Cloud
+          (PostgreSQL · 86 Tables · Multi-Tenant RLS)
 ```
-
-### Components
-
-1. **Frontend (`frontend/`)**
-   - **Framework:** Next.js 16.3.3 (Turbopack, App Router, React 19)
-   - **Features:**
-     - Public Marketing Website & Solutions Configurator
-     - Interactive School ERP Portal Hub (17 Modules)
-     - AI Assistant API Gateway
-     - Mobile-Responsive Design (Tailwind CSS v4)
-   - **Domain:** `https://www.dakshora.co.in` (and `https://dakshora.co.in`)
-
-2. **Backend (`backend/`)**
-   - **Framework:** Fastify 5.0 + TypeScript (ESM)
-   - **Features:**
-     - Multi-Tenant Isolation via `organization_id`
-     - Supabase Auth + Service Role integration
-     - Strict RBAC & Incharge Scope Authorization Engine
-     - Health & Diagnostics (`/health`, `/health/supabase`)
-     - Complete School ERP Modules (Staff, Students, Attendance, Academics, Exams, Fees, Admissions, Communication, Transport, Library, HR & Payroll, Reports, AI)
-     - 458/458 passing integration tests
-   - **Domain:** `https://api.dakshora.co.in` (and `https://api.dakshora.in`)
-
-3. **Database (`backend/scripts/`)**
-   - **Provider:** Supabase Postgres
-   - **Migrations:** SQL schema definitions from 001 to 021 with Row Level Security (RLS) policies.
 
 ---
 
-## Getting Started (Local Development)
+## 🚀 Key Modules & Production Features
+
+### 1. SuperAdmin School Onboarding Engine (`/api/admin/onboard-school`)
+- **Board Catalogue:** Support for CBSE, ICSE, RBSE (Rajasthan Board), UP Board, Maharashtra Board, Bihar Board, NIOS, and International (IB/Cambridge).
+- **Medium of Instruction:** Hindi, English, and Bilingual with localized terminology (e.g. कक्षा/अनुभाग vs Class/Section).
+- **Dual Identifiers:** Canonical UUID + collision-resistant 10-digit numeric tenant code (`generateUniqueTenantCode()`).
+- **Zero Plaintext Passwords:** Single-use cryptographically random tokens (`crypto.randomBytes(32)`), stored as SHA-256 hashes.
+- **Activation Workflow:** Principal verifies school details and sets their password via `/api/auth/verify-activation-token` and `/api/auth/activate-account`.
+
+### 2. Board-Aware & Medium-Aware Config Engine (`/api/erp/school-config/profile`)
+- Dynamic class structures (Preschool, Primary, Middle, Secondary, Senior Secondary).
+- Localized grading systems and academic session templates persisted in PostgreSQL `schools`.
+
+### 3. 9-Step CMS & Website Builder (`/api/websites/*`, `/api/public/schools/*`)
+- **"Hindi mein likhein" Transliteration:** Real-time Hinglish-to-Devanagari transliteration engine (`/api/cms/transliterate-hindi`).
+- **9-Category Template Engine:** Dedicated, responsive website presets for Preschools, State Board Hindi, Senior Secondary, Bilingual, and Islamic/Madrasa academies.
+- **Lead Capture Pipeline:** Direct inquiry submission into PostgreSQL `public.leads`.
+
+### 4. 16-Step Assisted Setup Wizard (`/api/erp/onboarding/*`)
+- Database-driven prefill from PostgreSQL `organizations`, `schools`, and `academic_sessions`.
+- Safe save-draft without duplicate tenant creation.
+
+---
+
+## 🛠️ Getting Started (Local Development)
 
 ### Prerequisites
 - Node.js >= 20.0.0
@@ -60,62 +91,24 @@
 ```bash
 cd backend
 npm install
-cp .env.example .env
-# Fill in SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
 npm run build
-npm start
+npm test             # Runs all 39 tests across 4 suites
+npm start            # Starts server on http://localhost:5000
 ```
-API Gateway starts on `http://localhost:5000`  
-Health Check: `http://localhost:5000/health`  
-Supabase Health: `http://localhost:5000/health/supabase`
 
 ### 2. Frontend Setup
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local
-npm run dev
+npm run build        # Verifies Next.js 16 Turbopack production build
+npm run dev          # Starts dev server on http://localhost:3000
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## Production Deployment Runbook
+## 🌐 Production Deployment
 
-### Frontend Deployment (Vercel)
-1. Import repository to Vercel.
-2. Set Root Directory to `frontend`.
-3. Configure Environment Variables:
-   - `NEXT_PUBLIC_API_URL`: `https://api.dakshora.co.in` (or `https://api.dakshora.in`)
-   - `NEXT_PUBLIC_SUPABASE_URL`: `https://<project-ref>.supabase.co`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: `<anon-key>`
-   - `OPENROUTER_API_KEY`: `<openrouter-key>`
-4. Deploy and attach domain `www.dakshora.co.in` and `dakshora.co.in`.
-
-### Backend Deployment (Node.js VPS / Render / Railway)
-1. Deploy `backend` directory.
-2. Build command: `npm run build`
-3. Start command: `npm start`
-4. Set Environment Variables:
-   - `PORT`: `5000` (or host assigned port)
-   - `NODE_ENV`: `production`
-   - `SUPABASE_URL`: `https://<project-ref>.supabase.co`
-   - `SUPABASE_ANON_KEY`: `<anon-key>`
-   - `SUPABASE_SERVICE_ROLE_KEY`: `<service-role-key>`
-5. Attach domain `api.dakshora.co.in` (or `api.dakshora.in`).
-
----
-
-## Quality Assurance & Verification
-All 17 ERP modules have verified automated regression suites:
-- Platform Control Center (Super Admin)
-- School Onboarding Wizard
-- SaaS Billing & Entitlements
-- Parent & Student Portal
-- Timetable & Bell Schedules
-- Attendance Management (Students & Staff)
-- Examination & Report Cards
-- Fees Collection & Concessions
-- Library Management
-- Staff Management & Incharge Scope Engine
-- Total Passing Tests: **458 / 458 (100%)**
+- **GitHub Repository:** [`rdeshwal89/dakshora-platform`](https://github.com/rdeshwal89/dakshora-platform) (Branches: `master`, `main`)
+- **Frontend (Vercel):** Connected via GitHub to deploy `frontend/` to `https://www.dakshora.co.in` & `https://dakshora.co.in`.
+- **Backend (Render):** Configured via [`render.yaml`](./render.yaml) to deploy `backend/` to `https://api.dakshora.co.in`.
+- **Database:** Supabase PostgreSQL with 86 tables and strict RLS tenant isolation.
