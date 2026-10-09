@@ -8,11 +8,12 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test test/security-audit.test.ts test/erp-architecture-e2e.test.ts test/production-transformation.test.ts test/master-onboarding-cms-suite.test.ts",
+    "test": "tsx --test test/security-audit.test.ts test/erp-architecture-e2e.test.ts test/production-transformation.test.ts test/master-onboarding-cms-suite.test.ts test/master-erp-full-suite.test.ts",
     "test:security": "tsx --test test/security-audit.test.ts",
     "test:erp": "tsx --test test/erp-architecture-e2e.test.ts",
     "test:production": "tsx --test test/production-transformation.test.ts",
     "test:onboarding": "tsx --test test/master-onboarding-cms-suite.test.ts",
+    "test:erp-full": "tsx --test test/master-erp-full-suite.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
