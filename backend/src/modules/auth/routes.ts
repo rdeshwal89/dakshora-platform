@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase.js";
 import { env } from "../../config/env.js";

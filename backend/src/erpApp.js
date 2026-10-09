@@ -686,6 +686,291 @@ app.post("/api/auth/verify-token", requireAuth, (req, res) => {
 });
 
 // =========================================================================
+// PRINCIPAL SINGLE-USE CRYPTOGRAPHIC ACTIVATION WORKFLOW
+// =========================================================================
+
+// GET /api/auth/verify-activation-token (Invitation validation & prefill)
+app.get("/api/auth/verify-activation-token", async (req, res) => {
+  try {
+    const rawToken = String(req.query.token || "").trim();
+    if (!rawToken) {
+      return res.status(400).json({ success: false, message: "Activation token is required." });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    let invite = null;
+    let organizationId = null;
+
+    // 1. Check school_onboarding_invitations table (if provisioned)
+    if (supabase) {
+      try {
+        const { data: invData, error: invErr } = await supabase
+          .from("school_onboarding_invitations")
+          .select("*")
+          .eq("token", tokenHash)
+          .maybeSingle();
+        if (!invErr && invData) {
+          invite = invData;
+          organizationId = invData.organization_id;
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fallback to school_onboarding JSONB draft_data.invitation
+    if (!invite && supabase) {
+      try {
+        const { data: onb, error: onbErr } = await supabase
+          .from("school_onboarding")
+          .select("*")
+          .contains("draft_data", { invitation: { token: tokenHash } })
+          .maybeSingle();
+        if (!onbErr && onb?.draft_data?.invitation) {
+          invite = {
+            ...onb.draft_data.invitation,
+            id: onb.id,
+            organization_id: onb.organization_id
+          };
+          organizationId = onb.organization_id;
+        }
+      } catch (_) {}
+    }
+
+    if (!invite) {
+      return res.status(404).json({ success: false, code: "INVALID_TOKEN", message: "Invalid or non-existent activation link." });
+    }
+
+    if (invite.status === "accepted") {
+      return res.status(400).json({ success: false, code: "ALREADY_ACTIVATED", message: "This account has already been activated. Please sign in directly." });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, code: "TOKEN_EXPIRED", message: "This activation link has expired. Please contact support or request a new invite." });
+    }
+
+    let tenantCode = "";
+    let schoolName = "School ERP";
+    let board = "CBSE";
+
+    if (supabase && organizationId) {
+      try {
+        const { data: school } = await supabase
+          .from("schools")
+          .select("school_code, name, board")
+          .eq("organization_id", organizationId)
+          .maybeSingle();
+        if (school) {
+          tenantCode = school.school_code || "";
+          schoolName = school.name || schoolName;
+          board = school.board || board;
+        }
+      } catch (_) {}
+    }
+
+    return res.json({
+      success: true,
+      valid: true,
+      email: invite.email,
+      name: invite.name,
+      role: invite.role,
+      organizationId,
+      schoolName,
+      board,
+      tenantCode,
+      expiresAt: invite.expires_at
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: `Verification failed: ${err.message}` });
+  }
+});
+
+// POST /api/auth/activate-account (Principal Password Setup & Single-Use Activation)
+app.post("/api/auth/activate-account", async (req, res) => {
+  try {
+    const { token, password, confirmPassword } = req.body || {};
+    if (!token || !password) {
+      return res.status(400).json({ success: false, message: "Activation token and new password are required." });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters long." });
+    }
+    if (confirmPassword && password !== confirmPassword) {
+      return res.status(400).json({ success: false, message: "Passwords do not match." });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(String(token).trim()).digest("hex");
+    let invite = null;
+    let organizationId = null;
+
+    // 1. Check school_onboarding_invitations table
+    if (supabase) {
+      try {
+        const { data: invData, error: invErr } = await supabase
+          .from("school_onboarding_invitations")
+          .select("*")
+          .eq("token", tokenHash)
+          .maybeSingle();
+        if (!invErr && invData) {
+          invite = invData;
+          organizationId = invData.organization_id;
+        }
+      } catch (_) {}
+    }
+
+    // 2. Check school_onboarding draft_data
+    if (!invite && supabase) {
+      try {
+        const { data: onb, error: onbErr } = await supabase
+          .from("school_onboarding")
+          .select("*")
+          .contains("draft_data", { invitation: { token: tokenHash } })
+          .maybeSingle();
+        if (!onbErr && onb?.draft_data?.invitation) {
+          invite = {
+            ...onb.draft_data.invitation,
+            id: onb.id,
+            organization_id: onb.organization_id
+          };
+          organizationId = onb.organization_id;
+        }
+      } catch (_) {}
+    }
+
+    if (!invite) {
+      return res.status(404).json({ success: false, code: "INVALID_TOKEN", message: "Invalid activation token." });
+    }
+
+    if (invite.status === "accepted") {
+      return res.status(400).json({ success: false, code: "ALREADY_ACTIVATED", message: "Account already activated. Please sign in." });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(410).json({ success: false, code: "TOKEN_EXPIRED", message: "Activation token has expired." });
+    }
+
+    const cleanEmail = String(invite.email || "").toLowerCase().trim();
+    let targetUserId = "";
+
+    // Update password in Supabase Auth
+    if (supabase) {
+      try {
+        const { data: dbUser } = await supabase
+          .from("users")
+          .select("id")
+          .eq("email", cleanEmail)
+          .maybeSingle();
+
+        if (dbUser?.id) {
+          targetUserId = dbUser.id;
+          try {
+            await supabase.auth.admin.updateUserById(targetUserId, {
+              password: password.trim(),
+              email_confirm: true
+            });
+          } catch (uErr) {
+            console.warn("[Auth Admin Update User Note]:", uErr.message);
+          }
+        } else {
+          const { data: userList } = await supabase.auth.admin.listUsers();
+          const targetUser = userList?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
+          if (targetUser) {
+            targetUserId = targetUser.id;
+            await supabase.auth.admin.updateUserById(targetUser.id, {
+              password: password.trim(),
+              email_confirm: true
+            });
+          } else {
+            const { data: created } = await supabase.auth.admin.createUser({
+              email: cleanEmail,
+              password: password.trim(),
+              email_confirm: true,
+              user_metadata: {
+                name: invite.name,
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              },
+              app_metadata: {
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              }
+            });
+            if (created?.user) targetUserId = created.user.id;
+          }
+        }
+      } catch (authErr) {
+        console.warn("[Auth Admin Activation Warning]:", authErr.message);
+      }
+
+      // Mark invitation as accepted in school_onboarding_invitations
+      try {
+        await supabase
+          .from("school_onboarding_invitations")
+          .update({
+            status: "accepted",
+            accepted_at: new Date().toISOString()
+          })
+          .eq("token", tokenHash);
+      } catch (_) {}
+
+      // Mark invitation as accepted in school_onboarding
+      try {
+        const { data: onbToUpdate } = await supabase
+          .from("school_onboarding")
+          .select("id, draft_data")
+          .contains("draft_data", { invitation: { token: tokenHash } })
+          .maybeSingle();
+
+        if (onbToUpdate) {
+          const updatedDraft = {
+            ...onbToUpdate.draft_data,
+            invitation: {
+              ...onbToUpdate.draft_data.invitation,
+              status: "accepted",
+              accepted_at: new Date().toISOString()
+            }
+          };
+          await supabase
+            .from("school_onboarding")
+            .update({
+              draft_data: updatedDraft,
+              status: "active",
+              activated_at: new Date().toISOString()
+            })
+            .eq("id", onbToUpdate.id);
+        }
+      } catch (_) {}
+
+      // Update user in public.users
+      if (targetUserId) {
+        try {
+          await supabase
+            .from("users")
+            .upsert([{
+              id: targetUserId,
+              organization_id: organizationId,
+              email: cleanEmail,
+              name: invite.name,
+              role: invite.role || "school-admin",
+              status: "active"
+            }], { onConflict: "id" });
+        } catch (_) {}
+      }
+    }
+
+    recordAuditLog("auth.account_activated", cleanEmail, "user", targetUserId || organizationId, req);
+
+    return res.json({
+      success: true,
+      message: "Account activated successfully! You can now log into Dakshora School ERP. 🏫🚀",
+      email: cleanEmail,
+      loginUrl: "https://dakshora.co.in/portal"
+    });
+  } catch (routeErr) {
+    console.error("[Activation Endpoint Error]:", routeErr);
+    return res.status(500).json({ success: false, message: `Failed to activate account: ${routeErr.message}` });
+  }
+});
+
+// =========================================================================
 // SECURITY HARDENING: In-Memory Sliding-Window Rate Limiter
 // =========================================================================
 const RATE_LIMIT_WINDOWS = new Map(); // key -> [timestamps]
@@ -2539,45 +2824,787 @@ app.post(["/api/admin/resend-access", "/api/superadmin/resend-access"], async (r
   }
 });
 
-// Dynamic School Onboarding (SuperAdmin Operations Hub)
-app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/superadmin/schools/onboard", "/api/superadmin/onboard-school"], async (req, res) => {
+// =========================================================================
+// 🏫 PHASE 2 & 3: PRODUCTION SCHOOL ONBOARDING, BOARD CATALOGUE & TENANT ENGINE
+// =========================================================================
+
+const BOARD_CATALOGUE = [
+  { id: "cbse", code: "CBSE", name: "Central Board of Secondary Education (CBSE)", country: "IN", defaultAssessment: "Term-wise (CCE / NEP 2020)" },
+  { id: "cisce", code: "CISCE", name: "Council for the Indian School Certificate Examinations (CISCE / ICSE / ISC)", country: "IN", defaultAssessment: "Continuous Internal Assessment" },
+  { id: "icse", code: "ICSE", name: "Indian Certificate of Secondary Education (ICSE)", country: "IN", defaultAssessment: "Continuous Internal Assessment" },
+  { id: "rbse", code: "RBSE", name: "Rajasthan Board of Secondary Education (RBSE)", country: "IN", state: "Rajasthan", defaultAssessment: "State Board Pattern (1st, 2nd, Half-yearly, Annual)" },
+  { id: "upmsp", code: "UPMSP", name: "Uttar Pradesh Madhyamik Shiksha Parishad (UP Board)", country: "IN", state: "Uttar Pradesh", defaultAssessment: "Quarterly & Annual Evaluation" },
+  { id: "bseb", code: "BSEB", name: "Bihar School Examination Board (BSEB)", country: "IN", state: "Bihar", defaultAssessment: "Continuous & Comprehensive Evaluation" },
+  { id: "msbshse", code: "MSBSHSE", name: "Maharashtra State Board (SSC & HSC)", country: "IN", state: "Maharashtra", defaultAssessment: "Semester Assessment" },
+  { id: "nios", code: "NIOS", name: "National Institute of Open Schooling (NIOS)", country: "IN", defaultAssessment: "Tutor Marked Assignments (TMA)" },
+  { id: "cambridge", code: "Cambridge", name: "Cambridge Assessment International Education (IGCSE / A-Levels)", country: "International", defaultAssessment: "Checkpoint & Formative Grading" },
+  { id: "ib", code: "IB", name: "International Baccalaureate (IB PYP/MYP/DP)", country: "International", defaultAssessment: "Criterion-related Rubrics" }
+];
+
+const MEDIUM_OPTIONS = ["Hindi", "English", "Bilingual"];
+
+const SCHOOL_TYPE_OPTIONS = [
+  "Preschool/Nursery/Kindergarten",
+  "Primary School",
+  "Middle School",
+  "Secondary School",
+  "Senior Secondary School"
+];
+
+const SCHOOL_HEAD_ROLES = ["Principal", "Director", "School Head"];
+
+const RESERVED_SLUGS = new Set([
+  "admin", "api", "superadmin", "portal", "dashboard", "auth", "mail",
+  "billing", "root", "support", "help", "app", "dakshora", "school",
+  "platform", "static", "assets", "public", "test", "demo"
+]);
+
+function validateSubdomainSlug(rawSlug) {
+  if (!rawSlug || typeof rawSlug !== "string") {
+    return { valid: false, error: "Subdomain slug is required." };
+  }
+  const cleanSlug = rawSlug.toLowerCase().trim().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (cleanSlug.length < 3 || cleanSlug.length > 35) {
+    return { valid: false, error: "Subdomain slug must be between 3 and 35 characters." };
+  }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(cleanSlug)) {
+    return { valid: false, error: "Subdomain slug can only contain lowercase letters, numbers, and hyphens, and cannot start or end with a hyphen." };
+  }
+  if (RESERVED_SLUGS.has(cleanSlug)) {
+    return { valid: false, error: `'${cleanSlug}' is a reserved platform keyword. Please choose a different slug.` };
+  }
+  return { valid: true, slug: cleanSlug };
+}
+
+// Generate unique 10-digit public tenant code with collision-resistant retry
+async function generateUniqueTenantCode(supabaseClient) {
+  const MAX_RETRIES = 5;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const yearPrefix = new Date().getFullYear().toString(); // "2026"
+    const randomSuffix = crypto.randomInt(100000, 999999).toString();
+    const candidateCode = `${yearPrefix}${randomSuffix}`;
+
+    if (supabaseClient) {
+      try {
+        const { data: existingSchool } = await supabaseClient
+          .from("schools")
+          .select("id")
+          .eq("school_code", candidateCode)
+          .maybeSingle();
+
+        if (!existingSchool) {
+          return candidateCode;
+        }
+      } catch (_) {
+        return candidateCode;
+      }
+    } else {
+      const existsInMem = IN_MEMORY_ORGANIZATIONS.some(o => o.tenant_code === candidateCode);
+      if (!existsInMem) return candidateCode;
+    }
+  }
+  return `${Date.now().toString().slice(-10)}`;
+}
+
+// Rule-based template recommendation
+function getRecommendedTemplate(schoolType = "", board = "", medium = "") {
+  const normType = (schoolType || "").toLowerCase();
+  const normBoard = (board || "").toUpperCase();
+  const normMedium = (medium || "").toLowerCase();
+
+  if (normType.includes("preschool") || normType.includes("nursery") || normType.includes("kindergarten")) {
+    return "tpl-play-school";
+  }
+  if (normMedium.includes("bilingual")) {
+    return "tpl-bilingual-campus";
+  }
+  if (normMedium.includes("hindi") || normBoard.includes("RBSE") || normBoard.includes("RAJASTHAN")) {
+    return "tpl-rbse-hindi";
+  }
+  if (normType.includes("primary")) {
+    return "tpl-primary-school";
+  }
+  if (normType.includes("middle")) {
+    return "tpl-middle-school";
+  }
+  if (normType.includes("senior") || normType.includes("10+2") || normType.includes("coaching")) {
+    return "tpl-senior-secondary";
+  }
+  return "tpl-cbse-secondary";
+}
+
+// Board-aware and Medium-aware school configuration profile
+function getSchoolConfigurationProfile(board = "CBSE", medium = "English", schoolType = "Secondary School") {
+  const normBoard = (board || "CBSE").toUpperCase();
+  const normMedium = (medium || "English");
+  const normType = (schoolType || "Secondary School");
+
+  let classesOffered = [];
+  if (normType.includes("Preschool") || normType.includes("Nursery") || normType.includes("Kindergarten")) {
+    classesOffered = ["Playgroup", "Pre-Nursery", "Nursery", "LKG", "UKG"];
+  } else if (normType.includes("Primary")) {
+    classesOffered = ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
+  } else if (normType.includes("Middle")) {
+    classesOffered = ["Class 6", "Class 7", "Class 8"];
+  } else if (normType.includes("Senior Secondary") || normType.includes("10+2")) {
+    classesOffered = ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12", "Grade 11", "Grade 12", "Class 11 (Science)", "Class 11 (Commerce)", "Class 11 (Arts)", "Class 12 (Science)", "Class 12 (Commerce)", "Class 12 (Arts)"];
+  } else {
+    classesOffered = ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8", "Class 9", "Class 10"];
+  }
+
+  let terminology = {};
+  if (normMedium === "Hindi") {
+    terminology = {
+      school: "विद्यालय",
+      principal: "प्रधानाचार्य",
+      teacher: "अध्यापक",
+      student: "विद्यार्थी",
+      admission: "प्रवेश",
+      exam: "परीक्षा",
+      fee: "शुल्क",
+      timetable: "समय सारणी",
+      attendance: "उपस्थिति",
+      library: "पुस्तकालय",
+      transport: "वाहन सुविधा"
+    };
+  } else if (normMedium === "Bilingual") {
+    terminology = {
+      school: "School (विद्यालय)",
+      principal: "Principal (प्रधानाचार्य)",
+      teacher: "Teacher (अध्यापक)",
+      student: "Student (विद्यार्थी)",
+      admission: "Admission (प्रवेश)",
+      exam: "Examination (परीक्षा)",
+      fee: "Fee (शुल्क)",
+      timetable: "Timetable (समय सारणी)",
+      attendance: "Attendance (उपस्थिति)",
+      library: "Library (पुस्तकालय)",
+      transport: "Transport (वाहन सुविधा)"
+    };
+  } else {
+    terminology = {
+      school: "School",
+      principal: "Principal",
+      teacher: "Teacher / Faculty",
+      student: "Student",
+      admission: "Admissions",
+      exam: "Examinations",
+      fee: "School Fees",
+      timetable: "Timetable & Schedule",
+      attendance: "Attendance",
+      library: "Digital Library",
+      transport: "Fleet & Transport"
+    };
+  }
+
+  let assessmentModel = "Term-wise (CCE / NEP 2020)";
+  if (normBoard.includes("RBSE") || normBoard.includes("RAJASTHAN")) {
+    assessmentModel = "Rajasthan State Board 3-Test & Half-Yearly Pattern (प्रथम परख, द्वितीय परख, अर्धवार्षिक, वार्षिक)";
+  } else if (normBoard.includes("ICSE") || normBoard.includes("CISCE")) {
+    assessmentModel = "CISCE Standard Continuous Assessment & Practical Evaluations";
+  } else if (normBoard.includes("UPMSP") || normBoard.includes("UP BOARD")) {
+    assessmentModel = "UPMSP Quarterly & Annual Examination System";
+  } else if (normBoard.includes("IB") || normBoard.includes("CAMBRIDGE")) {
+    assessmentModel = "International Criterion-Referenced Formative & Summative Rubrics";
+  }
+
+  return {
+    board: normBoard,
+    medium: normMedium,
+    schoolType: normType,
+    classesOffered,
+    terminology,
+    assessmentModel,
+    recommendedTemplate: getRecommendedTemplate(normType, normBoard, normMedium)
+  };
+}
+
+// Hindi Education Transliteration & Glossary Engine
+const HINDI_EDU_GLOSSARY = {
+  "hamare school mein aapka swagat hai": "हमारे स्कूल में आपका स्वागत है।",
+  "hamare vidyalaya mein aapka swagat hai": "हमारे विद्यालय में आपका स्वागत है।",
+  "admission open": "प्रवेश प्रारंभ (Admissions Open)",
+  "admissions open": "प्रवेश प्रारंभ (Admissions Open)",
+  "pravesh prarambh": "प्रवेश प्रारंभ",
+  "shiksha aur sanskar": "शिक्षा और संस्कार",
+  "shiksha aur anushasan": "शिक्षा और अनुशासन",
+  "vidyalaya": "विद्यालय",
+  "school": "स्कूल",
+  "pradhanacharya": "प्रधानाचार्य",
+  "principal": "प्रधानाचार्य",
+  "adhyapak": "अध्यापक",
+  "shikshak": "शिक्षक",
+  "chhatra": "छात्र",
+  "chhatrayen": "छात्राएं",
+  "pariksha": "परीक्षा",
+  "parinaam": "परिणाम",
+  "parinam": "परिणाम",
+  "khel kood": "खेलकूद व शारीरिक विकास",
+  "smart classroom": "स्मार्ट क्लासरूम",
+  "computer lab": "कंप्यूटर प्रयोगशाला",
+  "science lab": "विज्ञान प्रयोगशाला",
+  "pustakalaya": "पुस्तकालय",
+  "library": "पुस्तकालय",
+  "shulk": "शुल्क विवरण",
+  "fees": "शुल्क",
+  "sampark karein": "संपर्क करें",
+  "sampark": "संपर्क सूत्र",
+  "namaste": "नमस्ते",
+  "swagat": "स्वागत",
+  "swagat hai": "स्वागत है",
+  "dhanyawad": "धन्यवाद",
+  "dhanyavaad": "धन्यवाद",
+  "sarvashreshth": "सर्वश्रेष्ठ परिणाम",
+  "anushasan": "अनुशासन"
+};
+
+const HINDI_PHONETIC_MAP = [
+  { re: /\bmein\b/gi, sub: "में" },
+  { re: /\baapka\b/gi, sub: "आपका" },
+  { re: /\baapke\b/gi, sub: "आपके" },
+  { re: /\baapki\b/gi, sub: "आपकी" },
+  { re: /\bhamare\b/gi, sub: "हमारे" },
+  { re: /\bhamara\b/gi, sub: "हमारा" },
+  { re: /\bhamari\b/gi, sub: "हमारी" },
+  { re: /\bhai\b/gi, sub: "है" },
+  { re: /\bhain\b/gi, sub: "हैं" },
+  { re: /\bshiksha\b/gi, sub: "शिक्षा" },
+  { re: /\baur\b/gi, sub: "और" },
+  { re: /\bvidyalaya\b/gi, sub: "विद्यालय" },
+  { re: /\bschool\b/gi, sub: "स्कूल" },
+  { re: /\bswagat\b/gi, sub: "स्वागत" },
+  { re: /\badmission\b/gi, sub: "प्रवेश" },
+  { re: /\badmissions\b/gi, sub: "प्रवेश" },
+  { re: /\bopen\b/gi, sub: "प्रारंभ" },
+  { re: /\bsampark\b/gi, sub: "संपर्क" },
+  { re: /\bkarein\b/gi, sub: "करें" },
+  { re: /\bnamaste\b/gi, sub: "नमस्ते" },
+  { re: /\bdhanyawad\b/gi, sub: "धन्यवाद" },
+  { re: /\bpariksha\b/gi, sub: "परीक्षा" },
+  { re: /\bparinam\b/gi, sub: "परिणाम" },
+  { re: /\bshreshth\b/gi, sub: "श्रेष्ठ" },
+  { re: /\bchhatra\b/gi, sub: "छात्र" },
+  { re: /\badhyapak\b/gi, sub: "अध्यापक" },
+  { re: /\bpradhanacharya\b/gi, sub: "प्रधानाचार्य" },
+  { re: /\bkaksha\b/gi, sub: "कक्षा" },
+  { re: /\bclass\b/gi, sub: "कक्षा" }
+];
+
+function transliterateHinglishToDevanagari(text) {
+  if (!text || typeof text !== "string") return "";
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (HINDI_EDU_GLOSSARY[lower]) {
+    return HINDI_EDU_GLOSSARY[lower];
+  }
+
+  let result = trimmed;
+  for (const [key, val] of Object.entries(HINDI_EDU_GLOSSARY)) {
+    const regex = new RegExp(`\\b${key}\\b`, "gi");
+    if (regex.test(result)) {
+      result = result.replace(regex, val);
+    }
+  }
+
+  for (const item of HINDI_PHONETIC_MAP) {
+    result = result.replace(item.re, item.sub);
+  }
+
+  return result;
+}
+
+// Public Board Catalogue API
+app.get("/api/public/catalogue/boards", (req, res) => {
+  res.json({
+    success: true,
+    boards: BOARD_CATALOGUE,
+    mediums: MEDIUM_OPTIONS,
+    schoolTypes: SCHOOL_TYPE_OPTIONS,
+    headRoles: SCHOOL_HEAD_ROLES,
+    schoolHeadRoles: SCHOOL_HEAD_ROLES
+  });
+});
+
+// Authoritative School Configuration Profile API
+app.get("/api/erp/school-config/profile", async (req, res) => {
+  const queryBoard = req.query?.board;
+  const queryMedium = req.query?.medium;
+  const queryType = req.query?.schoolType || req.query?.type;
+
+  const orgId = resolveTenantOrgId(req);
+  if (!orgId && !queryBoard) {
+    return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Tenant context or board specification required." });
+  }
+
+  let school = null;
+  let onboarding = null;
+  if (supabase && orgId) {
+    const { data: s } = await supabase.from("schools").select("*").eq("organization_id", orgId).maybeSingle();
+    school = s;
+    const { data: onb } = await supabase.from("school_onboarding").select("draft_data").eq("organization_id", orgId).maybeSingle();
+    onboarding = onb;
+  }
+
+  const draft = onboarding?.draft_data || {};
+  const board = queryBoard || school?.board || draft.board || "CBSE";
+  const medium = queryMedium || draft.medium || "English";
+  const schoolType = queryType || draft.schoolType || "Secondary School";
+
+  const profile = getSchoolConfigurationProfile(board, medium, schoolType);
+  res.json({
+    success: true,
+    organizationId: orgId || null,
+    schoolName: school?.name || draft.schoolName || "School ERP",
+    tenantCode: school?.school_code || draft.tenantCode || "2026100001",
+    profile
+  });
+});
+
+// Hindi Transliterator API ("Hindi mein likhein")
+app.post("/api/cms/transliterate-hindi", (req, res) => {
+  const { text } = req.body || {};
+  if (!text || typeof text !== "string") {
+    return res.status(400).json({ success: false, message: "Text to transliterate is required." });
+  }
+  const devanagari = transliterateHinglishToDevanagari(text);
+  res.json({
+    success: true,
+    original: text,
+    devanagari,
+    language: "hi"
+  });
+});
+
+// SuperAdmin Resend Activation Link API
+app.post("/api/admin/resend-activation", requireAuth, requireSuperAdmin, async (req, res) => {
+  const { organizationId, tenantCode, email } = req.body || {};
+  let orgId = organizationId;
+  let targetEmail = email;
+
+  if (tenantCode && !orgId && supabase) {
+    const { data: sch } = await supabase.from("schools").select("organization_id, email").eq("school_code", tenantCode).maybeSingle();
+    if (sch) {
+      orgId = sch.organization_id;
+      if (!targetEmail) targetEmail = sch.email;
+    }
+  }
+
+  if (!orgId) {
+    return res.status(400).json({ success: false, message: "Organization ID or 10-digit Tenant Code is required." });
+  }
+
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const activationUrl = `https://dakshora.co.in/portal?action=activate&token=${rawToken}&org=${orgId}`;
+
+  if (supabase) {
+    try {
+      await supabase.from("school_onboarding_invitations").insert([{
+        id: crypto.randomUUID(),
+        organization_id: orgId,
+        email: targetEmail || "principal@dakshora.in",
+        name: "Principal",
+        role: "principal",
+        token: tokenHash,
+        status: "pending",
+        invited_by: req.user?.email || "superadmin@dakshora.ai",
+        expires_at: expiresAt
+      }]);
+    } catch (e) {
+      console.warn("Failed to insert reissued invitation:", e.message);
+    }
+
+    try {
+      const { data: onb } = await supabase
+        .from("school_onboarding")
+        .select("id, draft_data")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (onb) {
+        const updatedDraft = {
+          ...onb.draft_data,
+          invitation: {
+            ...(onb.draft_data?.invitation || {}),
+            token: tokenHash,
+            status: "pending",
+            expires_at: expiresAt,
+            email: targetEmail || onb.draft_data?.email,
+            role: "principal"
+          }
+        };
+        await supabase
+          .from("school_onboarding")
+          .update({ draft_data: updatedDraft })
+          .eq("id", onb.id);
+      }
+    } catch (_) {}
+  }
+
+  res.json({
+    success: true,
+    message: "New single-use activation link generated successfully! 🔑",
+    activationUrl,
+    activationToken: rawToken,
+    expiresAt
+  });
+});
+
+// SuperAdmin Dynamic School Onboarding Wizard
+app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/superadmin/schools/onboard", "/api/superadmin/onboard-school"], requireAuth, requireSuperAdmin, async (req, res) => {
+  let rollbackOps = [];
   try {
     const rawSchoolName = (req.body?.schoolName || req.body?.name || "").trim();
-    if (!rawSchoolName) {
-      return res.status(400).json({ success: false, message: "School Name is required for onboarding." });
+    if (!rawSchoolName || rawSchoolName.length < 3) {
+      return res.status(400).json({ success: false, message: "Valid School Name (at least 3 characters) is required for onboarding." });
     }
 
     const {
-      principalName,
-      principalEmail,
-      principalPhone,
-      email,
-      phone,
       board = "CBSE",
-      city = "Jaipur, Rajasthan",
+      medium = "English",
+      schoolType = "Secondary School",
+      schoolHeadRole = "Principal",
+      principalName,
+      headName,
+      email,
+      principalEmail,
+      phone,
+      principalPhone,
+      requestedSlug,
+      slug,
+      city = "Jaipur",
       state = "Rajasthan",
       plan = "growth",
       mrr,
       notes
     } = req.body || {};
 
-    const cleanSchoolName = rawSchoolName;
-    const cleanPrincipalName = (principalName || "Principal").trim();
-    const cleanEmail = (principalEmail || email || `${cleanSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "")}@dakshora.in`).toLowerCase().trim();
-    const cleanPhone = (principalPhone || phone || "9876543210").replace(/[^0-9]/g, "");
-    const baseSlug = cleanSchoolName.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 35);
-    const orgSlug = `${baseSlug}-${Math.floor(100 + Math.random() * 900)}`;
+    const cleanPrincipalName = (principalName || headName || "Principal").trim();
+    if (!cleanPrincipalName) {
+      return res.status(400).json({ success: false, message: "Principal/Director/School Head Name is required." });
+    }
 
-    const planMRR = mrr ? Number(mrr) : plan === "enterprise" ? 24999 : plan === "growth" ? 12500 : 4999;
-    const initialPassword = `Dakshora@${Math.floor(1000 + Math.random() * 9000)}!`;
+    const rawEmail = (principalEmail || email || "").trim();
+    if (!rawEmail || !/^\S+@\S+\.\S+$/.test(rawEmail)) {
+      return res.status(400).json({ success: false, message: "A valid registered email address is required." });
+    }
+    const cleanEmail = rawEmail.toLowerCase();
+
+    const rawPhone = (principalPhone || phone || "").replace(/\D/g, "");
+    if (!rawPhone || rawPhone.length < 10) {
+      return res.status(400).json({ success: false, message: "A valid 10-digit Indian mobile number is required." });
+    }
+    const cleanPhone = rawPhone.slice(-10);
+
+    // Validate Board from Catalogue
+    const matchedBoard = BOARD_CATALOGUE.find(b => b.code.toLowerCase() === board.toLowerCase() || b.id.toLowerCase() === board.toLowerCase()) || { code: board.toUpperCase() };
+
+    // Validate Subdomain Slug
+    const candidateSlug = (requestedSlug || slug || rawSchoolName.toLowerCase().replace(/[^a-z0-9]+/g, "-")).trim();
+    const slugValidation = validateSubdomainSlug(candidateSlug);
+    if (!slugValidation.valid) {
+      return res.status(400).json({ success: false, message: slugValidation.error });
+    }
+    const baseSlug = slugValidation.slug;
+
+    // Database uniqueness check for slug
+    let orgSlug = baseSlug;
+    if (supabase) {
+      const { data: existingOrg } = await supabase.from("organizations").select("id").eq("slug", orgSlug).maybeSingle();
+      if (existingOrg) {
+        orgSlug = `${baseSlug}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+    } else {
+      const existsInMem = IN_MEMORY_ORGANIZATIONS.some(o => o.slug === orgSlug);
+      if (existsInMem) {
+        orgSlug = `${baseSlug}-${Math.floor(100 + Math.random() * 900)}`;
+      }
+    }
+
+    // Atomic Identifiers: UUID + 10-Digit Tenant Code + Activation Token
     const newOrgId = crypto.randomUUID();
+    const tenantCode = await generateUniqueTenantCode(supabase);
+    const rawActivationToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawActivationToken).digest("hex");
+    const tokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const activationUrl = `https://dakshora.co.in/portal?action=activate&token=${rawActivationToken}&org=${newOrgId}`;
+    const initialPassword = `Dakshora@${Math.floor(1000 + Math.random() * 9000)}!`;
+    const templateId = getRecommendedTemplate(schoolType, matchedBoard.code, medium);
+    const siteDomain = `${orgSlug}.school.dakshora.app`;
+    const planMRR = mrr ? Number(mrr) : plan === "enterprise" ? 24999 : plan === "growth" ? 12500 : 4999;
 
+    // 1. Insert into public.organizations
+    if (supabase) {
+      const { error: orgErr } = await supabase.from("organizations").insert([{
+        id: newOrgId,
+        name: rawSchoolName,
+        slug: orgSlug,
+        industry: "Education",
+        status: "active"
+      }]);
+      if (orgErr) throw new Error(`Organizations DB error: ${orgErr.message}`);
+      rollbackOps.push(async () => { await supabase.from("organizations").delete().eq("id", newOrgId); });
+    }
+
+    // 2. Insert into public.schools (storing 10-digit tenant code in school_code)
+    const schoolId = crypto.randomUUID();
+    if (supabase) {
+      const { error: schErr } = await supabase.from("schools").insert([{
+        id: schoolId,
+        organization_id: newOrgId,
+        school_code: tenantCode,
+        name: rawSchoolName,
+        short_name: rawSchoolName.slice(0, 10).toUpperCase(),
+        board: matchedBoard.code,
+        city: city || "Jaipur",
+        state: state || "Rajasthan",
+        phone: cleanPhone,
+        email: cleanEmail,
+        website: `https://${siteDomain}`,
+        status: "active"
+      }]);
+      if (schErr) throw new Error(`Schools DB error: ${schErr.message}`);
+      rollbackOps.push(async () => { await supabase.from("schools").delete().eq("id", schoolId); });
+    }
+
+    // 3. Insert into public.school_onboarding
+    if (supabase) {
+      try {
+        await supabase.from("school_onboarding").insert([{
+          id: crypto.randomUUID(),
+          organization_id: newOrgId,
+          school_id: schoolId,
+          status: "ready",
+          current_step: 1,
+          completed_steps: [1],
+          draft_data: {
+            tenantCode,
+            tenant_code: tenantCode,
+            schoolName: rawSchoolName,
+            board: matchedBoard.code,
+            medium,
+            schoolType,
+            schoolHeadRole,
+            principalName: cleanPrincipalName,
+            email: cleanEmail,
+            phone: cleanPhone,
+            city,
+            state,
+            websiteDomain: siteDomain,
+            activationUrl,
+            invitation: {
+              token: tokenHash,
+              status: "pending",
+              expires_at: tokenExpiresAt,
+              email: cleanEmail,
+              name: cleanPrincipalName,
+              role: schoolHeadRole.toLowerCase() === "director" ? "director" : "principal"
+            }
+          },
+          checklist: {
+            isReadyForActivation: false,
+            board: matchedBoard.code,
+            medium,
+            schoolType
+          },
+          created_by: req.user?.email || "superadmin@dakshora.ai"
+        }]);
+      } catch (e) {
+        console.warn("Onboarding record insert note:", e.message);
+      }
+    }
+
+    // 4. Insert into public.tenant_settings (tenant code record)
+    if (supabase) {
+      try {
+        await supabase.from("tenant_settings").upsert([{
+          id: crypto.randomUUID(),
+          organization_id: newOrgId,
+          settings_key: "tenant_code",
+          settings_value: {
+            code: tenantCode,
+            board: matchedBoard.code,
+            medium,
+            schoolType
+          }
+        }], { onConflict: "organization_id,settings_key" });
+      } catch (e) {
+        console.warn("Tenant settings note:", e.message);
+      }
+    }
+
+    // 5. Insert into public.school_onboarding_invitations (Secure Activation Token with SHA-256 Hash)
+    if (supabase) {
+      const { error: invErr } = await supabase.from("school_onboarding_invitations").insert([{
+        id: crypto.randomUUID(),
+        organization_id: newOrgId,
+        email: cleanEmail,
+        name: cleanPrincipalName,
+        role: schoolHeadRole.toLowerCase() === "director" ? "director" : "principal",
+        token: tokenHash,
+        status: "pending",
+        invited_by: req.user?.email || "superadmin@dakshora.ai",
+        expires_at: tokenExpiresAt
+      }]);
+      if (invErr) console.warn("Invitations insert note:", invErr.message);
+    }
+
+    // 6. Insert initial Academic Session in public.academic_sessions
+    if (supabase) {
+      try {
+        await supabase.from("academic_sessions").insert([{
+          id: crypto.randomUUID(),
+          organization_id: newOrgId,
+          name: "2026-2027",
+          start_date: "2026-04-01",
+          end_date: "2027-03-31",
+          is_current: true
+        }]);
+      } catch (e) {
+        console.warn("Academic sessions note:", e.message);
+      }
+    }
+
+    // 7. Insert SaaS Subscription in public.saas_subscriptions
+    if (supabase) {
+      try {
+        await supabase.from("saas_subscriptions").upsert([{
+          id: "sub-" + newOrgId.slice(0, 8),
+          organization_id: newOrgId,
+          plan_id: plan || "growth",
+          status: "active",
+          billing_interval: "monthly",
+          amount: planMRR,
+          currency: "INR",
+          current_period_start: new Date().toISOString(),
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        }], { onConflict: "id" });
+      } catch (e) {
+        console.warn("SaaS subscription note:", e.message);
+      }
+    }
+
+    // 8. Insert Website and CMS Records
+    const newSiteId = crypto.randomUUID();
+    if (supabase) {
+      try {
+        await supabase.from("websites").insert([{
+          id: newSiteId,
+          organization_id: newOrgId,
+          name: `${rawSchoolName} Official Portal`,
+          slug: orgSlug,
+          template_id: null,
+          status: "published"
+        }]);
+
+        await supabase.from("website_settings").insert([{
+          id: crypto.randomUUID(),
+          website_id: newSiteId,
+          primary_color: medium === "Hindi" ? "#EA580C" : "#1E40AF",
+          secondary_color: medium === "Hindi" ? "#F59E0B" : "#0D9488",
+          heading_font: medium === "Hindi" ? "'Noto Sans Devanagari', sans-serif" : "'Plus Jakarta Sans', sans-serif",
+          phone: cleanPhone,
+          email: cleanEmail,
+          settings: {
+            board: matchedBoard.code,
+            medium,
+            schoolType,
+            schoolName: rawSchoolName,
+            templateId,
+            portalLoginUrl: `/portal?school=${orgSlug}`
+          }
+        }]);
+
+        const homePageId = crypto.randomUUID();
+        await supabase.from("pages").insert([{
+          id: homePageId,
+          website_id: newSiteId,
+          title: medium === "Hindi" ? "मुख्य पृष्ठ" : "Home",
+          slug: "home",
+          status: "published",
+          seo_title: `${rawSchoolName} - Official Web Portal`,
+          seo_description: `Official school web portal for ${rawSchoolName} (${matchedBoard.code}).`
+        }]);
+
+        await supabase.from("page_sections").insert([
+          {
+            id: crypto.randomUUID(),
+            page_id: homePageId,
+            section_type: "hero",
+            sort_order: 1,
+            content: {
+              heroTitle: medium === "Hindi" ? `${rawSchoolName} में आपका स्वागत है` : `Welcome to ${rawSchoolName}`,
+              heroSubtitle: `Affiliated to ${matchedBoard.code} (${medium} Medium) • Committed to Academic Excellence`,
+              bannerUrl: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=1200&auto=format&fit=crop&q=80",
+              portalLoginText: "School ERP Login"
+            },
+            is_visible: true
+          }
+        ]);
+      } catch (e) {
+        console.warn("Website & CMS provisioning note:", e.message);
+      }
+    }
+
+    // 9. Supabase Auth Principal User & public.users
+    let createdAuthUserId = crypto.randomUUID();
+    if (supabase) {
+      try {
+        const authRes = await supabase.auth.admin.createUser({
+          email: cleanEmail,
+          password: initialPassword,
+          email_confirm: true,
+          phone: `+91${cleanPhone}`,
+          phone_confirm: true,
+          user_metadata: {
+            name: cleanPrincipalName,
+            role: "school-admin",
+            organization_id: newOrgId,
+            tenant_code: tenantCode,
+            phone: cleanPhone
+          },
+          app_metadata: {
+            role: "school-admin",
+            organization_id: newOrgId
+          }
+        });
+        if (authRes.data?.user) createdAuthUserId = authRes.data.user.id;
+
+        await supabase.from("users").upsert([{
+          id: createdAuthUserId,
+          email: cleanEmail,
+          name: cleanPrincipalName,
+          role: "school-admin",
+          organization_id: newOrgId,
+          phone: cleanPhone,
+          status: "pending_activation"
+        }], { onConflict: "id" });
+
+        await supabase.from("organization_members").insert([{
+          id: crypto.randomUUID(),
+          organization_id: newOrgId,
+          user_id: createdAuthUserId,
+          role: schoolHeadRole.toLowerCase() === "director" ? "director" : "principal"
+        }]);
+      } catch (authErr) {
+        console.warn("Auth user creation note:", authErr.message);
+      }
+    }
+
+    // Bootstrap in-memory state
+    ensureTenantBootstrapped(newOrgId, rawSchoolName, orgSlug, plan);
     const newOrg = {
       id: newOrgId,
-      name: cleanSchoolName,
+      name: rawSchoolName,
       slug: orgSlug,
-      board: board || "CBSE",
-      city: city || "Jaipur, Rajasthan",
+      tenant_code: tenantCode,
+      tenantCode: tenantCode,
+      board: matchedBoard.code,
+      medium,
+      schoolType,
+      schoolHeadRole,
+      city: city || "Jaipur",
       state: state || "Rajasthan",
       plan: plan || "growth",
       status: "active",
@@ -2588,362 +3615,137 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-
     IN_MEMORY_ORGANIZATIONS.unshift(newOrg);
 
-    const safeAsync = async (promise, timeoutMs = 2000) => {
-      try {
-        return await Promise.race([
-          promise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), timeoutMs))
-        ]);
-      } catch (err) {
-        return null;
-      }
-    };
-
-    // 1. Persist Organization to Supabase PostgreSQL with sanitized columns
-    if (supabase) {
-      const dbOrgPayload = {
-        id: newOrg.id,
-        name: newOrg.name,
-        slug: newOrg.slug,
-        industry: "Education",
-        status: "active",
-        created_at: newOrg.created_at,
-        updated_at: newOrg.updated_at
-      };
-      const orgInsRes = await safeAsync(supabase.from("organizations").insert([dbOrgPayload]));
-      if (orgInsRes?.error) {
-        console.warn("[Onboard School] Supabase organizations insert note:", orgInsRes.error.message);
-      }
-
-      // Explicitly persist SaaS Subscription in Supabase with explicit ID
-      await safeAsync(supabase.from("saas_subscriptions").upsert([{
-        id: "sub-" + newOrg.id.slice(0, 8),
-        organization_id: newOrg.id,
-        plan_id: plan || "growth",
-        status: "active",
-        billing_interval: "monthly",
-        amount: planMRR,
-        currency: "INR",
-        current_period_start: new Date().toISOString(),
-        current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-      }], { onConflict: "id" }));
-    }
-
-    // 2. Create Principal / School Admin in Supabase Auth & public.users
-    let createdAuthUserId = crypto.randomUUID();
-    if (supabase) {
-      try {
-        const authRes = await safeAsync(supabase.auth.admin.createUser({
-          email: cleanEmail,
-          password: initialPassword,
-          email_confirm: true,
-          user_metadata: {
-            name: cleanPrincipalName,
-            role: "school-admin",
-            organization_id: newOrg.id,
-            phone: cleanPhone
-          },
-          app_metadata: {
-            role: "school-admin",
-            organization_id: newOrg.id
-          }
-        }));
-
-        if (authRes && authRes.data?.user) {
-          createdAuthUserId = authRes.data.user.id;
-        }
-
-        // Upsert into public.users
-        await safeAsync(supabase.from("users").upsert([{
-          id: createdAuthUserId,
-          email: cleanEmail,
-          name: cleanPrincipalName,
-          role: "school-admin",
-          organization_id: newOrg.id,
-          phone: cleanPhone,
-          is_superadmin: false,
-          status: "active"
-        }], { onConflict: "id" }));
-
-        // Insert into public.organization_members
-        await safeAsync(supabase.from("organization_members").insert([{
-          organization_id: newOrg.id,
-          user_id: createdAuthUserId,
-          role: "principal"
-        }]));
-      } catch (authCreateErr) {
-        console.warn("Supabase auth creation note:", authCreateErr.message);
-      }
-    }
-
-    // 3. Initialize ERP Foundations (Sessions, Classes 1-12, Sections A-B, Subjects, Subscription)
-    ensureTenantBootstrapped(newOrg.id, newOrg.name, newOrg.slug, newOrg.plan);
-
-    // Register Principal in ERP_STAFF directory for instant role and tenant binding
-    if (typeof ERP_STAFF !== "undefined" && Array.isArray(ERP_STAFF)) {
-      ERP_STAFF.unshift({
-        id: `stf-${Date.now()}`,
-        name: cleanPrincipalName,
-        firstName: cleanPrincipalName.split(" ")[0] || "Principal",
-        lastName: cleanPrincipalName.split(" ").slice(1).join(" ") || "",
-        designation: "Principal",
-        role: "admin",
-        email: cleanEmail,
-        phone: cleanPhone,
-        organization_id: newOrg.id,
-        status: "active"
-      });
-    }
-
-    // 4. Create public.schools record
-    if (supabase) {
-      try {
-        await supabase.from("schools").insert([{
-          organization_id: newOrg.id,
-          name: cleanSchoolName,
-          board: board || "CBSE",
-          city: city || "Jaipur, Rajasthan",
-          state: state || "Rajasthan",
-          phone: cleanPhone,
-          email: cleanEmail,
-          status: "active",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }]).catch(() => {});
-      } catch (e) {}
-    }
-
-    // 5. Initialize Default CMS Website and Home Page
-    const siteDomain = `${baseSlug}.school.dakshora.app`;
     const newSite = {
-      id: crypto.randomUUID(),
-      name: `${cleanSchoolName} Official Portal`,
+      id: newSiteId,
+      name: `${rawSchoolName} Official Portal`,
       domain: siteDomain,
-      template: "tpl-cbse-secondary",
+      template: templateId,
       status: "live",
-      organization_id: newOrg.id,
+      organization_id: newOrgId,
       created_at: new Date().toISOString()
     };
     IN_MEMORY_WEBSITES.unshift(newSite);
 
-    if (supabase) {
-      try {
-        await supabase.from("websites").insert([{
-          id: newSite.id,
-          organization_id: newOrg.id,
-          name: newSite.name,
-          slug: orgSlug,
-          status: "published"
-        }]);
-
-        await supabase.from("website_settings").insert([{
-          id: crypto.randomUUID(),
-          website_id: newSite.id,
-          primary_color: "#1E40AF",
-          secondary_color: "#0D9488",
-          phone: cleanPhone,
-          email: cleanEmail,
-          settings: {
-            board: board || "CBSE",
-            schoolName: cleanSchoolName,
-            portalLoginUrl: `/portal?school=${orgSlug}`
-          }
-        }]).catch(() => {});
-
-        await supabase.from("website_domains").insert([{
-          id: crypto.randomUUID(),
-          website_id: newSite.id,
-          domain: siteDomain,
-          is_primary: true
-        }]).catch(() => {});
-
-        const homePageId = crypto.randomUUID();
-        await supabase.from("pages").insert([{
-          id: homePageId,
-          website_id: newSite.id,
-          title: "Home",
-          slug: "home",
-          status: "published"
-        }]);
-
-        await supabase.from("page_sections").insert([
-          {
-            id: crypto.randomUUID(),
-            page_id: homePageId,
-            section_type: "hero",
-            sort_order: 1,
-            content: {
-              heroTitle: `Welcome to ${cleanSchoolName}`,
-              heroSubtitle: `Affiliated to ${board} | Committed to Academic Excellence & Holistic Growth`,
-              bannerUrl: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=1200&auto=format&fit=crop&q=80",
-              portalLoginText: "School ERP Login"
-            },
-            is_visible: true
-          }
-        ]);
-      } catch (cmsErr) {
-        console.warn("Supabase CMS setup note:", cmsErr.message);
-      }
-    }
-
-    // 6. Automatic Multi-Channel Welcome Dispatch (SMS, WhatsApp, Email to Principal)
-    const smsWelcomeText = `Welcome Dr. ${cleanPrincipalName}! ${cleanSchoolName} is now LIVE on DAKSHORA 2.0. Portal: https://dakshora.co.in | ID: ${cleanEmail} | Pass: ${initialPassword} | Website: https://${siteDomain}`;
-    
+    // 10. Multi-channel Notification Dispatch (SMS, WhatsApp, Email)
+    const smsWelcomeText = `Congratulations ${cleanPrincipalName}! ${rawSchoolName} (Code: ${tenantCode}) is provisioned on DAKSHORA 2.0. Activate your account: ${activationUrl} | Support: +918796347851`;
     let smsDispatch = null;
-    if (cleanPhone) {
-      try {
-        smsDispatch = await dispatchLiveGatewayMessage({
-          channel: "sms",
-          recipientContact: cleanPhone,
-          recipientName: cleanPrincipalName,
-          text: smsWelcomeText,
-          orgId: newOrg.id,
-          metadata: {
-            dltSenderId: "DKSHRA",
-            dltTemplateId: "1107161829304812",
-            purpose: "school_onboarding_welcome_sms"
-          }
-        });
-      } catch (smsErr) {
-        console.warn("Onboarding SMS auto-dispatch note:", smsErr.message);
-        smsDispatch = { success: false, error: smsErr.message };
-      }
-    }
+    try {
+      smsDispatch = await dispatchLiveGatewayMessage({
+        channel: "sms",
+        recipientContact: cleanPhone,
+        recipientName: cleanPrincipalName,
+        text: smsWelcomeText,
+        orgId: newOrgId,
+        metadata: { dltSenderId: "DKSHRA", dltTemplateId: "1107161829304812", purpose: "school_onboarding_activation_sms" }
+      });
+    } catch (e) { smsDispatch = { success: false, error: e.message }; }
 
     let waDispatch = null;
-    if (cleanPhone) {
-      try {
-        const waWelcomeText = `🏫 *Welcome to DAKSHORA 2.0!*\n\nDear *${cleanPrincipalName}*,\nCongratulations! *${cleanSchoolName}* has been successfully launched.\n\n🌐 *Official Website:* https://${siteDomain}\n💻 *ERP Admin Portal:* https://dakshora.co.in\n🔑 *Login ID:* ${cleanEmail}\n🔒 *Temporary Password:* ${initialPassword}\n\n_Please log in and update your security settings._\n- Team Dakshora`;
-        waDispatch = await dispatchLiveGatewayMessage({
-          channel: "whatsapp",
-          recipientContact: cleanPhone,
-          recipientName: cleanPrincipalName,
-          text: waWelcomeText,
-          orgId: newOrg.id,
-          metadata: {
-            purpose: "school_onboarding_welcome_whatsapp"
-          }
-        });
-      } catch (waErr) {
-        console.warn("Onboarding WhatsApp auto-dispatch note:", waErr.message);
-        waDispatch = { success: false, error: waErr.message };
-      }
-    }
+    try {
+      const waText = `🏫 *Congratulations ${cleanPrincipalName}!*\n\n*${rawSchoolName}* has been successfully registered on *DAKSHORA 2.0 School ERP*.\n\n📋 *Public Tenant Code:* \`${tenantCode}\`\n🏛️ *Board:* ${matchedBoard.code} (${medium} Medium)\n🌐 *Website URL:* https://${siteDomain}\n\n🔐 *Activate Your Account & Set Password:*\n👉 ${activationUrl}\n\n_Security Notice: Do not share this link. It will expire in 7 days._\n\n- DAKSHORA 2.0 Operations Team`;
+      waDispatch = await dispatchLiveGatewayMessage({
+        channel: "whatsapp",
+        recipientContact: cleanPhone,
+        recipientName: cleanPrincipalName,
+        text: waText,
+        orgId: newOrgId,
+        metadata: { purpose: "school_onboarding_activation_whatsapp" }
+      });
+    } catch (e) { waDispatch = { success: false, error: e.message }; }
 
     let emailDispatch = null;
-    const emailSubject = `Welcome to DAKSHORA 2.0 — ${cleanSchoolName} is Live!`;
-    const emailBody = `Dear ${cleanPrincipalName},
+    try {
+      const emailSubject = `Welcome to DAKSHORA 2.0 — ${rawSchoolName} Registration & Activation`;
+      const emailBody = `Dear ${cleanPrincipalName},
 
-Congratulations! ${cleanSchoolName} has been successfully provisioned on the DAKSHORA 2.0 Unified Education Operating System.
+Congratulations! ${rawSchoolName} has been successfully provisioned on the DAKSHORA 2.0 Unified School ERP Platform.
 
-Your School Details:
---------------------------------------------
-• School Name: ${cleanSchoolName}
-• Affiliation / Board: ${board || "CBSE"}
-• Official Public Website: https://${siteDomain}
-• ERP Admin Portal: https://dakshora.co.in
-• Organization Tenant ID: ${newOrg.id}
+Institution Details:
+--------------------------------------------------------
+• School Name: ${rawSchoolName}
+• Public Tenant Code: ${tenantCode}
+• Canonical Tenant ID: ${newOrgId}
+• Affiliation Board: ${matchedBoard.code} (${medium} Medium)
+• Category: ${schoolType}
+• Official Web Portal: https://${siteDomain}
+• ERP Login URL: https://dakshora.co.in/portal
 
-Your Principal Super-Admin Credentials:
---------------------------------------------
-• Login Email: ${cleanEmail}
-• Temporary Password: ${initialPassword}
-• Access Level: School Principal / Administrator
+Account Activation & Security Setup:
+--------------------------------------------------------
+To set up your password and access the administrator console, click your secure activation link below:
+👉 ${activationUrl}
 
-Immediate Steps to Complete Setup:
-1. Log in at https://dakshora.co.in using your login email and temporary password.
-2. Update your master password and setup Two-Factor Authentication (2FA) or Mobile OTP.
-3. Review your Public School Website and configure custom domain (DNS CNAME) if required.
-4. Import Staff and Student directories using the 1-Click Excel Importer.
+(This single-use cryptographic activation link will expire in 7 days).
 
-Need assistance? Contact our 24x7 Priority Support Desk at support@dakshora.co.in.
+Initial Recommended Actions:
+1. Complete password setup and verify Two-Factor Authentication (TOTP).
+2. Review your school website and configure custom domain DNS if needed.
+3. Access the 16-Step Assisted Setup Wizard in the Superadmin / Admin dashboard.
+
+If you have questions, our priority desk is available at support@dakshora.co.in or WhatsApp +91 87963 47851.
 
 Warm regards,
-DAKSHORA 2.0 Onboarding & Operations Team
+DAKSHORA 2.0 Engineering & Operations Desk
 https://dakshora.co.in`;
 
-    if (cleanEmail) {
-      try {
-        emailDispatch = await dispatchLiveGatewayMessage({
-          channel: "email",
-          recipientContact: cleanEmail,
-          recipientName: cleanPrincipalName,
-          text: emailBody,
-          orgId: newOrg.id,
-          metadata: {
-            subject: emailSubject,
-            purpose: "school_onboarding_welcome_email"
-          }
-        });
-      } catch (emailErr) {
-        console.warn("Onboarding Email auto-dispatch note:", emailErr.message);
-        emailDispatch = { success: false, error: emailErr.message };
-      }
-    }
-
-    // Record welcome broadcast in ERP Communication Hub
-    if (typeof ERP_COMMUNICATION_MESSAGES !== "undefined" && Array.isArray(ERP_COMMUNICATION_MESSAGES)) {
-      ERP_COMMUNICATION_MESSAGES.unshift({
-        id: `msg-onboard-${Date.now()}`,
-        title: `School Onboarding Broadcast: ${cleanSchoolName}`,
-        templateId: "tpl-onboarding-welcome",
-        templateCode: "SCHOOL_ONBOARDING_CREDENTIALS",
-        channel: "all",
-        audienceType: "school_principal",
-        audienceFilter: { principalEmail: cleanEmail, principalPhone: cleanPhone },
-        subject: emailSubject,
-        body: smsWelcomeText,
-        priority: "urgent",
-        recipientCount: 1,
-        status: "sent",
-        createdBy: req.user?.email || "Platform SuperAdmin",
-        sentAt: new Date().toISOString(),
-        organization_id: newOrg.id,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      emailDispatch = await dispatchLiveGatewayMessage({
+        channel: "email",
+        recipientContact: cleanEmail,
+        recipientName: cleanPrincipalName,
+        text: emailBody,
+        orgId: newOrgId,
+        metadata: { subject: emailSubject, purpose: "school_onboarding_activation_email" }
       });
-    }
+    } catch (e) { emailDispatch = { success: false, error: e.message }; }
 
-    recordAuditLog("school.onboard", req.user?.email || "superadmin", "organization", newOrg.id, req);
+    recordAuditLog("school.onboard", req.user?.email || "superadmin", "organization", newOrgId, req);
 
     res.json({
       success: true,
-      message: `School '${cleanSchoolName}' onboarded and provisioned successfully! 🏫🎉`,
-      tenantId: newOrg.id,
+      message: `Congratulations! ${rawSchoolName} has been successfully registered on Dakshora School ERP. 🏫🎉`,
+      tenantId: newOrgId,
+      tenantCode,
       organization: newOrg,
       credentials: {
         email: cleanEmail,
         principalName: cleanPrincipalName,
-        initialPassword: initialPassword,
+        headRole: schoolHeadRole,
+        initialPassword: null,
+        activationToken: rawActivationToken,
+        activationUrl,
         role: "school-admin",
-        loginUrl: "https://dakshora.co.in"
+        loginUrl: "https://dakshora.co.in/portal"
       },
       website: {
         id: newSite.id,
         domain: siteDomain,
-        template: "tpl-cbse-secondary"
+        template: templateId,
+        previewUrl: `https://${siteDomain}`
+      },
+      onboarding: {
+        currentStep: 1,
+        totalSteps: 16,
+        progressPercentage: 6,
+        checklistReady: true
       },
       erpBootstrapped: true,
       notifications: {
         smsSent: Boolean(smsDispatch?.success),
         whatsappSent: Boolean(waDispatch?.success),
         emailSent: Boolean(emailDispatch?.success),
-        recipients: {
-          phone: cleanPhone,
-          email: cleanEmail
-        },
-        dispatchStatus: {
-          sms: smsDispatch,
-          whatsapp: waDispatch,
-          email: emailDispatch
-        }
+        recipients: { phone: cleanPhone, email: cleanEmail },
+        dispatchStatus: { sms: smsDispatch, whatsapp: waDispatch, email: emailDispatch }
       }
     });
-  } catch (error) {
-    res.status(500).json({ success: false, message: "Onboarding failed", error: error.message });
+
+  } catch (err) {
+    console.error("Onboarding execution failed, executing rollback:", err);
+    for (const rollback of rollbackOps.reverse()) {
+      try { await rollback(); } catch (_) {}
+    }
+    res.status(500).json({ success: false, message: `Onboarding failed: ${err.message}` });
   }
 });
 
@@ -2955,52 +3757,101 @@ const TEMPLATES = [
   {
     id: "tpl-play-school",
     name: "Little Angels Kids Play School & Daycare",
-    category: "Play School & Kindergarten",
+    category: "Preschool & Kindergarten",
     tagline: "Where Play Meets Foundational Learning",
     description: "Vibrant, playful website for Pre-Nursery, KG & Daycare with activity schedules, daily meals menu, and toddler admission lead form.",
-    badge: "Play School",
+    badge: "Preschool & Kindergarten",
     color: "from-pink-500 to-rose-600",
+    recommendedFor: { schoolType: "Preschool/Nursery/Kindergarten", medium: "English" },
     pages: ["Home", "About Us", "Daycare & Timings", "Programs (Playgroup/Nursery)", "Photo Gallery", "Admissions", "Contact"]
   },
   {
     id: "tpl-primary-school",
     name: "Navodaya Primary & Elementary Academy",
-    category: "Primary Education (Class 1-5)",
+    category: "Primary School",
     tagline: "Foundational Literacy & Holistic Character Building",
-    description: "Clean, inviting template for primary schools with interactive curriculum showcases, hobby clubs, and parent updates.",
-    badge: "Class 1 to 5",
+    description: "Clean, inviting template for primary schools (Class 1-5) with interactive curriculum showcases, hobby clubs, and parent updates.",
+    badge: "Primary School (Class 1-5)",
     color: "from-emerald-500 to-teal-600",
+    recommendedFor: { schoolType: "Primary School", medium: "English" },
     pages: ["Home", "About Us", "Curriculum", "Co-Curricular Clubs", "Parent Guidelines", "Admissions 2026", "Contact"]
   },
   {
-    id: "tpl-rbse-hindi",
-    name: "सरस्वती विद्या मंदिर उच्च माध्यमिक विद्यालय (RBSE Hindi Medium)",
-    category: "State Board & Hindi Medium (कक्षा 1 से 12)",
-    tagline: "संस्कारयुक्त आधुनिक शिक्षा • न्यूनतम शुल्क में सर्वश्रेष्ठ परिणाम",
-    description: "राजस्थान / स्टेट बोर्ड हिंदी माध्यम विद्यालयों के लिए विशेष रूप से डिज़ाइन किया गया टेम्पलेट। प्रवेश प्रारंभ, बोर्ड टॉपर्स, और छात्रवृत्ति विवरण।",
-    badge: "RBSE हिंदी माध्यम",
-    color: "from-amber-500 to-orange-600",
-    pages: ["मुख्य पृष्ठ", "परिचय", "प्रवेश 2026-27", "बोर्ड परिणाम (10वीं/12वीं)", "छात्रवृत्ति", "संपर्क"]
+    id: "tpl-middle-school",
+    name: "Pinnacle Middle School & Discovery Campus",
+    category: "Middle School",
+    tagline: "Inquiry, STEM Discovery & Experiential Learning",
+    description: "Designed for Class 6-8 middle schools with interactive science exhibitions, sports clubs, language labs, and student council.",
+    badge: "Middle School (Class 6-8)",
+    color: "from-teal-500 to-cyan-600",
+    recommendedFor: { schoolType: "Middle School", medium: "English" },
+    pages: ["Home", "About Us", "Academic Programs", "STEM Labs", "Sports & Arts", "Admissions", "Contact"]
   },
   {
     id: "tpl-cbse-secondary",
     name: "Delhi Public Heritage High School (CBSE 10th)",
-    category: "CBSE Secondary (Class 6-10)",
+    category: "CBSE School",
     tagline: "Excellence in Board Academics, Smart Labs & Sports",
     description: "Prestigious CBSE secondary school template with digital admission CRM, NCERT subject syllabi, smart classrooms, and 100% board results showcase.",
     badge: "CBSE Affiliated",
     color: "from-blue-600 to-indigo-600",
+    recommendedFor: { schoolType: "Secondary School", board: "CBSE", medium: "English" },
     pages: ["Home", "About Us", "Academics & CBSE", "Smart Labs", "Sports Arena", "Admissions 2026", "Contact"]
   },
   {
     id: "tpl-senior-secondary",
     name: "Apex Senior Secondary 10+2 & Coaching Integrated Campus",
-    category: "Senior Secondary (10+2) & Coaching",
+    category: "Secondary and Senior Secondary School",
     tagline: "Science, Commerce, Arts with Integrated JEE/NEET/CUET Prep",
     description: "High-conversion template for senior secondary schools with stream selections (PCM, PCB, Commerce, Arts), faculty bios, and hostel facilities.",
     badge: "10+2 & JEE/NEET",
     color: "from-purple-600 to-violet-700",
+    recommendedFor: { schoolType: "Senior Secondary School", medium: "English" },
     pages: ["Home", "About Us", "Streams (PCM/PCB/Commerce)", "JEE/NEET Prep", "Hostel Life", "Admissions", "Contact"]
+  },
+  {
+    id: "tpl-rbse-hindi",
+    name: "सरस्वती विद्या मंदिर उच्च माध्यमिक विद्यालय (RBSE State Board)",
+    category: "State Board School",
+    tagline: "संस्कारयुक्त आधुनिक शिक्षा • न्यूनतम शुल्क में सर्वश्रेष्ठ परिणाम",
+    description: "राजस्थान / स्टेट बोर्ड विद्यालयों के लिए विशेष रूप से डिज़ाइन किया गया टेम्पलेट। प्रवेश प्रारंभ, बोर्ड टॉपर्स, और छात्रवृत्ति विवरण।",
+    badge: "State Board (RBSE)",
+    color: "from-amber-500 to-orange-600",
+    recommendedFor: { board: "RBSE", medium: "Hindi" },
+    pages: ["मुख्य पृष्ठ", "परिचय", "प्रवेश 2026-27", "बोर्ड परिणाम (10वीं/12वीं)", "छात्रवृत्ति", "संपर्क"]
+  },
+  {
+    id: "tpl-hindi-medium",
+    name: "आदर्श विद्या निकेतन हिंदी माध्यम विद्यालय",
+    category: "Hindi-Medium School",
+    tagline: "मातृभाषा में गुणवत्तापूर्ण शिक्षा एवं सर्वांगीण विकास",
+    description: "हिंदी माध्यम के लिए पूर्णतः अनुकूलित वेबसाइट टेम्पलेट। देवनागरी लिपि, हिंदी फॉर्म, और सहज नेविगेशन।",
+    badge: "हिंदी माध्यम (कक्षा 1-12)",
+    color: "from-orange-600 to-red-600",
+    recommendedFor: { medium: "Hindi" },
+    pages: ["मुख्य पृष्ठ", "हमारे बारे में", "पाठ्यक्रम व कक्षाएं", "प्रवेश सूचना", "सुविधाएं", "संपर्क करें"]
+  },
+  {
+    id: "tpl-english-medium",
+    name: "St. Xavier's International English Medium Academy",
+    category: "English-Medium School",
+    tagline: "Global Standards, Eloquent Communication & STEM Excellence",
+    description: "English-medium institutional template with global accreditation, debate clubs, coding curriculum, and international student exchange.",
+    badge: "English Medium K-12",
+    color: "from-indigo-600 to-blue-700",
+    recommendedFor: { medium: "English" },
+    pages: ["Home", "About Us", "Curriculum & ICSE/CBSE", "STEM & Robotics", "Co-Curriculars", "Admissions", "Contact"]
+  },
+  {
+    id: "tpl-bilingual-campus",
+    name: "Vivekananda Bilingual Model School (द्विभाषी विद्यालय)",
+    category: "Bilingual School",
+    tagline: "Sanskritik Heritage Meets Modern Global Education • संस्कृति और विज्ञान",
+    description: "Dynamic Hindi-English bilingual presentation with instant language switcher, dual-language navigation, and cultural events showcase.",
+    badge: "Bilingual (Hindi + English)",
+    color: "from-emerald-600 to-indigo-700",
+    recommendedFor: { medium: "Bilingual" },
+    pages: ["Home / मुख्य पृष्ठ", "About / हमारे बारे में", "Academics / शिक्षा", "Admissions / प्रवेश", "Contact / संपर्क"]
   },
   {
     id: "tpl-smart-campus",
@@ -33004,24 +33855,121 @@ app.put("/api/erp/settings", async (req, res) => {
 // =========================================================================
 // ERP_ONBOARDING and ERP_ONBOARDING_INVITATIONS initialized above in automated bootstrapper
 
-function getOrCreateOnboarding(orgId, req) {
+async function getOrCreateOnboarding(orgId, req) {
+  let dbOnboarding = null;
+  let dbOrg = null;
+  let dbSchool = null;
+
+  if (supabase) {
+    try {
+      const { data: onb } = await supabase
+        .from("school_onboarding")
+        .select("*")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (onb) dbOnboarding = onb;
+
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("*")
+        .eq("id", orgId)
+        .maybeSingle();
+      if (org) dbOrg = org;
+
+      const { data: sch } = await supabase
+        .from("schools")
+        .select("*")
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (sch) dbSchool = sch;
+    } catch (_) {}
+  }
+
+  const memOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId);
+  const effectiveOrg = dbOrg || memOrg;
+  const effectiveSchool = dbSchool || {
+    name: effectiveOrg?.name || "School",
+    school_code: effectiveOrg?.tenant_code || "2026100001",
+    board: effectiveOrg?.board || "CBSE"
+  };
+
   if (!ERP_ONBOARDING[orgId]) {
-    ERP_ONBOARDING[orgId] = {
-      id: `onb-${Date.now()}`,
-      organization_id: orgId,
-      school_id: `sch-${Date.now().toString().slice(-6)}`,
-      status: "draft",
-      current_step: 1,
-      completed_steps: [],
-      draft_data: {},
-      started_at: new Date().toISOString(),
-      completed_at: null,
-      activated_at: null,
-      created_by: req.user?.email || "admin@dakshora.com",
-      updated_at: new Date().toISOString()
+    if (dbOnboarding) {
+      ERP_ONBOARDING[orgId] = dbOnboarding;
+    } else {
+      ERP_ONBOARDING[orgId] = {
+        id: `onb-${Date.now()}`,
+        organization_id: orgId,
+        school_id: effectiveSchool.school_code || `sch-${Date.now().toString().slice(-6)}`,
+        status: "draft",
+        current_step: 1,
+        completed_steps: [],
+        draft_data: {},
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        activated_at: null,
+        created_by: req?.user?.email || "admin@dakshora.com",
+        updated_at: new Date().toISOString()
+      };
+    }
+  }
+
+  const onboarding = ERP_ONBOARDING[orgId];
+  if (!onboarding.draft_data) onboarding.draft_data = {};
+
+  // Intelligent prefill from database
+  if (effectiveOrg) {
+    onboarding.draft_data = {
+      organizationId: effectiveOrg.id,
+      tenantId: effectiveOrg.id,
+      tenantCode: effectiveSchool.school_code || onboarding.draft_data.tenantCode || onboarding.draft_data.tenant_code || "2026100001",
+      schoolName: effectiveSchool.name || effectiveOrg.name,
+      slug: effectiveOrg.slug,
+      board: effectiveSchool.board || onboarding.draft_data.board || "CBSE",
+      medium: onboarding.draft_data.medium || "English",
+      schoolType: onboarding.draft_data.schoolType || "Secondary School",
+      schoolHeadRole: onboarding.draft_data.schoolHeadRole || "Principal",
+      principalName: onboarding.draft_data.principalName || "Principal",
+      email: effectiveSchool.email || effectiveOrg.contact_email || onboarding.draft_data.email,
+      phone: effectiveSchool.phone || effectiveOrg.contact_phone || onboarding.draft_data.phone,
+      city: effectiveSchool.city || effectiveOrg.city || "Jaipur",
+      state: effectiveSchool.state || effectiveOrg.state || "Rajasthan",
+      websiteUrl: `https://${effectiveOrg.slug}.school.dakshora.app`,
+      ...onboarding.draft_data
     };
   }
-  return ERP_ONBOARDING[orgId];
+
+  const profile = getSchoolConfigurationProfile(
+    onboarding.draft_data.board || "CBSE",
+    onboarding.draft_data.medium || "English",
+    onboarding.draft_data.schoolType || "Secondary School"
+  );
+
+  onboarding.organizationId = onboarding.organization_id || orgId;
+  onboarding.currentStep = onboarding.current_step;
+  onboarding.data = {
+    ...onboarding.draft_data,
+    basicInfo: {
+      name: onboarding.draft_data.schoolName || effectiveSchool?.name || "School ERP",
+      schoolName: onboarding.draft_data.schoolName || effectiveSchool?.name || "School ERP",
+      slug: onboarding.draft_data.slug || effectiveOrg?.slug || "",
+      tenantCode: onboarding.draft_data.tenantCode || effectiveSchool?.school_code || "2026100001",
+      board: onboarding.draft_data.board || "CBSE",
+      medium: onboarding.draft_data.medium || "English",
+      schoolType: onboarding.draft_data.schoolType || "Secondary School"
+    },
+    academicYear: {
+      name: "2026-2027",
+      startDate: "2026-04-01",
+      endDate: "2027-03-31",
+      isCurrent: true
+    },
+    classes: {
+      classes: profile.classesOffered
+    }
+  };
+
+  return onboarding;
 }
 
 function evaluateOnboardingChecklist(orgId) {
@@ -33157,10 +34105,10 @@ function checkOnboardingAdminRole(req, res) {
 }
 
 // 1. GET /api/erp/onboarding/status - Current status, progress, draft, and checklist
-app.get("/api/erp/onboarding/status", (req, res) => {
+app.get("/api/erp/onboarding/status", async (req, res) => {
   if (!checkOnboardingAdminRole(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const onboarding = getOrCreateOnboarding(orgId, req);
+  const onboarding = await getOrCreateOnboarding(orgId, req);
   const checklist = evaluateOnboardingChecklist(orgId);
   const progressPercentage = Math.round((onboarding.completed_steps.length / 16) * 100);
 
@@ -33197,7 +34145,7 @@ app.get("/api/erp/onboarding/status", (req, res) => {
 app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
   if (!checkOnboardingAdminRole(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const onboarding = getOrCreateOnboarding(orgId, req);
+  const onboarding = await getOrCreateOnboarding(orgId, req);
   const step = parseInt(req.params.step, 10);
 
   if (isNaN(step) || step < 1 || step > 16) {
@@ -33616,16 +34564,33 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
 app.post("/api/erp/onboarding/save-draft", async (req, res) => {
   if (!checkOnboardingAdminRole(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const onboarding = getOrCreateOnboarding(orgId, req);
-  const { currentStep, draftData } = req.body || {};
+  const onboarding = await getOrCreateOnboarding(orgId, req);
+  const stepNum = req.body?.currentStep || req.body?.step;
+  const incomingData = req.body?.draftData || req.body?.data || req.body?.draft_data;
 
-  if (currentStep && currentStep >= 1 && currentStep <= 16) {
-    onboarding.current_step = currentStep;
+  if (stepNum && stepNum >= 1 && stepNum <= 16) {
+    onboarding.current_step = stepNum;
+    onboarding.currentStep = stepNum;
   }
-  if (draftData && typeof draftData === "object") {
-    onboarding.draft_data = { ...onboarding.draft_data, ...draftData };
+  if (incomingData && typeof incomingData === "object") {
+    onboarding.draft_data = { ...onboarding.draft_data, ...incomingData };
+    onboarding.data = { ...(onboarding.data || {}), ...incomingData };
   }
   onboarding.updated_at = new Date().toISOString();
+
+  if (supabase) {
+    try {
+      await supabase.from("school_onboarding").upsert([{
+        id: onboarding.id,
+        organization_id: orgId,
+        status: onboarding.status,
+        current_step: onboarding.current_step,
+        completed_steps: onboarding.completed_steps || [],
+        draft_data: onboarding.draft_data,
+        updated_at: onboarding.updated_at
+      }], { onConflict: "organization_id" });
+    } catch (_) {}
+  }
 
   await recordAuditLog(
     "erp.onboarding_draft_saved",
@@ -33661,7 +34626,7 @@ app.post("/api/erp/onboarding/validate", (req, res) => {
 app.post("/api/erp/onboarding/activate", async (req, res) => {
   if (!checkOnboardingAdminRole(req, res)) return;
   const orgId = resolveTenantOrgId(req);
-  const onboarding = getOrCreateOnboarding(orgId, req);
+  const onboarding = await getOrCreateOnboarding(orgId, req);
   const checklist = evaluateOnboardingChecklist(orgId);
 
   if (!checklist.isReadyForActivation) {
