@@ -864,7 +864,16 @@ app.post("/api/auth/activate-account", async (req, res) => {
           try {
             await supabase.auth.admin.updateUserById(targetUserId, {
               password: password.trim(),
-              email_confirm: true
+              email_confirm: true,
+              user_metadata: {
+                name: invite.name,
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              },
+              app_metadata: {
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              }
             });
           } catch (uErr) {
             console.warn("[Auth Admin Update User Note]:", uErr.message);
@@ -876,7 +885,16 @@ app.post("/api/auth/activate-account", async (req, res) => {
             targetUserId = targetUser.id;
             await supabase.auth.admin.updateUserById(targetUser.id, {
               password: password.trim(),
-              email_confirm: true
+              email_confirm: true,
+              user_metadata: {
+                name: invite.name,
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              },
+              app_metadata: {
+                role: invite.role || "school-admin",
+                organization_id: organizationId
+              }
             });
           } else {
             const { data: created } = await supabase.auth.admin.createUser({
@@ -895,6 +913,11 @@ app.post("/api/auth/activate-account", async (req, res) => {
             });
             if (created?.user) targetUserId = created.user.id;
           }
+        }
+        if (targetUserId && organizationId) {
+          try {
+            await supabase.from("organization_members").upsert([{ user_id: targetUserId, organization_id: organizationId }]);
+          } catch (_) {}
         }
       } catch (authErr) {
         console.warn("[Auth Admin Activation Warning]:", authErr.message);
@@ -1085,17 +1108,47 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
     let userOrgId = data.user.app_metadata?.organization_id || data.user.user_metadata?.organization_id || null;
     if (!isSuperAdmin && !userOrgId && supabase) {
       try {
+        const cleanEmail = data.user.email?.toLowerCase().trim();
         const { data: member } = await supabase.from("organization_members").select("organization_id").eq("user_id", data.user.id).limit(1).maybeSingle();
-        if (member) userOrgId = member.organization_id;
+        if (member?.organization_id) userOrgId = member.organization_id;
+
         if (!userOrgId) {
           const { data: dbUser } = await supabase.from("users").select("organization_id").eq("id", data.user.id).maybeSingle();
           if (dbUser?.organization_id) userOrgId = dbUser.organization_id;
+        }
+
+        if (!userOrgId) {
+          const { data: inv } = await supabase.from("school_onboarding_invitations").select("organization_id").eq("email", cleanEmail).maybeSingle();
+          if (inv?.organization_id) userOrgId = inv.organization_id;
+        }
+
+        if (!userOrgId) {
+          const { data: sch } = await supabase.from("schools").select("organization_id").eq("email", cleanEmail).maybeSingle();
+          if (sch?.organization_id) userOrgId = sch.organization_id;
+        }
+
+        if (!userOrgId) {
+          const { data: onbList } = await supabase.from("school_onboarding").select("organization_id, draft_data").limit(50);
+          const found = onbList?.find(o => o.draft_data?.email?.toLowerCase() === cleanEmail);
+          if (found?.organization_id) userOrgId = found.organization_id;
+        }
+
+        if (userOrgId) {
+          try {
+            await supabase.auth.admin.updateUserById(data.user.id, {
+              app_metadata: { ...(data.user.app_metadata || {}), organization_id: userOrgId },
+              user_metadata: { ...(data.user.user_metadata || {}), organization_id: userOrgId }
+            });
+            await supabase.from("users").upsert([{ id: data.user.id, email: cleanEmail, organization_id: userOrgId }]);
+            await supabase.from("organization_members").upsert([{ user_id: data.user.id, organization_id: userOrgId }]);
+          } catch (_) {}
         }
       } catch (_) {}
     }
 
     let orgInfo = userOrgId ? (IN_MEMORY_ORGANIZATIONS.find(o => o.id === userOrgId) || null) : null;
     let schoolInfo = null;
+    let onbInfo = null;
     if (supabase && userOrgId) {
       try {
         if (!orgInfo) {
@@ -1108,26 +1161,25 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
           }
         }
         const { data: dbSchool } = await supabase.from("schools").select("*").eq("organization_id", userOrgId).maybeSingle();
-        if (dbSchool) {
-          schoolInfo = dbSchool;
-        }
+        if (dbSchool) schoolInfo = dbSchool;
+
+        const { data: dbOnb } = await supabase.from("school_onboarding").select("draft_data").eq("organization_id", userOrgId).maybeSingle();
+        if (dbOnb) onbInfo = dbOnb;
       } catch (_) {}
     }
 
-    if (!orgInfo && userOrgId) {
-      orgInfo = {
-        id: userOrgId,
-        name: schoolInfo?.name || "School Organization",
-        slug: "school",
-        board: schoolInfo?.board || "CBSE",
-        city: "India",
-        branding: {
-          primaryColor: "#4F46E5",
-          logoUrl: "/logo.svg",
-          motto: "Excellence in Education"
-        }
-      };
-    }
+    const draft = onbInfo?.draft_data || {};
+    const resolvedLogo = schoolInfo?.logo_url || orgInfo?.logo_url || draft.logoUrl || draft.logo_url || draft.branding?.logoUrl || "/logo.svg";
+    const resolvedName = schoolInfo?.name || draft.schoolName || orgInfo?.name || "School Organization";
+    const resolvedShortName = schoolInfo?.short_name || draft.shortName || (resolvedName ? resolvedName.slice(0, 10).toUpperCase() : "School");
+    const resolvedBoard = schoolInfo?.board || draft.board || orgInfo?.board || "CBSE";
+    const resolvedAffiliation = schoolInfo?.affiliation_no || draft.affiliationNo || "AFF-2026";
+    const resolvedCode = schoolInfo?.school_code || draft.schoolCode || draft.tenantCode || `SCH-${userOrgId?.slice(0, 6)?.toUpperCase() || "01"}`;
+    const resolvedCity = schoolInfo?.city || draft.city || orgInfo?.city || "Jaipur";
+    const resolvedState = schoolInfo?.state || draft.state || orgInfo?.state || "Rajasthan";
+    const resolvedPrincipal = schoolInfo?.principal_name || draft.principalName || draft.headName || "Principal";
+    const resolvedMotto = draft.motto || draft.tagline || orgInfo?.branding?.motto || "Excellence in Education";
+    const resolvedTheme = draft.themeColor || "indigo";
 
     recordAuditLog("user.login", data.user.email, "user", data.user.id, req);
 
@@ -1147,19 +1199,26 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
         permissions,
         organizationId: userOrgId || null
       },
-      school: (schoolInfo || orgInfo) ? {
-        id: schoolInfo?.id || orgInfo.id,
-        name: schoolInfo?.name || orgInfo.name,
-        schoolName: schoolInfo?.name || orgInfo.name,
-        shortName: schoolInfo?.short_name || orgInfo.name?.split(" ")[0] || "School",
+      school: (schoolInfo || orgInfo || userOrgId) ? {
+        id: schoolInfo?.id || orgInfo?.id || userOrgId,
+        name: resolvedName,
+        schoolName: resolvedName,
+        shortName: resolvedShortName,
         slug: orgInfo?.slug || "school",
-        board: schoolInfo?.board || orgInfo?.board || "CBSE",
-        affiliationNo: schoolInfo?.affiliation_no || schoolInfo?.affiliation_number || "CBSE-AFF-2026",
-        schoolCode: schoolInfo?.school_code || "SCH-01",
-        city: schoolInfo?.city || orgInfo?.city || "India",
-        logoUrl: schoolInfo?.logo_url || orgInfo?.branding?.logoUrl || "/logo.svg",
-        themeColor: "indigo",
-        branding: orgInfo?.branding || { primaryColor: "#4F46E5" }
+        board: resolvedBoard,
+        affiliationNo: resolvedAffiliation,
+        schoolCode: resolvedCode,
+        principalName: resolvedPrincipal,
+        city: resolvedCity,
+        state: resolvedState,
+        motto: resolvedMotto,
+        logoUrl: resolvedLogo,
+        themeColor: resolvedTheme,
+        branding: {
+          primaryColor: resolvedTheme === "emerald" ? "#059669" : resolvedTheme === "crimson" ? "#DC2626" : "#4F46E5",
+          logoUrl: resolvedLogo,
+          motto: resolvedMotto
+        }
       } : null
     });
   } catch (error) {
@@ -7781,47 +7840,76 @@ const TENANT_SETTINGS = new Map();
 const TENANT_ATTENDANCE_SETTINGS = new Map();
 
 async function getTenantSettings(orgId) {
-  if (!orgId) return ERP_SETTINGS;
+  if (!orgId) return { ...ERP_SETTINGS, schoolName: "School Portal", logoUrl: "/logo.svg" };
   if (TENANT_SETTINGS.has(orgId)) {
     return TENANT_SETTINGS.get(orgId);
   }
 
   const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-  let settings = {
-    ...ERP_SETTINGS,
-    schoolName: isSeed ? ERP_SETTINGS.schoolName : "School Academy",
-    schoolCode: isSeed ? ERP_SETTINGS.schoolCode : `SCH-${orgId.slice(0, 6).toUpperCase()}`,
-    organization_id: orgId
-  };
+  if (isSeed) {
+    TENANT_SETTINGS.set(orgId, { ...ERP_SETTINGS, organization_id: orgId });
+    return TENANT_SETTINGS.get(orgId);
+  }
+
+  let dbSchool = null;
+  let dbOrg = null;
+  let dbOnb = null;
 
   if (supabase && orgId) {
     try {
-      const { data: dbSchool } = await supabase
-        .from("schools")
-        .select("*")
-        .eq("organization_id", orgId)
-        .maybeSingle();
-
-      if (dbSchool) {
-        if (dbSchool.name) settings.schoolName = dbSchool.name;
-        if (dbSchool.affiliation_no) settings.affiliationNo = dbSchool.affiliation_no;
-        if (dbSchool.school_code) settings.schoolCode = dbSchool.school_code;
-        if (dbSchool.board) settings.board = dbSchool.board;
-        if (dbSchool.address) settings.address = dbSchool.address;
-        if (dbSchool.phone) settings.contactPhone = dbSchool.phone;
-        if (dbSchool.email) settings.contactEmail = dbSchool.email;
-      }
-
-      const { data: onb } = await supabase
-        .from("school_onboarding")
-        .select("draft_data")
-        .eq("organization_id", orgId)
-        .maybeSingle();
-
-      if (onb?.draft_data?.settings) {
-        settings = { ...settings, ...onb.draft_data.settings };
-      }
+      const [schRes, orgRes, onbRes] = await Promise.all([
+        supabase.from("schools").select("*").eq("organization_id", orgId).maybeSingle(),
+        supabase.from("organizations").select("*").eq("id", orgId).maybeSingle(),
+        supabase.from("school_onboarding").select("draft_data").eq("organization_id", orgId).maybeSingle()
+      ]);
+      dbSchool = schRes?.data;
+      dbOrg = orgRes?.data;
+      dbOnb = onbRes?.data;
     } catch (_) {}
+  }
+
+  const draft = dbOnb?.draft_data || {};
+  const resolvedName = dbSchool?.name || draft.schoolName || dbOrg?.name || "School Academy";
+  const resolvedLogo = dbSchool?.logo_url || dbOrg?.logo_url || draft.logoUrl || draft.logo_url || draft.branding?.logoUrl || "/logo.svg";
+  const resolvedShortName = dbSchool?.short_name || draft.shortName || (dbSchool?.name ? dbSchool.name.slice(0, 10).toUpperCase() : "School");
+  const resolvedBoard = dbSchool?.board || draft.board || dbOrg?.board || "CBSE";
+  const resolvedAffiliation = dbSchool?.affiliation_no || draft.affiliationNo || "AFF-2026";
+  const resolvedCode = dbSchool?.school_code || draft.schoolCode || draft.tenantCode || `SCH-${orgId.slice(0, 6).toUpperCase()}`;
+  const resolvedCity = dbSchool?.city || draft.city || dbOrg?.city || "Jaipur";
+  const resolvedState = dbSchool?.state || draft.state || dbOrg?.state || "Rajasthan";
+  const resolvedAddress = dbSchool?.address || draft.address || `${resolvedCity}, ${resolvedState}`;
+  const resolvedEmail = dbSchool?.email || draft.email || dbOrg?.contact_email || "";
+  const resolvedPhone = dbSchool?.phone || draft.phone || dbOrg?.contact_phone || "";
+  const resolvedPrincipal = dbSchool?.principal_name || draft.principalName || draft.headName || "Principal";
+  const resolvedMotto = draft.motto || draft.tagline || dbOrg?.branding?.motto || "Excellence in Education";
+  const resolvedTheme = draft.themeColor || "indigo";
+
+  let settings = {
+    organization_id: orgId,
+    schoolName: resolvedName,
+    logoUrl: resolvedLogo,
+    shortName: resolvedShortName,
+    board: resolvedBoard,
+    affiliationNo: resolvedAffiliation,
+    schoolCode: resolvedCode,
+    principalName: resolvedPrincipal,
+    contactEmail: resolvedEmail,
+    contactPhone: resolvedPhone,
+    address: resolvedAddress,
+    city: resolvedCity,
+    state: resolvedState,
+    pincode: dbSchool?.pincode || draft.pin || draft.pincode || "",
+    motto: resolvedMotto,
+    themeColor: resolvedTheme,
+    activeSession: "2026-27",
+    sessionStartDate: "2026-04-01",
+    sessionEndDate: "2027-03-31",
+    smsGatewayEnabled: true,
+    upiQrVpa: draft.upiQrVpa || ""
+  };
+
+  if (draft.settings) {
+    settings = { ...settings, ...draft.settings };
   }
 
   TENANT_SETTINGS.set(orgId, settings);
@@ -12372,6 +12460,9 @@ function resolveTenantOrgId(req) {
   // If non-superadmin attempts to specify a different organization than their token's organization, reject
   const userOrgId = req.user?.organizationId || req.user?.organization_id;
   if (reqOrgId && userOrgId && reqOrgId !== userOrgId) {
+    if (reqOrgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+      return userOrgId;
+    }
     return null; // Signals unauthorized cross-tenant attempt, triggering 403
   }
 
@@ -16108,12 +16199,19 @@ app.get("/api/erp/dashboard", async (req, res) => {
   const isDemoOrg = !orgId || orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const resolvedSchoolName = schoolRecord?.name || org?.name || (isDemoOrg ? "Delhi Public Heritage School" : "School Dashboard");
   const resolvedAffiliation = schoolRecord?.affiliation_no || schoolRecord?.affiliation_number || (isDemoOrg ? "CBSE-AFF-2026-DEL-8821" : "CBSE-AFF-2026");
+  const resolvedLogo = schoolRecord?.logo_url || org?.logo_url || "/logo.svg";
 
   const schoolContext = {
     name: resolvedSchoolName,
     schoolName: resolvedSchoolName,
+    shortName: schoolRecord?.short_name || resolvedSchoolName.split(" ")[0] || "School",
+    board: schoolRecord?.board || "CBSE",
+    logoUrl: resolvedLogo,
     campus: schoolRecord?.campus || "Main Campus",
     affiliationNo: resolvedAffiliation,
+    schoolCode: schoolRecord?.school_code || (isDemoOrg ? "DPS-VK-894" : `SCH-${orgId?.slice(0, 6)?.toUpperCase() || "01"}`),
+    city: schoolRecord?.city || org?.city || "Jaipur",
+    state: schoolRecord?.state || org?.state || "Rajasthan",
     academicSession: selectedSession,
     currentDate: selectedDate
   };
@@ -35128,6 +35226,25 @@ app.post("/api/erp/onboarding/save-draft", async (req, res) => {
         draft_data: onboarding.draft_data,
         updated_at: onboarding.updated_at
       }], { onConflict: "organization_id" });
+
+      if (incomingData && (incomingData.logoUrl || incomingData.logo_url || incomingData.schoolName)) {
+        const updateObj = {};
+        if (incomingData.schoolName) updateObj.name = incomingData.schoolName;
+        if (incomingData.logoUrl || incomingData.logo_url) updateObj.logo_url = incomingData.logoUrl || incomingData.logo_url;
+        if (incomingData.board) updateObj.board = incomingData.board;
+        if (incomingData.affiliationNo) updateObj.affiliation_no = incomingData.affiliationNo;
+        if (incomingData.city) updateObj.city = incomingData.city;
+        if (incomingData.address) updateObj.address = incomingData.address;
+        if (Object.keys(updateObj).length > 0) {
+          await supabase.from("schools").update(updateObj).eq("organization_id", orgId);
+          if (updateObj.logo_url || updateObj.name) {
+            const orgUp = {};
+            if (updateObj.name) orgUp.name = updateObj.name;
+            if (updateObj.logo_url) orgUp.logo_url = updateObj.logo_url;
+            await supabase.from("organizations").update(orgUp).eq("id", orgId);
+          }
+        }
+      }
     } catch (_) {}
   }
 
@@ -35204,24 +35321,34 @@ app.post("/api/erp/onboarding/activate", async (req, res) => {
   if (supabase) {
     try {
       const draft = onboarding.draft_data || {};
-      const schoolName = draft.schoolName || ERP_SETTINGS.schoolName || "Delhi Public Heritage School";
-      const schoolCode = (draft.schoolCode || ERP_SETTINGS.schoolCode || `SCH-${Date.now()}`).toUpperCase();
+      const { data: existingSchool } = await supabase.from("schools").select("*").eq("organization_id", orgId).maybeSingle();
+      const { data: existingOrg } = await supabase.from("organizations").select("*").eq("id", orgId).maybeSingle();
+
+      const schoolName = draft.schoolName || existingSchool?.name || existingOrg?.name || "School";
+      const schoolCode = (draft.schoolCode || draft.tenantCode || existingSchool?.school_code || `SCH-${Date.now()}`).toUpperCase();
+      const logoUrl = draft.logoUrl || draft.logo_url || existingSchool?.logo_url || existingOrg?.logo_url || null;
 
       await supabase.from("schools").upsert([{
         organization_id: orgId,
         school_code: schoolCode,
         name: schoolName,
-        short_name: draft.shortName || "DPHS",
-        board: draft.board || "CBSE",
-        affiliation_no: draft.affiliationNo || "CBSE-AFF-2130894",
-        address: draft.address || "Sector 45, Institutional Area",
-        city: draft.city || "Gurugram",
-        state: draft.state || "Haryana",
-        pincode: draft.pin || "122003",
-        phone: draft.phone || "+91 124 456 7890",
-        email: draft.email || "info@dpsheritage.edu.in",
+        short_name: draft.shortName || existingSchool?.short_name || schoolName.slice(0, 10).toUpperCase(),
+        board: draft.board || existingSchool?.board || "CBSE",
+        affiliation_no: draft.affiliationNo || existingSchool?.affiliation_no || null,
+        address: draft.address || existingSchool?.address || null,
+        city: draft.city || existingSchool?.city || "Jaipur",
+        state: draft.state || existingSchool?.state || "Rajasthan",
+        pincode: draft.pin || draft.pincode || existingSchool?.pincode || null,
+        phone: draft.phone || existingSchool?.phone || null,
+        email: draft.email || existingSchool?.email || null,
+        logo_url: logoUrl,
+        website: draft.websiteUrl || existingSchool?.website || null,
         status: "active"
       }], { onConflict: "organization_id" });
+
+      if (logoUrl) {
+        await supabase.from("organizations").update({ logo_url: logoUrl }).eq("id", orgId);
+      }
 
       await supabase.from("academic_sessions").upsert([{
         organization_id: orgId,
