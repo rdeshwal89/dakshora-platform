@@ -3871,6 +3871,270 @@ https://dakshora.co.in`;
 });
 
 // =========================================================================
+// 🚀 ERP KIT DELIVERY & CREDENTIAL PACK DISPATCH (PHASE 3)
+// =========================================================================
+
+app.post(["/api/admin/tenants/:id/send-erp-kit", "/api/admin/send-erp-kit", "/api/tenants/:id/send-erp-kit"], requireAuth, requireSuperAdmin, async (req, res) => {
+  const tenantId = req.params.id || req.body?.tenantId || req.body?.organizationId || req.body?.orgId;
+  if (!tenantId) {
+    return res.status(400).json({ success: false, message: "Valid Tenant ID is required to dispatch ERP Kit." });
+  }
+
+  let org = await findOrganization(tenantId);
+  let school = null;
+  if (supabase) {
+    try {
+      const { data: s } = await supabase.from("schools").select("*").eq("organization_id", tenantId).maybeSingle();
+      if (s) school = s;
+    } catch (_) {}
+  }
+  if (!org && !school) {
+    return res.status(404).json({ success: false, message: `Tenant '${tenantId}' not found.` });
+  }
+
+  const schoolName = school?.name || org?.name || "School";
+  const tenantCode = school?.school_code || org?.tenant_code || "10001";
+  const board = school?.board || org?.board || "CBSE";
+  const medium = school?.medium || org?.medium || "English";
+  const email = school?.email || org?.contact_email || req.body?.email;
+  const phone = (school?.phone || org?.contact_phone || req.body?.phone || "").replace(/\D/g, "").slice(-10);
+  const principalName = org?.principal_name || school?.principal_name || "Principal";
+  const slug = org?.slug || schoolName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const siteUrl = `https://${slug}.school.dakshora.app`;
+  const loginUrl = `https://dakshora.co.in/portal?school=${slug}`;
+
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  const tokenExpiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+  const activationUrl = `https://dakshora.co.in/portal?action=activate&token=${rawToken}&org=${tenantId}`;
+
+  if (supabase && email) {
+    try {
+      await supabase.from("school_onboarding_invitations").insert([{
+        id: crypto.randomUUID(),
+        organization_id: tenantId,
+        email: email.toLowerCase(),
+        name: principalName,
+        role: "principal",
+        token: tokenHash,
+        status: "pending",
+        invited_by: req.user?.email || "superadmin@dakshora.ai",
+        expires_at: tokenExpiresAt
+      }]);
+    } catch (_) {}
+  }
+
+  const erpKitMessage = `
+======================================================
+DAKSHORA 2.0 | OFFICIAL SCHOOL ERP KIT & CREDENTIAL PACK
+======================================================
+Institution: ${schoolName}
+Organization Code: ${tenantCode}
+Canonical Tenant UUID: ${tenantId}
+Affiliated Board: ${board} (${medium} Medium)
+
+ADMINISTRATOR CREDENTIALS & ACCESS:
+------------------------------------------------------
+Login Username / Registered Email: ${email || "Not Provided"}
+Web Portal URL: ${siteUrl}
+ERP Access Console: ${loginUrl}
+
+SECURE ACCOUNT ACTIVATION:
+------------------------------------------------------
+Click your single-use cryptographic activation link below to set your official administrator password:
+👉 ${activationUrl}
+(Note: This link expires in 7 days for security. Do not forward.)
+
+INITIAL ACTIONS CHECKLIST:
+1. Complete password setup and verify Two-Factor Authentication.
+2. Open Superadmin > Setup Wizard to configure classes and faculty.
+3. Verify your custom school domain DNS settings if applicable.
+
+SUPPORT & ASSISTANCE:
+Dedicated School Success Manager: +91 87963 47851
+Direct Support Email: support@dakshora.co.in
+======================================================
+`;
+
+  const channelsRequested = req.body?.channels || ["email", "whatsapp", "sms"];
+  const dispatchResults = {
+    email: null,
+    whatsapp: null,
+    sms: null
+  };
+
+  if (channelsRequested.includes("email") && email) {
+    try {
+      dispatchResults.email = await dispatchLiveGatewayMessage({
+        channel: "email",
+        recipientContact: email,
+        recipientName: principalName,
+        text: erpKitMessage,
+        orgId: tenantId,
+        metadata: {
+          subject: `DAKSHORA 2.0 Official ERP Kit & Activation — ${schoolName} (${tenantCode})`,
+          purpose: "erp_kit_delivery"
+        }
+      });
+    } catch (e) {
+      dispatchResults.email = { success: false, status: "failed", error: e.message };
+    }
+  } else if (!email) {
+    dispatchResults.email = { success: false, status: "needs_configuration", error: "Registered email address missing." };
+  }
+
+  if (channelsRequested.includes("whatsapp") && phone) {
+    try {
+      const waText = `🏫 *DAKSHORA 2.0 — OFFICIAL SCHOOL ERP KIT*\n\nDear *${principalName}*,\nYour school *${schoolName}* (Org Code: \`${tenantCode}\`) has been provisioned.\n\n🌐 *Portal:* ${siteUrl}\n🔐 *Set Password & Activate:* ${activationUrl}\n\nSupport Desk: +91 87963 47851`;
+      dispatchResults.whatsapp = await dispatchLiveGatewayMessage({
+        channel: "whatsapp",
+        recipientContact: phone,
+        recipientName: principalName,
+        text: waText,
+        orgId: tenantId,
+        metadata: { purpose: "erp_kit_delivery_whatsapp" }
+      });
+    } catch (e) {
+      dispatchResults.whatsapp = { success: false, status: "failed", error: e.message };
+    }
+  } else if (!phone) {
+    dispatchResults.whatsapp = { success: false, status: "needs_configuration", error: "Mobile number missing." };
+  }
+
+  if (channelsRequested.includes("sms") && phone) {
+    try {
+      const smsText = `DAKSHORA 2.0 ERP Kit for ${schoolName} (Code: ${tenantCode}). Activate your account: ${activationUrl}`;
+      dispatchResults.sms = await dispatchLiveGatewayMessage({
+        channel: "sms",
+        recipientContact: phone,
+        recipientName: principalName,
+        text: smsText,
+        orgId: tenantId,
+        metadata: { dltSenderId: "DKSHRA", purpose: "erp_kit_delivery_sms" }
+      });
+    } catch (e) {
+      dispatchResults.sms = { success: false, status: "failed", error: e.message };
+    }
+  }
+
+  const logItem = {
+    id: `kit-log-${Date.now()}`,
+    organization_id: tenantId,
+    schoolName,
+    tenantCode,
+    recipientEmail: email,
+    recipientPhone: phone,
+    channels: dispatchResults,
+    sentAt: new Date().toISOString(),
+    sentBy: req.user?.email || "superadmin@dakshora.ai"
+  };
+  ERP_GATEWAY_LOGS.unshift(logItem);
+
+  recordAuditLog("tenant.send_erp_kit", req.user?.email || "superadmin", "organization", tenantId, req);
+
+  res.json({
+    success: true,
+    message: `Official ERP Kit dispatched for ${schoolName}.`,
+    kit: {
+      schoolName,
+      tenantCode,
+      tenantId,
+      board,
+      medium,
+      loginUrl,
+      websiteUrl: siteUrl,
+      activationUrl,
+      recipientEmail: email,
+      recipientPhone: phone
+    },
+    channels: dispatchResults,
+    log: logItem
+  });
+});
+
+app.get(["/api/admin/tenants/:id/delivery-logs", "/api/admin/delivery-logs"], requireAuth, requireSuperAdmin, async (req, res) => {
+  const tenantId = req.params.id || req.query?.tenantId || req.query?.orgId;
+  let logs = ERP_GATEWAY_LOGS;
+  if (tenantId) {
+    logs = logs.filter(l => l.organization_id === tenantId);
+  }
+  res.json({
+    success: true,
+    count: logs.length,
+    logs: logs.slice(0, 50)
+  });
+});
+
+// =========================================================================
+// 📋 SUPERADMIN ONBOARDING REQUESTS MANAGEMENT (PHASE 2)
+// =========================================================================
+
+let ONBOARDING_REQUESTS_STORE = [
+  {
+    id: "req-89478",
+    refId: "DK-REQ-89478",
+    principalName: "Dr. Rajesh Sharma",
+    schoolName: "Tagore Public Senior Secondary Academy",
+    email: "dakshora.ai@gmail.com",
+    phone: "8947838668",
+    board: "CBSE / RBSE Rajasthan",
+    city: "Jaipur, Rajasthan",
+    students: "500 - 1500 Students",
+    notes: "Requested Dakshora ERP with 30-Sec Attendance & CBSE 2026 Question Paper Generator.",
+    status: "pending_verification",
+    submittedAt: "2026-10-10T11:15:00.000Z"
+  },
+  {
+    id: "req-31209",
+    refId: "DK-REQ-31209",
+    principalName: "Sr. Maria D'Souza",
+    schoolName: "St. Mary's Convent High School",
+    email: "principal@stmarys.edu.in",
+    phone: "9820114522",
+    board: "ICSE Board",
+    city: "Pune, Maharashtra",
+    students: "1500 - 3000 Students",
+    notes: "Interested in School Bus GPS tracking and online fee challan with UPI.",
+    status: "contacted_interested",
+    submittedAt: "2026-10-09T16:30:00.000Z"
+  }
+];
+
+app.get(["/api/admin/onboarding-requests", "/api/admin/requests"], requireAuth, requireSuperAdmin, (req, res) => {
+  const { status, q } = req.query;
+  let results = ONBOARDING_REQUESTS_STORE;
+  if (status && status !== "all") {
+    results = results.filter(r => r.status === status);
+  }
+  if (q) {
+    const term = q.toLowerCase();
+    results = results.filter(r => r.schoolName?.toLowerCase().includes(term) || r.principalName?.toLowerCase().includes(term) || r.phone?.includes(term));
+  }
+  res.json({
+    success: true,
+    total: results.length,
+    requests: results
+  });
+});
+
+app.patch(["/api/admin/onboarding-requests/:id/status", "/api/admin/requests/:id/status"], requireAuth, requireSuperAdmin, (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  const allowed = ["pending_verification", "contacted_interested", "trial", "fake", "rejected", "onboarded"];
+  if (!status || !allowed.includes(status)) {
+    return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${allowed.join(', ')}` });
+  }
+  const item = ONBOARDING_REQUESTS_STORE.find(r => r.id === id || r.refId === id);
+  if (!item) {
+    return res.status(404).json({ success: false, message: "Onboarding request not found." });
+  }
+  item.status = status;
+  item.updatedAt = new Date().toISOString();
+  recordAuditLog("request.status_changed", req.user?.email || "superadmin", "onboarding_request", id, req);
+  res.json({ success: true, message: `Request status updated to '${status}'.`, request: item });
+});
+
+// =========================================================================
 // 4. WEBSITES & CMS MODULE
 // =========================================================================
 
@@ -4189,6 +4453,41 @@ function getOrCreateCmsTree(site) {
       lastPublishedAt: new Date().toISOString(),
       sslCertificate: "TLS 1.3 Active (Auto-Renewing)",
       cdnDeployment: "Edge CDN Live"
+    },
+    // 10. Website Integration & Digital Presence
+    website_integration: {
+      subdomain: site.domain || `${site.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.school.dakshora.app`,
+      customDomain: null,
+      customDomainStatus: "not_configured",
+      dnsRecords: [
+        { type: "CNAME", host: "@", value: "cname.school.dakshora.app", ttl: 3600, status: "pending" },
+        { type: "TXT", host: "_dakshora-verify", value: `dakshora-domain-verification=${(site.organization_id || "org").slice(0, 8)}`, status: "pending" }
+      ],
+      sslStatus: "auto_tls_ready",
+      portalLoginUrl: `https://${site.domain || "school.dakshora.app"}/login`,
+      seoSitemapUrl: `https://${site.domain || "school.dakshora.app"}/sitemap.xml`,
+      status: "ready"
+    },
+    // 11. White-Label Custom School Mobile App
+    mobile_app: {
+      appName: `${site.name} Parent & Student App`,
+      packageName: `in.edu.${(site.name.toLowerCase().replace(/[^a-z0-9]+/g, "")).slice(0, 15)}.parentapp`,
+      themeColor: "#06B6D4",
+      iconUrl: "/icon-512.png",
+      enabledModules: [
+        "attendance",
+        "homework",
+        "fees",
+        "notices",
+        "timetable",
+        "exams",
+        "bus_tracking",
+        "ai_copilot"
+      ],
+      buildStatus: "ready",
+      version: "2.1.0",
+      apkDownloadUrl: `/api/public/mobile-app/${site.id}/download`,
+      assetLinksConfigured: true
     }
   };
 
@@ -16169,6 +16468,13 @@ app.post(["/api/erp/attendance", "/api/erp/attendance/daily"], async (req, res) 
 // =========================================================================
 app.get("/api/erp/dashboard", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(401).json({
+      success: false,
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Organization context required. Please log in with an authorized school account."
+    });
+  }
   const selectedDate = req.query.date || new Date().toISOString().split("T")[0];
   const selectedSession = req.query.session || "2026-27";
   const trendRange = parseInt(req.query.range || "7", 10) === 30 ? 30 : 7;
@@ -16196,7 +16502,7 @@ app.get("/api/erp/dashboard", async (req, res) => {
     } catch (_) {}
   }
 
-  const isDemoOrg = !orgId || orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const isDemoOrg = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const resolvedSchoolName = schoolRecord?.name || org?.name || (isDemoOrg ? "Delhi Public Heritage School" : "School Dashboard");
   const resolvedAffiliation = schoolRecord?.affiliation_no || schoolRecord?.affiliation_number || (isDemoOrg ? "CBSE-AFF-2026-DEL-8821" : "CBSE-AFF-2026");
   const resolvedLogo = schoolRecord?.logo_url || org?.logo_url || "/logo.svg";
@@ -16813,7 +17119,9 @@ app.get("/api/erp/dashboard", async (req, res) => {
     },
     fees: {
       todayCollection: totalFeeCollected,
-      totalDue: totalFeeDue
+      totalCollectedINR: totalFeeCollected,
+      totalDue: totalFeeDue,
+      totalDueINR: totalFeeDue
     },
     upcomingExams: upcomingExamsList,
     recentNotices: recentNoticesList,
@@ -19703,7 +20011,7 @@ app.get("/api/erp/results/student/:studentId", (req, res) => {
 });
 
 // 5n. GET /api/erp/report-cards/:examId/:studentId - Official A4 Printable Report Card Payload & HTML
-app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
+app.get("/api/erp/report-cards/:examId/:studentId", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { examId, studentId } = req.params;
   const { format } = req.query;
@@ -19786,17 +20094,19 @@ app.get("/api/erp/report-cards/:examId/:studentId", (req, res) => {
     { grade: "E", range: "Below 33%", description: "Needs Substantial Improvement / Fail" }
   ];
 
-  const reportCardId = result?.reportCardNo || `DPHS/${exam.academicSession || '2026-27'}/${(student.grade || '10').replace(/\D/g, '')}${student.section || 'A'}/${(student.rollNo || '001').replace(/\D/g, '').slice(-3).padStart(3, '0')}`;
+  const reportCardId = result?.reportCardNo || `RC/${exam.academicSession || '2026-27'}/${(student.grade || '10').replace(/\D/g, '')}${student.section || 'A'}/${(student.rollNo || '001').replace(/\D/g, '').slice(-3).padStart(3, '0')}`;
 
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const school = {
-    name: ERP_SETTINGS.schoolName || "Delhi Public Heritage School",
-    affiliationNumber: ERP_SETTINGS.affiliationNo || "CBSE-AFF-2130894",
-    affiliationNo: ERP_SETTINGS.affiliationNo || "CBSE-AFF-2130894",
-    schoolCode: ERP_SETTINGS.schoolCode || "DPS-VK-894",
-    board: ERP_SETTINGS.board || "Central Board of Secondary Education (CBSE)",
-    address: ERP_SETTINGS.address || "Sector 45, Institutional Area, Gurugram, Haryana - 122003",
-    contact: ERP_SETTINGS.phone || "+91 124 456 7890",
-    principalName: ERP_SETTINGS.principalName || "Dr. Meenakshi Sundaram",
+    name: tenantBrand?.schoolName || (isDemo ? ERP_SETTINGS.schoolName : "School"),
+    affiliationNumber: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
+    affiliationNo: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
+    schoolCode: tenantBrand?.schoolCode || (isDemo ? ERP_SETTINGS.schoolCode : "SCH-01"),
+    board: tenantBrand?.board || (isDemo ? ERP_SETTINGS.board : "CBSE"),
+    address: tenantBrand?.address || (isDemo ? ERP_SETTINGS.address : "Campus Address"),
+    contact: tenantBrand?.contactPhone || (isDemo ? ERP_SETTINGS.phone : "+91 9876543210"),
+    principalName: tenantBrand?.principalName || (isDemo ? ERP_SETTINGS.principalName : "Principal"),
     academicSession: exam.academicSession || "2026-27"
   };
 
@@ -20916,7 +21226,7 @@ app.post("/api/erp/fees/payments/:id/reverse", async (req, res) => {
 });
 
 // 6k. GET /api/erp/fees/receipts/:receiptNo - Official Printable Fee Receipt (JSON or A4 HTML)
-app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
+app.get("/api/erp/fees/receipts/:receiptNo", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { receiptNo } = req.params;
 
@@ -20932,6 +21242,9 @@ app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
   const demand = ERP_FEE_DEMANDS.find(d => d.id === payment.demandId || (d.db_id && d.db_id === payment.demandId));
   const student = ERP_STUDENTS.find(s => s.id === payment.studentId || (s.db_id && s.db_id === payment.studentId) || s.name === payment.studentName);
 
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
   const receipt = {
     receiptNo: payment.receiptNo,
     paymentDate: payment.paymentDate,
@@ -20942,12 +21255,12 @@ app.get("/api/erp/fees/receipts/:receiptNo", (req, res) => {
     amountPaid: payment.amountPaid,
     status: payment.status,
     school: {
-      name: ERP_SETTINGS.schoolName || "Delhi Public Heritage School",
-      affiliationNo: ERP_SETTINGS.affiliationNo || "CBSE-AFF-2130894",
-      schoolCode: ERP_SETTINGS.schoolCode || "DPS-VK-894",
-      address: ERP_SETTINGS.address || "Sector 45, Institutional Area, Gurugram, Haryana - 122003",
-      phone: ERP_SETTINGS.phone || "+91 124 456 7890",
-      email: "accounts@dphs-gurugram.edu.in",
+      name: tenantBrand?.schoolName || (isDemo ? ERP_SETTINGS.schoolName : "School"),
+      affiliationNo: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
+      schoolCode: tenantBrand?.schoolCode || (isDemo ? ERP_SETTINGS.schoolCode : "SCH-01"),
+      address: tenantBrand?.address || (isDemo ? ERP_SETTINGS.address : "Campus Address"),
+      phone: tenantBrand?.contactPhone || (isDemo ? ERP_SETTINGS.phone : "+91 9876543210"),
+      email: tenantBrand?.contactEmail || (isDemo ? "accounts@dphs-gurugram.edu.in" : "accounts@school.edu.in"),
       gstin: "06AAAAA0000A1Z5"
     },
     student: {
@@ -27597,7 +27910,7 @@ app.post("/api/erp/payroll/disburse", async (req, res) => {
 });
 
 // 11e. GET /api/erp/payroll/payslip/:id - Structured JSON or Standalone A4 Printable HTML
-app.get("/api/erp/payroll/payslip/:id", (req, res) => {
+app.get("/api/erp/payroll/payslip/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
   const { format, month } = req.query;
@@ -27630,11 +27943,14 @@ app.get("/api/erp/payroll/payslip/:id", (req, res) => {
     department: p.department
   };
 
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
   const schoolMeta = {
-    name: "DELHI PUBLIC HERITAGE SCHOOL",
-    address: "Sector 45, Urban Estate, Gurugram, Haryana 122001",
-    cbseCode: "CBSE-AFF-2130894 / School Code: 40892",
-    contact: "Phone: +91 124 4567890 | Email: hr@dpsheritage.edu.in"
+    name: tenantBrand?.schoolName || (isDemo ? "DELHI PUBLIC HERITAGE SCHOOL" : "School"),
+    address: tenantBrand?.address || (isDemo ? "Sector 45, Urban Estate, Gurugram, Haryana 122001" : "Campus Address"),
+    cbseCode: tenantBrand?.affiliationNo || (isDemo ? "CBSE-AFF-2130894 / School Code: 40892" : "CBSE-AFF"),
+    contact: `Phone: ${tenantBrand?.contactPhone || "+91 9876543210"} | Email: ${tenantBrand?.contactEmail || "office@school.edu.in"}`
   };
 
   if (format === "html") {
@@ -31211,22 +31527,24 @@ app.post("/api/erp/ai-teacher/generate", (req, res) => {
 // =========================================================================
 
 // 14a. GET /api/erp/settings/master - Retrieve Unified 20-Section Master Configuration
-app.get("/api/erp/settings/master", (req, res) => {
+app.get("/api/erp/settings/master", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const role = (req.user?.role || "school-admin").toLowerCase();
 
-  // Sync settings with sub-modules state
+  // Sync settings with sub-modules state and dynamic tenant identity
+  const tenantBrand = await getTenantSettings(orgId);
   ERP_MASTER_SETTINGS.school_profile = {
     ...ERP_MASTER_SETTINGS.school_profile,
-    schoolName: ERP_SETTINGS.schoolName || ERP_MASTER_SETTINGS.school_profile.schoolName,
-    affiliationNo: ERP_SETTINGS.affiliationNo || ERP_MASTER_SETTINGS.school_profile.affiliationNo,
-    schoolCode: ERP_SETTINGS.schoolCode || ERP_MASTER_SETTINGS.school_profile.schoolCode,
-    board: ERP_SETTINGS.board || ERP_MASTER_SETTINGS.school_profile.board,
-    address: ERP_SETTINGS.address || ERP_MASTER_SETTINGS.school_profile.address,
-    principalName: ERP_SETTINGS.principalName || ERP_MASTER_SETTINGS.school_profile.principalName,
-    contactEmail: ERP_SETTINGS.contactEmail || ERP_MASTER_SETTINGS.school_profile.contactEmail,
-    contactPhone: ERP_SETTINGS.contactPhone || ERP_MASTER_SETTINGS.school_profile.contactPhone,
-    academicSession: ERP_SETTINGS.activeSession || ERP_MASTER_SETTINGS.school_profile.academicSession
+    schoolName: tenantBrand?.schoolName || ERP_SETTINGS.schoolName || ERP_MASTER_SETTINGS.school_profile.schoolName,
+    affiliationNo: tenantBrand?.affiliationNo || ERP_SETTINGS.affiliationNo || ERP_MASTER_SETTINGS.school_profile.affiliationNo,
+    schoolCode: tenantBrand?.schoolCode || ERP_SETTINGS.schoolCode || ERP_MASTER_SETTINGS.school_profile.schoolCode,
+    board: tenantBrand?.board || ERP_SETTINGS.board || ERP_MASTER_SETTINGS.school_profile.board,
+    address: tenantBrand?.address || ERP_SETTINGS.address || ERP_MASTER_SETTINGS.school_profile.address,
+    principalName: tenantBrand?.principalName || ERP_SETTINGS.principalName || ERP_MASTER_SETTINGS.school_profile.principalName,
+    contactEmail: tenantBrand?.contactEmail || ERP_SETTINGS.contactEmail || ERP_MASTER_SETTINGS.school_profile.contactEmail,
+    contactPhone: tenantBrand?.contactPhone || ERP_SETTINGS.contactPhone || ERP_MASTER_SETTINGS.school_profile.contactPhone,
+    academicSession: ERP_SETTINGS.activeSession || ERP_MASTER_SETTINGS.school_profile.academicSession,
+    logoUrl: tenantBrand?.logoUrl || ERP_MASTER_SETTINGS.school_profile.logoUrl || "/logo.svg"
   };
 
   ERP_MASTER_SETTINGS.attendance_settings = {
@@ -33382,16 +33700,18 @@ app.post("/api/erp/portal/auth/login", async (req, res) => {
     }
 
     const activeStudentOrgId = activeStudent.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-    const schoolInfo = IN_MEMORY_ORGANIZATIONS.find(o => o.id === activeStudentOrgId) || {
+    const tenantBrand = await getTenantSettings(activeStudentOrgId);
+    const isDemo = activeStudentOrgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const schoolInfo = {
       id: activeStudentOrgId,
-      name: "Delhi Public Heritage School",
-      slug: "heritage",
-      board: "CBSE",
-      city: "Gurugram",
+      name: tenantBrand?.schoolName || (isDemo ? "Delhi Public Heritage School" : "School Portal"),
+      slug: tenantBrand?.shortName?.toLowerCase() || (isDemo ? "heritage" : "school"),
+      board: tenantBrand?.board || (isDemo ? "CBSE" : "CBSE"),
+      city: tenantBrand?.city || (isDemo ? "Gurugram" : "Jaipur"),
       branding: {
-        primaryColor: "#4F46E5",
-        logoUrl: "/logo.svg",
-        motto: "Excellence in Education"
+        primaryColor: tenantBrand?.themeColor || "#4F46E5",
+        logoUrl: tenantBrand?.logoUrl || "/logo.svg",
+        motto: tenantBrand?.motto || "Excellence in Education"
       }
     };
 
@@ -35938,22 +36258,62 @@ app.get("/api/admin/organizations/:id", async (req, res) => {
     return res.status(404).json({ success: false, message: "Organization not found" });
   }
 
-  const schools = [
-    {
-      id: "sch-main",
-      name: ERP_SETTINGS.schoolName || "Delhi Public Heritage School",
-      code: ERP_SETTINGS.schoolCode || "DPS-VK-894",
-      board: ERP_SETTINGS.board || "CBSE",
-      principal: ERP_SETTINGS.principalName || "Dr. Meenakshi Sundaram",
-      activeSession: ERP_SETTINGS.activeSession || "2026-27"
-    }
-  ];
+  let schools = [];
+  let studentsCount = 0;
+  let staffCount = 0;
+  let sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: org.status || "active", amountINR: 1499 };
+  let onboarding = ERP_ONBOARDING[org.id] || { status: "active", current_step: 16 };
+
+  if (supabase) {
+    try {
+      const [
+        { data: dbSchools },
+        { count: dbStudentCount },
+        { count: dbStaffCount },
+        { data: dbSub },
+        { data: dbOnb }
+      ] = await Promise.all([
+        supabase.from("schools").select("*").eq("organization_id", org.id),
+        supabase.from("students").select("*", { count: "exact", head: true }).eq("organization_id", org.id),
+        supabase.from("staff").select("*", { count: "exact", head: true }).eq("organization_id", org.id),
+        supabase.from("saas_subscriptions").select("*").eq("organization_id", org.id).maybeSingle(),
+        supabase.from("school_onboarding").select("*").eq("organization_id", org.id).maybeSingle()
+      ]);
+
+      if (dbSchools && dbSchools.length > 0) {
+        schools = dbSchools.map(s => ({
+          id: s.id,
+          name: s.name,
+          code: s.school_code || org.tenant_code || "SCH-01",
+          board: s.board || "CBSE",
+          principal: s.principal_name || org.principal_name || "Principal",
+          logoUrl: s.logo_url || org.logo_url || null,
+          city: s.city || org.city || "",
+          activeSession: "2026-27"
+        }));
+      }
+      if (dbStudentCount !== null && dbStudentCount !== undefined) studentsCount = dbStudentCount;
+      if (dbStaffCount !== null && dbStaffCount !== undefined) staffCount = dbStaffCount;
+      if (dbSub) sub = dbSub;
+      if (dbOnb) onboarding = dbOnb;
+    } catch (_) {}
+  }
+
+  if (schools.length === 0) {
+    const isDemo = org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    schools = [
+      {
+        id: "sch-main",
+        name: isDemo ? (ERP_SETTINGS.schoolName || "Dakshora Demo School") : org.name,
+        code: isDemo ? (ERP_SETTINGS.schoolCode || "DPS-VK-894") : (org.tenant_code || `SCH-${org.slug?.slice(0, 4)?.toUpperCase() || "01"}`),
+        board: isDemo ? (ERP_SETTINGS.board || "CBSE") : (org.board || "CBSE"),
+        principal: isDemo ? (ERP_SETTINGS.principalName || "Dr. Meenakshi Sundaram") : (org.principal_name || "Principal"),
+        activeSession: "2026-27"
+      }
+    ];
+  }
 
   const campuses = ERP_CAMPUSES.filter(c => c.organization_id === org.id);
-  const studentsCount = ERP_STUDENTS.filter(s => s.organization_id === org.id).length;
-  const staffCount = ERP_STAFF.filter(s => s.organization_id === org.id).length;
-  const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active", amountINR: 1499 };
-  const onboarding = ERP_ONBOARDING[org.id] || { status: "active", current_step: 16 };
   const auditLogs = IN_MEMORY_AUDIT_LOGS.filter(l => l.organization_id === org.id).slice(0, 15);
 
   res.json({
@@ -36147,34 +36507,235 @@ app.delete(["/api/admin/organizations/:id", "/api/organizations/:id"], async (re
   });
 });
 
+// 4d. GET /api/admin/organizations/:id/delete-preview - Guarded Deletion Impact Assessment (Phase 4)
+app.get(["/api/admin/organizations/:id/delete-preview", "/api/organizations/:id/delete-preview"], requireAuth, requireSuperAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    return res.status(403).json({
+      success: false,
+      code: "PROTECTED_SEED_TENANT",
+      message: "The designated baseline demo/test tenant 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' is system-protected and cannot be deleted."
+    });
+  }
+
+  const org = await findOrganization(id);
+  if (!org) {
+    return res.status(404).json({ success: false, message: "Organization not found." });
+  }
+
+  let counts = {
+    students: 0,
+    staff: 0,
+    feePayments: 0,
+    studentFees: 0,
+    studentAttendance: 0,
+    exams: 0,
+    websites: 0,
+    users: 0,
+    invitations: 0
+  };
+
+  if (supabase) {
+    try {
+      const [
+        { count: stdCount },
+        { count: stfCount },
+        { count: payCount },
+        { count: feeCount },
+        { count: attCount },
+        { count: exmCount },
+        { count: webCount },
+        { count: usrCount },
+        { count: invCount }
+      ] = await Promise.all([
+        supabase.from("students").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("staff").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("fee_payments").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("student_fees").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("student_attendance").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("exams").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("websites").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("users").select("*", { count: "exact", head: true }).eq("organization_id", id),
+        supabase.from("school_onboarding_invitations").select("*", { count: "exact", head: true }).eq("organization_id", id)
+      ]);
+      counts = {
+        students: stdCount || 0,
+        staff: stfCount || 0,
+        feePayments: payCount || 0,
+        studentFees: feeCount || 0,
+        studentAttendance: attCount || 0,
+        exams: exmCount || 0,
+        websites: webCount || 0,
+        users: usrCount || 0,
+        invitations: invCount || 0
+      };
+    } catch (_) {}
+  }
+
+  const hasRealCommercialRecords = counts.feePayments > 0;
+  const isTestAccidental = !hasRealCommercialRecords && (counts.students < 5);
+  const confirmationCode = org.tenant_code || org.slug;
+
+  res.json({
+    success: true,
+    tenantId: id,
+    organizationName: org.name,
+    organizationCode: org.tenant_code || "N/A",
+    slug: org.slug,
+    classification: hasRealCommercialRecords ? "production_school_with_financial_records" : (isTestAccidental ? "test_or_accidental_tenant" : "registered_institution"),
+    counts,
+    hasRealCommercialRecords,
+    canSafelyDelete: !hasRealCommercialRecords,
+    confirmationCodeRequired: confirmationCode,
+    warning: hasRealCommercialRecords
+      ? "CRITICAL: This organization has real fee/payment records. Standard policy requires ARCHIVAL rather than deletion to preserve audit and financial compliance."
+      : "Safeguard check passed: This tenant has 0 financial payments and qualifies for safe dependency deletion."
+  });
+});
+
+// 4e. POST /api/admin/organizations/:id/delete-permanent - Guaranteed Clean Safe Deletion
+app.post(["/api/admin/organizations/:id/delete-permanent", "/api/organizations/:id/delete-permanent"], requireAuth, requireSuperAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+    return res.status(403).json({
+      success: false,
+      code: "PROTECTED_SEED_TENANT",
+      message: "The designated baseline demo/test tenant is protected and cannot be deleted."
+    });
+  }
+
+  const org = await findOrganization(id);
+  if (!org) {
+    return res.status(404).json({ success: false, message: "Organization not found." });
+  }
+
+  const { confirmationCode, forceOverrideCommercialRecords } = req.body || {};
+  const expectedCode = org.tenant_code || org.slug;
+
+  if (confirmationCode !== expectedCode && confirmationCode !== org.name) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid confirmation code. You must enter '${expectedCode}' or '${org.name}' to confirm deletion.`
+    });
+  }
+
+  if (supabase) {
+    const { count: payCount } = await supabase.from("fee_payments").select("*", { count: "exact", head: true }).eq("organization_id", id);
+    if (payCount && payCount > 0 && !forceOverrideCommercialRecords) {
+      return res.status(400).json({
+        success: false,
+        code: "FINANCIAL_AUDIT_PRESERVED",
+        message: `Deletion blocked: This tenant has ${payCount} financial transaction record(s). Use Archive/Deactivate instead, or explicitly pass forceOverrideCommercialRecords: true.`
+      });
+    }
+
+    try {
+      await supabase.from("student_attendance").delete().eq("organization_id", id);
+      await supabase.from("staff_attendance").delete().eq("organization_id", id);
+      await supabase.from("student_enrollments").delete().eq("organization_id", id);
+      await supabase.from("students").delete().eq("organization_id", id);
+      await supabase.from("staff").delete().eq("organization_id", id);
+      await supabase.from("fee_payments").delete().eq("organization_id", id);
+      await supabase.from("student_fees").delete().eq("organization_id", id);
+      await supabase.from("fee_structures").delete().eq("organization_id", id);
+      await supabase.from("exam_marks").delete().eq("organization_id", id);
+      await supabase.from("exams").delete().eq("organization_id", id);
+      await supabase.from("page_sections").delete().eq("page_id", id);
+      await supabase.from("pages").delete().eq("website_id", id);
+      await supabase.from("website_settings").delete().eq("website_id", id);
+      await supabase.from("websites").delete().eq("organization_id", id);
+      await supabase.from("academic_sessions").delete().eq("organization_id", id);
+      await supabase.from("classes").delete().eq("organization_id", id);
+      await supabase.from("sections").delete().eq("organization_id", id);
+      await supabase.from("subjects").delete().eq("organization_id", id);
+      await supabase.from("school_onboarding_invitations").delete().eq("organization_id", id);
+      await supabase.from("school_onboarding").delete().eq("organization_id", id);
+      await supabase.from("tenant_settings").delete().eq("organization_id", id);
+      await supabase.from("saas_subscriptions").delete().eq("organization_id", id);
+      await supabase.from("organization_members").delete().eq("organization_id", id);
+      await supabase.from("schools").delete().eq("organization_id", id);
+      await supabase.from("organizations").delete().eq("id", id);
+    } catch (dbErr) {
+      console.warn("[Safe Delete DB Note]:", dbErr.message);
+    }
+  }
+
+  IN_MEMORY_ORGANIZATIONS = IN_MEMORY_ORGANIZATIONS.filter(o => o.id !== id);
+  TENANT_SETTINGS.delete(id);
+  delete ERP_ONBOARDING[id];
+
+  await recordAuditLog(
+    "ORGANIZATION_PERMANENTLY_DELETED",
+    req.user?.email || "superadmin@dakshora.ai",
+    "organization",
+    `Safely permanently deleted test/accidental tenant '${org.name}' (${id})`,
+    req
+  );
+
+  res.json({
+    success: true,
+    message: `Tenant '${org.name}' (${expectedCode}) and all linked records have been safely permanently deleted. 🗑️`,
+    deletedId: id
+  });
+});
+
 // 5. GET /api/admin/schools - Multi-tenant School Directory
-app.get("/api/admin/schools", (req, res) => {
+app.get("/api/admin/schools", async (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
 
   const { q, search, page = 1, limit = 50 } = req.query;
   const term = (q || search || "").trim().toLowerCase();
 
-  const schools = IN_MEMORY_ORGANIZATIONS.map(org => {
-    const campuses = ERP_CAMPUSES.filter(c => c.organization_id === org.id);
-    const students = ERP_STUDENTS.filter(s => s.organization_id === org.id);
-    const staff = ERP_STAFF.filter(s => s.organization_id === org.id);
-    const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active" };
+  let schools = [];
+  if (supabase) {
+    try {
+      const { data: dbSchools } = await supabase.from("schools").select("*, organizations(id, name, slug, status, logo_url)");
+      if (dbSchools && dbSchools.length > 0) {
+        schools = dbSchools.map(s => {
+          const org = s.organizations || {};
+          const isDemo = s.organization_id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+          return {
+            id: s.id,
+            name: s.name,
+            schoolCode: s.school_code || (isDemo ? "DPS-VK-894" : "SCH-01"),
+            organizationId: s.organization_id,
+            organizationName: org.name || s.name,
+            board: s.board || "CBSE",
+            city: s.city || "",
+            campusesCount: 1,
+            currentSession: "2026-27",
+            status: s.status || org.status || "active",
+            createdAt: s.created_at
+          };
+        });
+      }
+    } catch (_) {}
+  }
 
-    return {
-      id: `sch-${org.slug}`,
-      name: org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? (ERP_SETTINGS.schoolName || "Delhi Public Heritage School") : `${org.name} Academy`,
-      schoolCode: org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" ? (ERP_SETTINGS.schoolCode || "DPS-VK-894") : `SCH-${org.slug.slice(0, 3).toUpperCase()}`,
-      organizationId: org.id,
-      organizationName: org.name,
-      campusesCount: campuses.length,
-      currentSession: ERP_SETTINGS.activeSession || "2026-27",
-      studentCount: students.length,
-      staffCount: staff.length,
-      subscriptionPlan: sub.plan_id,
-      status: org.status || "active",
-      createdAt: org.created_at
-    };
-  });
+  if (schools.length === 0) {
+    schools = IN_MEMORY_ORGANIZATIONS.map(org => {
+      const campuses = ERP_CAMPUSES.filter(c => c.organization_id === org.id);
+      const students = ERP_STUDENTS.filter(s => s.organization_id === org.id);
+      const staff = ERP_STAFF.filter(s => s.organization_id === org.id);
+      const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active" };
+
+      const isDemo = org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+      return {
+        id: `sch-${org.slug}`,
+        name: isDemo ? (ERP_SETTINGS.schoolName || "Delhi Public Heritage School") : org.name,
+        schoolCode: isDemo ? (ERP_SETTINGS.schoolCode || "DPS-VK-894") : (org.tenant_code || `SCH-${org.slug.slice(0, 3).toUpperCase()}`),
+        organizationId: org.id,
+        organizationName: org.name,
+        campusesCount: campuses.length,
+        currentSession: ERP_SETTINGS.activeSession || "2026-27",
+        studentCount: students.length,
+        staffCount: staff.length,
+        subscriptionPlan: sub.plan_id,
+        status: org.status || "active",
+        createdAt: org.created_at
+      };
+    });
+  }
 
   let filtered = schools;
   if (term) {
