@@ -148,6 +148,44 @@ export async function buildApp() {
     };
   });
 
+  // API Ingress Health & Readiness Aliases
+  app.get("/api/health", async () => {
+    return {
+      success: true,
+      service: "dakshora-api",
+      status: "healthy",
+      timestamp: new Date().toISOString()
+    };
+  });
+
+  app.get("/api/health/ready", async (_request, reply) => {
+    const { error } = await supabase
+      .from("organizations")
+      .select("id")
+      .limit(1);
+
+    if (error) {
+      return reply.code(503).send({
+        success: false,
+        status: "DEGRADED",
+        service: "dakshora-platform",
+        database: "disconnected",
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return {
+      success: true,
+      status: "ACTIVE",
+      service: "dakshora-platform",
+      database: "connected",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    };
+  });
+
+
 
   // Current authenticated user
   app.get(
