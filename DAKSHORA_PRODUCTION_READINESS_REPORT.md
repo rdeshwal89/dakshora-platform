@@ -46,9 +46,21 @@
    * Removed hardcoded credentials (`admin@dakshora.ai`, `DakshoraAdmin@2026!`) and the "⚡ Super Admin" quick preview bypass from all frontend components.
    * Purged 52 stale build artifacts from `frontend/public/assets`.
    * Verified that the active production bundle contains 0 secrets or backdoor tokens.
-6. **Automated Verification**:
-   * Executed comprehensive test suite `backend/scripts/test_master_production_gate.js`:
-     * **32 PASSED | 0 FAILED (100% SUCCESS)**.
+6. **Master Production Rescue & Zero-State Engine (October 2026)**:
+   * Eliminated all fallback to demo school ("Delhi Public Heritage School") across dashboard, report cards, fee receipts, and payslips.
+   * Enforced fail-closed HTTP 401 `AUTH_REQUIRED` for unauthenticated dashboard access.
+   * Real tenants dynamically resolve school profile and render a **Pure Zero-State** ($0$ students, $0$ staff, ₹$0$ fees) when newly provisioned.
+   * Built guarded safe deletion API with 8-point checks and locked baseline demo showcase (`b17780e5-3832-4ac6-9aeb-33fd80c5cb0e`).
+   * Expanded CMS tree to 11 steps with Step 10 (Website Integration) and Step 11 (White-Label Custom School Mobile App).
+7. **Comprehensive Test Suite Execution**:
+   * Executed unified 6-suite regression suite (`npm test` in `backend/`):
+     * `test/security-audit.test.ts` (8 tests) — **PASS**
+     * `test/erp-architecture-e2e.test.ts` (11 tests) — **PASS**
+     * `test/production-transformation.test.ts` (13 tests) — **PASS**
+     * `test/master-onboarding-cms-suite.test.ts` (10 tests) — **PASS**
+     * `test/master-erp-full-suite.test.ts` (8 tests) — **PASS**
+     * `test/tenant-isolation-zero-state.test.ts` (10 tests) — **PASS**
+     * **Total: 60 PASSED | 0 FAILED (100% SUCCESS)**.
 
 ---
 
@@ -56,15 +68,17 @@
 
 | Criterion | Required Standard | Current Implementation | Verdict |
 | :--- | :--- | :--- | :---: |
-| **Authentication** | Cryptographic JWT verification | Supabase GoTrue `getUser()` verification on every request | **PASS** |
-| **Super Admin Access** | No anonymous/unauthenticated entry | Server-controlled `app_metadata.role === 'superadmin'` enforced | **PASS** |
-| **Authorization / RBAC** | Least-privilege role checking | Granular permission checking, 403 Forbidden on escalation | **PASS** |
-| **Multi-Tenancy** | Strict tenant isolation | Authenticated tenant binding + PostgreSQL RLS policies | **PASS** |
-| **API Gating** | No unprotected sensitive endpoints | Fail-closed gateway covering all ERP, Admin, and CRM routes | **PASS** |
-| **Secret Management** | Zero exposed secrets in code/assets | 0 credentials in git/bundle, environment variables used | **PASS** |
-| **Network Security** | Strict CORS & Security Headers | Allowed origins whitelisted (`dakshora.co.in`), Helmet HSTS/CSP | **PASS** |
-| **Database Integrity** | Complete schema + RLS policies | 37 tables with compound indexes, triggers, and foreign keys | **PASS** |
-| **Automated Testing** | End-to-end security gate | 32 automated tests passing covering all 7 test groups | **PASS** |
+| **Authentication** | Cryptographic JWT verification | Supabase GoTrue `getUser()` verification on every request | **VERIFIED PASS** |
+| **Super Admin Access** | No anonymous/unauthenticated entry | Server-controlled `app_metadata.role === 'superadmin'` enforced | **VERIFIED PASS** |
+| **Authorization / RBAC** | Least-privilege role checking | Granular permission checking, 403 Forbidden on escalation | **VERIFIED PASS** |
+| **Multi-Tenancy** | Strict tenant isolation | Authenticated tenant binding + PostgreSQL RLS policies | **VERIFIED PASS** |
+| **Zero-State Handling** | Pure 0 counts, no demo fallback | Dynamic school resolution via `getTenantSettings()`; 0 students/staff | **VERIFIED PASS** |
+| **API Gating** | No unprotected sensitive endpoints | Fail-closed gateway covering all ERP, Admin, and CRM routes | **VERIFIED PASS** |
+| **Secret Management** | Zero exposed secrets in code/assets | 0 credentials in git/bundle, environment variables used | **VERIFIED PASS** |
+| **Network Security** | Strict CORS & Security Headers | Allowed origins whitelisted (`dakshora.co.in`), Helmet HSTS/CSP | **VERIFIED PASS** |
+| **Database Integrity** | Complete schema + RLS policies | 37 tables with compound indexes, triggers, and foreign keys | **VERIFIED PASS** |
+| **Accidental Deletion** | Guarded safe deletion | 8 checks + confirmation code required; seed demo tenant locked | **VERIFIED PASS** |
+| **Automated Testing** | End-to-end regression gate | 60 automated tests passing across 6 suites (100% success) | **VERIFIED PASS** |
 
 ---
 

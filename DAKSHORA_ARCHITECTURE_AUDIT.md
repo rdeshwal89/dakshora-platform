@@ -97,3 +97,26 @@ DAKSHORA 2.0 is an enterprise multi-tenant School ERP, Academic Management, and 
 3. **Stale Asset Purge**:
    * Multiple legacy bundles containing development mock passwords were discovered in `frontend/public/assets`.
    * **Remediation**: Purged all 52 stale assets. Only the active, verified bundle (`index-CWxPSRyu.js`) is retained and served.
+
+---
+
+## 5. Master Production Rescue Enhancements (October 2026)
+
+1. **Dynamic Tenant Identity Resolution & Zero-State Engine**:
+   * Eliminated fallback to demo school ("Delhi Public Heritage School") across `/api/erp/dashboard`, `/api/erp/report-cards`, `/api/erp/fees/receipts`, and `/api/erp/payroll/payslip`.
+   * Unauthenticated requests to `/api/erp/dashboard` return HTTP 401 `AUTH_REQUIRED`.
+   * Authenticated tenants dynamically resolve school profile (`name`, `board`, `city`, `logo`) via `await getTenantSettings(orgId)`.
+   * Empty tenants return a pure zero-state ($0$ students, $0$ staff, ₹$0$ fees collected) without synthetic demo filler cards.
+2. **SuperAdmin 1-Click Atomic Onboarding & Gradient Status Chips**:
+   * Superadmin onboarding requests upgraded with high-contrast, accessible semantic gradient chips.
+   * 1-Click `Onboard School 🏫` flow reads existing application request, provisions canonical UUID and 5-digit organization code atomically.
+3. **Branded ERP Kit Delivery & Activation Logging**:
+   * Implemented `/api/admin/tenants/:id/send-erp-kit` and `/delivery-logs`.
+   * Generates branded kit with single-use cryptographic HMAC activation link, tracking delivery logs across Email, SMS, and WhatsApp.
+4. **8-Point Guarded Safe Deletion Architecture**:
+   * Implemented `/api/admin/organizations/:id/delete-preview` and `/delete-permanent`.
+   * System permanently protects designated baseline demo tenant (`b17780e5-3832-4ac6-9aeb-33fd80c5cb0e`) with HTTP 403 Forbidden.
+   * Enforces exact confirmation code (`tenant_code` or `slug`) and checks 8 safety barriers (active students, fee transactions, subscriptions).
+5. **Reconstructed 11-Step CMS Hierarchy**:
+   * Expanded CMS tree from 9 to 11 steps: Step 10 (*Website Integration & DNS*) and Step 11 (*White-Label Custom School Mobile App*).
+

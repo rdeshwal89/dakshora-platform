@@ -92,3 +92,42 @@
 ### 3.3 Database Backup & Restore
 * Supabase provides continuous Write-Ahead Log (WAL) archiving with Point-in-Time Recovery (PITR).
 * Manual snapshot backups can be initiated directly from the Supabase Dashboard under Database -> Backups.
+
+---
+
+## 4. Routine Operations & Multi-Tenant Maintenance
+
+### 4.1 Pre-Maintenance Demo Inventory Dry-Run
+Before executing any schema migration, maintenance window, or tenant cleanup, run the read-only dry-run auditor to verify zero orphan test tenants and confirm the baseline demo tenant remains protected:
+```bash
+node backend/scripts/demo-cleanup-dry-run.mjs
+```
+* **Expected Output**:
+  - `Protected Baseline Demo Tenant`: `b17780e5-3832-4ac6-9aeb-33fd80c5cb0e` (Dakshora / Heritage International Academy) — LOCKED & PRESERVED.
+  - `Active Production Schools`: Real schools protected.
+  - `Disposable / Ephemeral Tenants`: `0 records` (Clean state).
+  - Dry run mode: Zero database writes or deletions performed.
+
+### 4.2 Automated Regression Test Suite
+Execute the unified 6-suite regression suite prior to every staging or production release:
+```bash
+cd backend
+npm test
+```
+* **Required Gate**: All 6 suites and 60 test cases must report 100% pass rate (`tests 60 | suites 6 | pass 60 | fail 0`).
+
+### 4.3 Guarded Tenant Safe Deletion
+To delete an ephemeral or test tenant without risking live production schools:
+1. Preview deletion safeguards:
+   ```bash
+   GET /api/admin/organizations/:id/delete-preview
+   # Authorization: Bearer <superadmin_token>
+   ```
+   * Verifies 8 safety rules (active students, fee transactions, subscriptions).
+   * Seed demo tenant (`b17780e5-3832-4ac6-9aeb-33fd80c5cb0e`) permanently returns HTTP 403 Forbidden.
+2. Confirm permanent deletion with matching confirmation code:
+   ```bash
+   POST /api/admin/organizations/:id/delete-permanent
+   # Body: { "confirmationCode": "<tenant_code_or_slug>" }
+   ```
+
