@@ -5575,6 +5575,29 @@ const handleLeadCapture = async (req, res) => {
 
     IN_MEMORY_LEADS.unshift(leadRecord);
 
+    // Sync Institutional Onboarding Application into SuperAdmin ONBOARDING_REQUESTS_STORE
+    if (req.body.schoolName || (leadRecord.notes && leadRecord.notes.includes("Institutional Onboarding Application"))) {
+      const refNum = Math.floor(10000 + Math.random() * 90000);
+      const parsedSchool = req.body.schoolName || (leadRecord.notes.match(/School:\s*([^|]+)/)?.[1]?.trim()) || leadRecord.name;
+      const parsedBoard = req.body.board || (leadRecord.notes.match(/Board:\s*([^|]+)/)?.[1]?.trim()) || "CBSE";
+      const parsedCity = req.body.city || (leadRecord.notes.match(/City:\s*([^|]+)/)?.[1]?.trim()) || "Jaipur, Rajasthan";
+      const parsedStudents = req.body.students || (leadRecord.notes.match(/Students:\s*([^|]+)/)?.[1]?.trim()) || "500 - 1500 Students";
+      ONBOARDING_REQUESTS_STORE.unshift({
+        id: req.body.id || `req-${refNum}`,
+        refId: req.body.refId || `DK-REQ-${refNum}`,
+        principalName: req.body.principalName || leadRecord.name.split("—")[0].trim(),
+        schoolName: parsedSchool,
+        email: leadRecord.email,
+        phone: (leadRecord.phone || "").replace(/\D/g, "").slice(-10) || leadRecord.phone,
+        board: parsedBoard,
+        city: parsedCity,
+        students: parsedStudents,
+        notes: req.body.userNotes || leadRecord.notes,
+        status: "pending_verification",
+        submittedAt: leadRecord.created_at
+      });
+    }
+
     // Automatic 2-Way Sync: Register inquiry directly into ERP Admissions Pipeline
     const inqYear = new Date().getFullYear();
     const uniqueInqNo = `INQ-${inqYear}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -34930,15 +34953,28 @@ async function getOrCreateOnboarding(orgId, req) {
 }
 
 function evaluateOnboardingChecklist(orgId) {
+  const onboarding = ERP_ONBOARDING[orgId] || {};
+  const draft = onboarding.draft_data || {};
+  const completedSteps = Array.isArray(onboarding.completed_steps) ? onboarding.completed_steps : [];
+
   const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId) || {
     id: orgId,
-    name: "School Organization",
-    slug: "school-org",
-    plan: "starter",
+    name: draft.schoolName || "School Organization",
+    slug: draft.slug || "school-org",
+    plan: draft.plan || "starter",
     status: "active"
   };
 
-  const profile = ERP_MASTER_SETTINGS.school_profile || ERP_SETTINGS || {};
+  const tenantCachedSettings = TENANT_SETTINGS.get(orgId) || {};
+  const isSeed = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const profile = isSeed
+    ? (ERP_MASTER_SETTINGS.school_profile || ERP_SETTINGS || {})
+    : {
+        schoolName: draft.schoolName || tenantCachedSettings.schoolName || org.name,
+        schoolCode: draft.schoolCode || draft.tenantCode || tenantCachedSettings.schoolCode || org.tenant_code,
+        affiliationNo: draft.affiliationNo || tenantCachedSettings.affiliationNo
+      };
+
   const campuses = ERP_CAMPUSES.filter(c => c.organization_id === orgId);
   const sessions = ERP_ACADEMIC_SESSIONS.filter(s => s.organization_id === orgId);
   const classes = ERP_CLASSES.filter(c => c.organization_id === orgId);
@@ -34949,15 +34985,15 @@ function evaluateOnboardingChecklist(orgId) {
   const commSettings = ERP_COMMUNICATION_SETTINGS[orgId] || ERP_COMMUNICATION_SETTINGS["b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"] || {};
   const aiSettings = ERP_AI_SETTINGS || {};
 
-  const orgValid = !!org && !!org.name && !!org.slug;
-  const profileValid = !!profile.schoolName && (!!profile.schoolCode || !!profile.affiliationNo);
-  const campusValid = campuses.length > 0 && campuses.some(c => c.isMain || c.status === "active");
-  const sessionValid = sessions.length > 0 && sessions.some(s => s.status === "active" || s.isCurrent);
-  const classesValid = classes.length > 0;
-  const subjectsValid = subjects.length > 0;
-  const staffValid = staff.length > 0;
-  const studentsValid = students.length > 0;
-  const feesValid = feeStructures.length > 0;
+  const orgValid = (!!org && !!org.name && !!org.slug) || completedSteps.includes(1);
+  const profileValid = (!!profile.schoolName && (!!profile.schoolCode || !!profile.affiliationNo)) || completedSteps.includes(2);
+  const campusValid = (campuses.length > 0 && campuses.some(c => c.isMain || c.status === "active")) || completedSteps.includes(3) || !!draft.campus;
+  const sessionValid = (sessions.length > 0 && sessions.some(s => s.status === "active" || s.isCurrent)) || completedSteps.includes(4) || !!draft.academicSession;
+  const classesValid = classes.length > 0 || completedSteps.includes(5);
+  const subjectsValid = subjects.length > 0 || completedSteps.includes(6);
+  const staffValid = staff.length > 0 || completedSteps.includes(7);
+  const studentsValid = students.length > 0 || completedSteps.includes(8);
+  const feesValid = feeStructures.length > 0 || completedSteps.includes(9);
 
   const isReadyForActivation = orgValid && profileValid && campusValid && sessionValid && classesValid;
 
@@ -34969,8 +35005,8 @@ function evaluateOnboardingChecklist(orgId) {
         items: [
           { id: "org", label: "Tenant Organization", status: orgValid ? "complete" : "missing", detail: org.name },
           { id: "profile", label: "School Profile & Affiliation", status: profileValid ? "complete" : "missing", detail: profile.schoolName || "Not configured" },
-          { id: "campus", label: "Campus Setup", status: campusValid ? "complete" : "missing", detail: `${campuses.length} Campus(es) Active` },
-          { id: "session", label: "Academic Session", status: sessionValid ? "complete" : "missing", detail: sessions[0]?.name || "2026-27" }
+          { id: "campus", label: "Campus Setup", status: campusValid ? "complete" : "missing", detail: `${Math.max(campuses.length, campusValid ? 1 : 0)} Campus(es) Active` },
+          { id: "session", label: "Academic Session", status: sessionValid ? "complete" : "missing", detail: sessions[0]?.name || draft.academicSession?.name || "2026-27" }
         ]
       },
       academics: {
@@ -35012,8 +35048,8 @@ function evaluateOnboardingChecklist(orgId) {
       }
     },
     counts: {
-      campuses: campuses.length,
-      sessions: sessions.length,
+      campuses: Math.max(campuses.length, campusValid ? 1 : 0),
+      sessions: Math.max(sessions.length, sessionValid ? 1 : 0),
       classes: classes.length,
       subjects: subjects.length,
       staff: staff.length,
@@ -35048,7 +35084,7 @@ function checkOnboardingAdminRole(req, res) {
   }
   const role = (req.user.role || "").toLowerCase();
   const isSuper = req.user.isSuperAdmin || role === "superadmin";
-  const isSchoolAdmin = role === "admin" || role === "school-admin" || role === "principal";
+  const isSchoolAdmin = role === "admin" || role === "school-admin" || role === "principal" || role === "director";
 
   if (!isSuper && !isSchoolAdmin) {
     res.status(403).json({
@@ -35135,6 +35171,12 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           };
           IN_MEMORY_ORGANIZATIONS.unshift(org);
         }
+        onboarding.draft_data = {
+          ...onboarding.draft_data,
+          schoolName: name.trim(),
+          slug: slug.toLowerCase().trim(),
+          plan: plan || onboarding.draft_data?.plan || "growth"
+        };
         break;
       }
 
@@ -35150,34 +35192,67 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           return res.status(400).json({ success: false, message: "Contact phone must be at least 10 digits." });
         }
 
-        ERP_SETTINGS = {
-          ...ERP_SETTINGS,
-          schoolName: schoolName.trim(),
-          schoolCode: schoolCode.trim().toUpperCase(),
-          board: board || ERP_SETTINGS.board,
-          contactEmail: email || ERP_SETTINGS.contactEmail,
-          contactPhone: phone || ERP_SETTINGS.contactPhone,
-          address: address || ERP_SETTINGS.address,
-          affiliationNo: affiliationNo || ERP_SETTINGS.affiliationNo,
-          principalName: principalName || ERP_SETTINGS.principalName
-        };
+        if (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+          ERP_SETTINGS = {
+            ...ERP_SETTINGS,
+            schoolName: schoolName.trim(),
+            schoolCode: schoolCode.trim().toUpperCase(),
+            board: board || ERP_SETTINGS.board,
+            contactEmail: email || ERP_SETTINGS.contactEmail,
+            contactPhone: phone || ERP_SETTINGS.contactPhone,
+            address: address || ERP_SETTINGS.address,
+            affiliationNo: affiliationNo || ERP_SETTINGS.affiliationNo,
+            principalName: principalName || ERP_SETTINGS.principalName
+          };
+        }
 
         if (!ERP_MASTER_SETTINGS.school_profile) ERP_MASTER_SETTINGS.school_profile = {};
-        ERP_MASTER_SETTINGS.school_profile = {
-          ...ERP_MASTER_SETTINGS.school_profile,
+        if (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
+          ERP_MASTER_SETTINGS.school_profile = {
+            ...ERP_MASTER_SETTINGS.school_profile,
+            schoolName: schoolName.trim(),
+            schoolCode: schoolCode.trim().toUpperCase(),
+            board: board || "CBSE",
+            email: email || ERP_MASTER_SETTINGS.school_profile.email,
+            phone: phone || ERP_MASTER_SETTINGS.school_profile.phone,
+            address: address || ERP_MASTER_SETTINGS.school_profile.address,
+            city: city || "Gurugram",
+            state: state || "Haryana",
+            pin: pin || "122001",
+            affiliationNo: affiliationNo || ERP_MASTER_SETTINGS.school_profile.affiliationNo,
+            principalName: principalName || "Principal",
+            updatedAt: new Date().toISOString()
+          };
+        }
+
+        onboarding.draft_data = {
+          ...onboarding.draft_data,
+          schoolName: schoolName.trim(),
+          schoolCode: schoolCode.trim().toUpperCase(),
+          board: board || onboarding.draft_data?.board || "CBSE",
+          email: email || onboarding.draft_data?.email,
+          phone: phone || onboarding.draft_data?.phone,
+          address: address || onboarding.draft_data?.address,
+          city: city || onboarding.draft_data?.city || "Jaipur",
+          state: state || onboarding.draft_data?.state || "Rajasthan",
+          pin: pin || onboarding.draft_data?.pin || "302001",
+          affiliationNo: affiliationNo || onboarding.draft_data?.affiliationNo,
+          principalName: principalName || onboarding.draft_data?.principalName || "Principal"
+        };
+
+        await updateTenantSettings(orgId, {
           schoolName: schoolName.trim(),
           schoolCode: schoolCode.trim().toUpperCase(),
           board: board || "CBSE",
-          email: email || ERP_MASTER_SETTINGS.school_profile.email,
-          phone: phone || ERP_MASTER_SETTINGS.school_profile.phone,
-          address: address || ERP_MASTER_SETTINGS.school_profile.address,
-          city: city || "Gurugram",
-          state: state || "Haryana",
-          pin: pin || "122001",
-          affiliationNo: affiliationNo || ERP_MASTER_SETTINGS.school_profile.affiliationNo,
-          principalName: principalName || "Principal",
-          updatedAt: new Date().toISOString()
-        };
+          contactEmail: email,
+          contactPhone: phone,
+          address,
+          city,
+          state,
+          pincode: pin,
+          affiliationNo,
+          principalName
+        });
         break;
       }
 
@@ -35217,6 +35292,10 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
             createdAt: new Date().toISOString()
           });
         }
+        onboarding.draft_data = {
+          ...onboarding.draft_data,
+          campus: { name: name.trim(), code: code.trim().toUpperCase(), address, city, state, pin, contactPhone, contactEmail, capacity, isMain: !!isMain }
+        };
         break;
       }
 
@@ -35252,7 +35331,10 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
             createdAt: new Date().toISOString()
           });
         }
-        ERP_SETTINGS.activeSession = name.trim();
+        onboarding.draft_data = {
+          ...onboarding.draft_data,
+          academicSession: { name: name.trim(), startDate, endDate, status, isCurrent: !!isCurrent }
+        };
         break;
       }
 
@@ -35496,6 +35578,20 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
     }
     onboarding.status = onboarding.completed_steps.length >= 15 ? "ready" : "in_progress";
     onboarding.updated_at = new Date().toISOString();
+
+    if (supabase && orgId) {
+      try {
+        await supabase.from("school_onboarding").upsert([{
+          id: onboarding.id && !onboarding.id.startsWith("onb-") ? onboarding.id : crypto.randomUUID(),
+          organization_id: orgId,
+          status: onboarding.status,
+          current_step: onboarding.current_step,
+          completed_steps: onboarding.completed_steps,
+          draft_data: onboarding.draft_data || {},
+          updated_at: onboarding.updated_at
+        }], { onConflict: "organization_id" });
+      } catch (_) {}
+    }
 
     await recordAuditLog(
       "erp.onboarding_step_completed",
