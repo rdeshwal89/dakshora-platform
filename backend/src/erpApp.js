@@ -4886,40 +4886,62 @@ app.post("/api/cms/notices", async (req, res) => {
 
 // GET /api/public/schools/resolve-domain - Dynamic Domain & Subdomain Resolver
 app.get("/api/public/schools/resolve-domain", async (req, res) => {
-  const host = (req.query.host || req.query.domain || req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+  const host = (req.query.host || req.query.domain || req.headers["x-school-host"] || req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+  const isPlatformHost = !host || [
+    "localhost",
+    "127.0.0.1",
+    "dakshora.co.in",
+    "www.dakshora.co.in",
+    "dakshora.in",
+    "www.dakshora.in",
+    "dakshora.app",
+    "www.dakshora.app"
+  ].includes(host) || host.endsWith(".onrender.com") || host.endsWith(".vercel.app");
+
+  if (isPlatformHost && !req.query.slug && !req.query.orgId) {
+    return res.json({ success: true, isSchoolDomain: false, host });
+  }
+
   try {
     let website = null;
     let org = null;
     let school = null;
+    const lookupKey = (req.query.slug || req.query.orgId || host || "").toLowerCase().trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lookupKey);
 
-    if (supabase && host) {
-      // 1. Check if host matches website_domains.domain
-      const { data: domData } = await supabase.from("website_domains").select("*, websites(*)").eq("domain", host).maybeSingle();
-      if (domData?.websites) {
-        website = domData.websites;
-        const { data: orgData } = await supabase.from("organizations").select("*").eq("id", website.organization_id).maybeSingle();
+    if (supabase && lookupKey) {
+      if (isUuid) {
+        const { data: orgData } = await supabase.from("organizations").select("*").eq("id", lookupKey).maybeSingle();
         if (orgData) org = orgData;
-      }
+      } else {
+        // 1. Check if host matches website_domains.domain
+        const { data: domData } = await supabase.from("website_domains").select("*, websites(*)").eq("domain", lookupKey).maybeSingle();
+        if (domData?.websites) {
+          website = domData.websites;
+          const { data: orgData } = await supabase.from("organizations").select("*").eq("id", website.organization_id).maybeSingle();
+          if (orgData) org = orgData;
+        }
 
-      // 2. Check if slug matches websites.slug or organizations.slug
-      if (!website) {
-        const sub = host.split(".")[0];
-        const { data: webData } = await supabase.from("websites").select("*, website_settings(*)").or(`slug.eq.${host},slug.eq.${sub}`).maybeSingle();
-        if (webData) {
-          website = webData;
-          const { data: orgData } = await supabase.from("organizations").select("*").eq("id", webData.organization_id).maybeSingle();
+        // 2. Check if slug matches websites.slug or organizations.slug
+        const sub = lookupKey.replace(/^www\./, "").split(".")[0];
+        if (!website) {
+          const { data: webData } = await supabase.from("websites").select("*, website_settings(*)").or(`slug.eq.${lookupKey},slug.eq.${sub}`).maybeSingle();
+          if (webData) {
+            website = webData;
+            const { data: orgData } = await supabase.from("organizations").select("*").eq("id", webData.organization_id).maybeSingle();
+            if (orgData) org = orgData;
+          }
+        }
+
+        if (!org) {
+          const { data: orgData } = await supabase.from("organizations").select("*").or(`slug.eq.${lookupKey},slug.eq.${sub}`).maybeSingle();
           if (orgData) org = orgData;
         }
       }
 
-      if (!org) {
-        const sub = host.split(".")[0];
-        const { data: orgData } = await supabase.from("organizations").select("*").or(`slug.eq.${host},slug.eq.${sub}`).maybeSingle();
-        if (orgData) {
-          org = orgData;
-          const { data: webData } = await supabase.from("websites").select("*, website_settings(*)").eq("organization_id", org.id).maybeSingle();
-          if (webData) website = webData;
-        }
+      if (org && !website) {
+        const { data: webData } = await supabase.from("websites").select("*, website_settings(*)").eq("organization_id", org.id).maybeSingle();
+        if (webData) website = webData;
       }
 
       // 3. Fetch school profile
@@ -4929,32 +4951,63 @@ app.get("/api/public/schools/resolve-domain", async (req, res) => {
       }
     }
 
-    if (!org && !website) {
-      return res.status(404).json({ success: false, message: `No active school found for domain '${host}'` });
+    // Check in-memory websites & CMS trees for customDomain / subdomain match
+    if (!org && !website && lookupKey) {
+      const sub = lookupKey.replace(/^www\./, "").split(".")[0];
+      for (const [, tree] of WEBSITE_CMS_TREES.entries()) {
+        const customDom = (tree?.domain?.customDomain || tree?.website_integration?.customDomain || "").toLowerCase();
+        const subDom = (tree?.domain?.subdomain || tree?.website_integration?.subdomain || "").toLowerCase();
+        if ((customDom && customDom === lookupKey) || (subDom && (subDom === lookupKey || subDom.split(".")[0] === sub))) {
+          website = IN_MEMORY_WEBSITES.find(w => w.id === tree.websiteId) || { id: tree.websiteId, name: tree.name, domain: subDom };
+          break;
+        }
+      }
+      if (!org) {
+        org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === lookupKey || o.slug === lookupKey || o.slug === sub);
+      }
     }
+
+    if (!org && !website) {
+      return res.status(404).json({ success: false, isSchoolDomain: false, message: `No active school found for domain '${lookupKey}'` });
+    }
+
+    const effectiveOrgId = org?.id || website?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const effectiveSite = website || IN_MEMORY_WEBSITES.find(w => w.organization_id === effectiveOrgId) || {
+      id: effectiveOrgId,
+      name: school?.name || org?.name || "School Campus",
+      domain: `${org?.slug || "campus"}.school.dakshora.app`,
+      organization_id: effectiveOrgId,
+      status: "live"
+    };
+    const cmsTree = await loadPersistedCmsTree(effectiveSite);
 
     res.json({
       success: true,
+      isSchoolDomain: true,
       school: {
-        id: org?.id,
-        name: school?.name || org?.name,
-        slug: org?.slug,
+        id: effectiveOrgId,
+        name: school?.name || org?.name || effectiveSite.name,
+        slug: org?.slug || effectiveSite.domain?.split(".")[0] || "school",
         board: school?.board || org?.board || "CBSE",
-        city: school?.city || org?.city || "Rajasthan",
-        phone: school?.phone || org?.contact_phone,
-        email: school?.email || org?.contact_email,
-        portalLoginUrl: `/portal?school=${org?.slug}`
+        city: school?.city || org?.city || "India",
+        address: school?.address || org?.address || cmsTree?.content?.address || "",
+        phone: school?.phone || org?.contact_phone || cmsTree?.content?.contactPhone || "+91 98765 43210",
+        email: school?.email || org?.contact_email || cmsTree?.content?.contactEmail || "info@school.edu.in",
+        logoUrl: school?.logo_url || org?.logo_url || null,
+        portalLoginUrl: `/?school=${org?.slug || effectiveOrgId}`
       },
-      website
+      website: effectiveSite,
+      cmsTree
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// GET /api/public/schools/:slug/cms - Dynamic Public School Website Resolver
+// GET /api/public/schools/:slug/cms - Dynamic Public School Website Resolver (supports slug OR organization UUID)
 app.get("/api/public/schools/:slug/cms", async (req, res) => {
   const { slug } = req.params;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug);
   try {
     let org = null;
     let school = null;
@@ -4963,8 +5016,12 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
     let notices = [];
 
     if (supabase) {
-      // 1. Find organization by slug
-      const { data: orgData } = await supabase.from("organizations").select("*").eq("slug", slug).maybeSingle();
+      // 1. Find organization by UUID id or slug
+      const { data: orgData } = await supabase
+        .from("organizations")
+        .select("*")
+        .eq(isUuid ? "id" : "slug", slug)
+        .maybeSingle();
       if (orgData) org = orgData;
 
       if (org) {
@@ -4998,19 +5055,25 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
       }
     }
 
-    // In-memory fallback only if Supabase returned nothing and tenant is demo
+    // In-memory fallback
     if (!org) {
-      org = IN_MEMORY_ORGANIZATIONS.find(o => o.slug === slug);
+      org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === slug || o.slug === slug);
     }
     if (!org) {
-      return res.status(404).json({ success: false, message: `School with slug '${slug}' not found.` });
+      return res.status(404).json({ success: false, message: `School '${slug}' not found.` });
     }
 
     if (!website) {
-      website = IN_MEMORY_WEBSITES.find(w => w.organization_id === org.id);
+      website = IN_MEMORY_WEBSITES.find(w => w.organization_id === org.id) || {
+        id: org.id,
+        name: school?.name || org.name,
+        domain: `${org.slug || "campus"}.school.dakshora.app`,
+        organization_id: org.id,
+        status: "live"
+      };
     }
 
-    const tree = website ? await loadPersistedCmsTree(website) : null;
+    const tree = await loadPersistedCmsTree(website);
     if (pages.length === 0 && tree?.pages) {
       pages = tree.pages;
     }
@@ -5022,12 +5085,12 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
         name: school?.name || org.name,
         slug: org.slug,
         board: school?.board || org.board || "CBSE",
-        city: school?.city || org.city || "Rajasthan",
-        address: school?.address || org.address || "",
-        contactPhone: school?.phone || org.contact_phone || "+91 98765 43210",
-        contactEmail: school?.email || org.contact_email || "info@dakshora.in",
+        city: school?.city || org.city || "India",
+        address: school?.address || org.address || tree?.content?.address || "",
+        contactPhone: school?.phone || org.contact_phone || tree?.content?.contactPhone || "+91 98765 43210",
+        contactEmail: school?.email || org.contact_email || tree?.content?.contactEmail || "info@school.edu.in",
         logoUrl: school?.logo_url || org.logo_url || null,
-        portalLoginUrl: `/portal?school=${org.slug}`
+        portalLoginUrl: `/?school=${org.slug}`
       },
       website,
       pages,
