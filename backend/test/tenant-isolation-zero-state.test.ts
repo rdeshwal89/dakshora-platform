@@ -476,6 +476,28 @@ describe("DAKSHORA 2.0 — PHASE 1 MANDATORY TENANT ISOLATION, ZERO-STATE & RESC
     assert.ok(Array.isArray(appSyncBody.studentRoster), "studentRoster must be returned for Mobile App sync");
     assert.strictEqual(appSyncBody.studentRoster.length, 1, "Tenant A must have 1 student in live roster");
     assert.ok(appSyncBody.syncTimestamp, "syncTimestamp must be present");
+
+    // 5. Enroll student with optional Last Name & Quick Step-1 fields (no lastName, no parentPhone required)
+    const singleNameRes = await fetch(`${BASE_URL}/api/erp/students`, {
+      method: "POST",
+      headers: getHeaders(tenantA_AdminToken, tenantA_Id),
+      body: JSON.stringify({
+        firstName: "Daksh",
+        middleName: "",
+        lastName: "",
+        grade: "Class 1",
+        section: "A",
+        gender: "Male",
+        dob: "2022-02-24",
+        bloodGroup: "O+"
+      })
+    });
+    assert.strictEqual(singleNameRes.status, 201, "Student enrollment without lastName must succeed with 201");
+    const singleNameBody = await singleNameRes.json();
+    assert.strictEqual(singleNameBody.success, true);
+    assert.strictEqual(singleNameBody.student.firstName, "Daksh");
+    assert.strictEqual(singleNameBody.student.lastName, "");
+    assert.strictEqual(singleNameBody.student.name, "Daksh");
   });
 
   test("11. Phase 4: Guarded Safe Deletion Preview protects production data and allows safe accidental cleanup", async () => {

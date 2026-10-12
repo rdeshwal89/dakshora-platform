@@ -12950,7 +12950,7 @@ app.get("/api/erp/students", async (req, res) => {
   } = req.query;
 
   // Strict tenant organization isolation & live DB query
-  let tenantStudents = (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") ? ERP_STUDENTS.filter(s => s.organization_id === orgId) : [];
+  let tenantStudents = orgId ? ERP_STUDENTS.filter(s => s.organization_id === orgId) : [];
 
   if (supabase) {
     try {
@@ -12971,7 +12971,7 @@ app.get("/api/erp/students", async (req, res) => {
             rollNo: enr?.roll_no || s.roll_no || s.admission_no?.slice(-3) || "01",
             firstName: s.first_name || fullName.split(" ")[0],
             middleName: s.middle_name || "",
-            lastName: s.last_name || fullName.split(" ").slice(1).join(" "),
+            lastName: s.last_name || "",
             name: fullName,
             grade: enr?.classes?.name || s.grade || "Class 10",
             section: enr?.sections?.name || s.section || "A",
@@ -12997,15 +12997,9 @@ app.get("/api/erp/students", async (req, res) => {
           };
         });
 
-        if (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
-          const existingNos = new Set(mappedDbStudents.map(m => m.admissionNo?.toLowerCase()));
-          const uniqueMemStudents = tenantStudents.filter(m => !existingNos.has(m.admissionNo?.toLowerCase()));
-          tenantStudents = [...mappedDbStudents, ...uniqueMemStudents];
-        } else {
-          tenantStudents = mappedDbStudents;
-        }
-      } else if (orgId !== "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
-        tenantStudents = [];
+        const existingNos = new Set(mappedDbStudents.map(m => m.admissionNo?.toLowerCase()));
+        const uniqueMemStudents = tenantStudents.filter(m => !existingNos.has(m.admissionNo?.toLowerCase()));
+        tenantStudents = [...mappedDbStudents, ...uniqueMemStudents];
       }
     } catch (dbErr) {
       console.warn("[Students DB] Live students fetch note:", dbErr.message);
@@ -13360,13 +13354,16 @@ app.post("/api/erp/students", async (req, res) => {
     return res.status(400).json({ success: false, message: "Grade / Class is required" });
   }
 
-  const firstName = (std.firstName || (std.name ? std.name.split(" ")[0] : "")).trim();
+  const hasExplicitFirst = Boolean(std.firstName && String(std.firstName).trim());
+  const firstName = (hasExplicitFirst ? String(std.firstName) : (std.name ? String(std.name).trim().split(/\s+/)[0] : "")).trim();
   if (!firstName) {
     return res.status(400).json({ success: false, message: "Student first name is required" });
   }
   const middleName = (std.middleName || "").trim();
-  const lastName = (std.lastName || (std.name && std.name.split(" ").length > 1 ? std.name.split(" ").slice(1).join(" ") : "")).trim();
-  const fullName = std.name || [firstName, middleName, lastName].filter(Boolean).join(" ");
+  const lastName = hasExplicitFirst
+    ? (std.lastName || "").trim()
+    : (std.lastName || (std.name && String(std.name).trim().split(/\s+/).length > 1 ? String(std.name).trim().split(/\s+/).slice(1).join(" ") : "")).trim();
+  const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ") || (std.name || "").trim();
 
   // Phase 8: Automatic Database-Backed Student ID / Admission Number Generation
   let admissionNo = (std.admissionNo || std.studentId || "").trim();
@@ -13419,9 +13416,9 @@ app.post("/api/erp/students", async (req, res) => {
     admissionNo,
     penNo: penNo || `2026${Math.floor(1000000 + Math.random() * 9000000)}`,
     rollNo: std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`,
-    firstName: firstName || fullName.split(" ")[0] || "Student",
+    firstName: firstName || "Student",
     middleName: middleName,
-    lastName: lastName || fullName.split(" ").slice(1).join(" ") || "",
+    lastName: lastName,
     name: fullName,
     grade: std.grade,
     section: std.section || "A",
