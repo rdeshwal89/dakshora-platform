@@ -1032,19 +1032,49 @@ const otpVerifyRateLimiter = createRateLimiter(60000, 30, "Too many OTP verifica
 const leadsRateLimiter = createRateLimiter(60000, 15, "Too many lead submissions. Please try again in 1 minute.");
 
 
-// SuperAdmin Login: POST /api/auth/login
+// Unified SSO Login: POST /api/auth/login (supports Email, Mobile Number, Student ID, or Staff ID)
 app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
   try {
     if (!supabase) return res.status(500).json({ success: false, message: "Supabase not initialized" });
-    const { email, password } = req.body;
+    const rawIdentifier = (req.body.email || req.body.identifier || req.body.phone || req.body.username || "").toString().trim();
+    const { password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: "Email and password are required" });
+    if (!rawIdentifier || !password) {
+      return res.status(400).json({ success: false, message: "Email/Mobile/ID and password are required" });
+    }
+
+    let email = rawIdentifier;
+    if (!rawIdentifier.includes("@")) {
+      const cleanPhone = rawIdentifier.replace(/\D/g, "").slice(-10);
+      let resolvedEmail = null;
+      try {
+        if (cleanPhone.length === 10) {
+          const { data: uByPhone } = await supabase.from("users").select("email").ilike("phone", `%${cleanPhone}%`).limit(1).maybeSingle();
+          if (uByPhone?.email) resolvedEmail = uByPhone.email;
+          if (!resolvedEmail) {
+            const { data: stfByPhone } = await supabase.from("staff").select("email").ilike("phone", `%${cleanPhone}%`).limit(1).maybeSingle();
+            if (stfByPhone?.email) resolvedEmail = stfByPhone.email;
+          }
+          if (!resolvedEmail) {
+            const { data: schByPhone } = await supabase.from("schools").select("email").ilike("phone", `%${cleanPhone}%`).limit(1).maybeSingle();
+            if (schByPhone?.email) resolvedEmail = schByPhone.email;
+          }
+        }
+        if (!resolvedEmail) {
+          const { data: stfByCode } = await supabase.from("staff").select("email").eq("employee_code", rawIdentifier).limit(1).maybeSingle();
+          if (stfByCode?.email) resolvedEmail = stfByCode.email;
+        }
+        if (!resolvedEmail) {
+          const { data: stuByAdm } = await supabase.from("students").select("email, parent_email").eq("admission_no", rawIdentifier).limit(1).maybeSingle();
+          if (stuByAdm?.email || stuByAdm?.parent_email) resolvedEmail = stuByAdm.email || stuByAdm.parent_email;
+        }
+      } catch (_) {}
+      if (resolvedEmail) email = resolvedEmail;
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      return res.status(401).json({ success: false, message: "Invalid email or password", error: error.message });
+      return res.status(401).json({ success: false, message: "Invalid credentials", error: error.message });
     }
 
     // Check if user has Two-Factor Authentication (TOTP) enabled
@@ -4839,29 +4869,39 @@ app.delete("/api/cms/pages/:id", async (req, res) => {
   res.json({ success: true, message: "Page deleted successfully ✅" });
 });
 
-// GET /api/cms/notices - Fetch school notices
+// GET /api/cms/notices - Fetch school notices (merges DB + tenant ERP_NOTICES; filters out drafts for public requests)
 app.get("/api/cms/notices", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
+  const isAuthed = !!req.user;
   try {
-    if (supabase) {
+    let list = [];
+    if (supabase && orgId) {
       const { data, error } = await supabase.from("notices").select("*").eq("organization_id", orgId).order("created_at", { ascending: false });
       if (!error && data) {
-        return res.json({ success: true, notices: data });
+        list = data;
       }
     }
     const memNotices = (typeof ERP_NOTICES !== "undefined" ? ERP_NOTICES : []).filter(n => n.organization_id === orgId);
-    res.json({ success: true, notices: memNotices });
+    const seen = new Set(list.map(n => n.id));
+    for (const mn of memNotices) {
+      if (!seen.has(mn.id)) list.unshift(mn);
+    }
+    if (!isAuthed) {
+      list = list.filter(n => n.status !== "draft" && n.is_published !== false && (!("published_at" in n) || !!n.published_at));
+    }
+    res.json({ success: true, notices: list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /api/cms/notices - Broadcast / Post new school notice
-app.post("/api/cms/notices", async (req, res) => {
+// POST /api/cms/notices - Broadcast / Post new school notice (Authenticated)
+app.post("/api/cms/notices", requireAuth, async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { title, content, body, audience = ["all"] } = req.body;
+  const { title, content, body, audience = ["all"], status = "published", is_published = true } = req.body;
   if (!title) return res.status(400).json({ success: false, message: "Notice Title is required" });
 
+  const isPub = status !== "draft" && is_published !== false;
   const noticeBody = body || content || "Notice announcement";
   const newNotice = {
     id: crypto.randomUUID(),
@@ -4869,13 +4909,27 @@ app.post("/api/cms/notices", async (req, res) => {
     title: title.trim(),
     body: noticeBody,
     audience: Array.isArray(audience) ? audience : [audience],
-    published_at: new Date().toISOString(),
+    status: isPub ? "published" : "draft",
+    is_published: isPub,
+    published_at: isPub ? new Date().toISOString() : null,
     created_at: new Date().toISOString()
   };
 
-  if (supabase) {
+  if (typeof ERP_NOTICES !== "undefined" && Array.isArray(ERP_NOTICES)) {
+    ERP_NOTICES.unshift(newNotice);
+  }
+
+  if (supabase && isPub) {
     try {
-      await supabase.from("notices").insert([newNotice]);
+      await supabase.from("notices").insert([{
+        id: newNotice.id,
+        organization_id: newNotice.organization_id,
+        title: newNotice.title,
+        body: newNotice.body,
+        audience: newNotice.audience,
+        published_at: newNotice.published_at,
+        created_at: newNotice.created_at
+      }]);
     } catch (e) {
       console.warn("Supabase notice insert fallback:", e.message);
     }
@@ -5049,9 +5103,17 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
           if (pgsData && pgsData.length > 0) pages = pgsData;
         }
 
-        // 5. Find notices
-        const { data: ntcData } = await supabase.from("notices").select("*").eq("organization_id", org.id).limit(5);
-        if (ntcData) notices = ntcData;
+        // 5. Find published notices only (never expose private draft notices where published_at is null)
+        const { data: ntcData } = await supabase
+          .from("notices")
+          .select("*")
+          .eq("organization_id", org.id)
+          .not("published_at", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(10);
+        if (ntcData) {
+          notices = ntcData.filter(n => n.status !== "draft" && n.is_published !== false && !!n.published_at);
+        }
       }
     }
 
@@ -5061,6 +5123,17 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
     }
     if (!org) {
       return res.status(404).json({ success: false, message: `School '${slug}' not found.` });
+    }
+
+    // Merge any published in-memory ERP notices for this tenant
+    if (typeof ERP_NOTICES !== "undefined" && Array.isArray(ERP_NOTICES)) {
+      const memPublished = ERP_NOTICES.filter(
+        n => n.organization_id === org.id && n.status !== "draft" && n.is_published !== false
+      );
+      const seenNtcIds = new Set(notices.map(n => n.id));
+      for (const mn of memPublished) {
+        if (!seenNtcIds.has(mn.id)) notices.unshift(mn);
+      }
     }
 
     if (!website) {
@@ -5075,7 +5148,7 @@ app.get("/api/public/schools/:slug/cms", async (req, res) => {
 
     const tree = await loadPersistedCmsTree(website);
     if (pages.length === 0 && tree?.pages) {
-      pages = tree.pages;
+      pages = tree.pages.filter(p => p.visible !== false);
     }
 
     res.json({
@@ -17198,7 +17271,9 @@ app.get("/api/erp/dashboard", async (req, res) => {
     myResponsibilities: staffResponsibilities,
     effectiveAccess,
     students: studentKPI,
+    studentRoster: relevantStudents.slice(0, 50),
     staff: staffKPI,
+    staffRoster: tenantStaff.slice(0, 50),
     attendance: {
       students: todayStudentAttendance,
       staff: todayStaffAttendance
@@ -17220,7 +17295,8 @@ app.get("/api/erp/dashboard", async (req, res) => {
     absentStaffToday,
     aiInsights,
     academicOverview,
-    pendingTasks
+    pendingTasks,
+    syncTimestamp: new Date().toISOString()
   });
 });
 
@@ -21180,6 +21256,22 @@ app.post("/api/erp/fees/collect", async (req, res) => {
     return res.status(400).json({ success: false, message: "Valid demandId (or studentId) and amountPaid are required" });
   }
 
+  // Idempotency guard: prevent duplicate payment callbacks with same referenceNumber / idempotencyKey
+  const idempRef = (referenceNumber || req.body?.idempotencyKey || req.headers["x-idempotency-key"] || "").toString().trim();
+  if (idempRef) {
+    const existingPay = ERP_FEE_PAYMENTS.find(p => p.organization_id === orgId && p.referenceNumber === idempRef && p.status !== "reversed");
+    if (existingPay) {
+      return res.json({
+        success: true,
+        duplicateCallback: true,
+        message: "Idempotent payment callback: existing verified receipt returned",
+        receiptNo: existingPay.receiptNo,
+        payment: existingPay,
+        demand
+      });
+    }
+  }
+
   const numPaid = Number(amountPaid);
   if (isNaN(numPaid) || numPaid <= 0) {
     return res.status(400).json({ success: false, message: "amountPaid must be a positive number" });
@@ -21925,6 +22017,21 @@ app.post("/api/erp/fees/online/verify-payment", async (req, res) => {
   
   if (!isValidSignature) {
     return res.status(400).json({ success: false, message: "Invalid payment signature verification failed" });
+  }
+
+  // Idempotency guard: prevent duplicate payment callbacks for same paymentId or already-paid orderId
+  const existingOnlinePayment = ERP_FEE_PAYMENTS.find(
+    p => p.organization_id === orgId && (p.referenceNumber === paymentId || (orderId && p.remarks === `Online Payment Verified: ${orderId}`))
+  );
+  if (existingOnlinePayment || (order && order.status === "paid")) {
+    return res.json({
+      success: true,
+      duplicateCallback: true,
+      message: "Idempotent online payment callback: existing verified receipt returned",
+      receiptNo: existingOnlinePayment?.receiptNo || demand.receiptNo,
+      payment: existingOnlinePayment || null,
+      demand
+    });
   }
 
   const numPaid = Number(amountPaid || order?.amountINR || demand.balanceAmount || demand.netAmount);

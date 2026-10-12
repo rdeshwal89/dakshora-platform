@@ -421,7 +421,64 @@ describe("DAKSHORA 2.0 — PHASE 1 MANDATORY TENANT ISOLATION, ZERO-STATE & RESC
     assert.ok(Array.isArray(cmsBody.tree.mobile_app.enabledModules));
   });
 
-  test("10. Phase 4: Guarded Safe Deletion Preview protects production data and allows safe accidental cleanup", async () => {
+  test("10. Unified Ecosystem: ERP, Mobile App & Public School Website sync notices, rosters, and enforce draft privacy", async () => {
+    // 1. Publish a public notice for Tenant A
+    const pubNoticeRes = await fetch(`${BASE_URL}/api/cms/notices`, {
+      method: "POST",
+      headers: getHeaders(tenantA_AdminToken, tenantA_Id),
+      body: JSON.stringify({
+        title: "Annual Robotics & AI Olympiad 2026",
+        body: "All students of Class 6-12 are invited to register.",
+        status: "published",
+        is_published: true
+      })
+    });
+    assert.strictEqual(pubNoticeRes.status, 200);
+
+    // 2. Create a private draft notice for Tenant A
+    const draftNoticeRes = await fetch(`${BASE_URL}/api/cms/notices`, {
+      method: "POST",
+      headers: getHeaders(tenantA_AdminToken, tenantA_Id),
+      body: JSON.stringify({
+        title: "Confidential Internal Draft Circular",
+        body: "Draft memo not for public website.",
+        status: "draft",
+        is_published: false
+      })
+    });
+    assert.strictEqual(draftNoticeRes.status, 200);
+
+    // 3. Public School Website resolver returns Tenant A branding + published notice, hides draft notice
+    const pubWebRes = await fetch(`${BASE_URL}/api/public/schools/${tenantA_Id}/cms`);
+    assert.strictEqual(pubWebRes.status, 200);
+    const pubWebBody = await pubWebRes.json();
+    assert.strictEqual(pubWebBody.success, true);
+    assert.ok(pubWebBody.school.name.includes("Apex Modern Academy"));
+    assert.ok(pubWebBody.cmsTree.website_integration);
+    assert.ok(pubWebBody.cmsTree.mobile_app);
+    assert.ok(
+      pubWebBody.notices.some((n: any) => n.title === "Annual Robotics & AI Olympiad 2026"),
+      "Published notice must appear on public school website"
+    );
+    assert.ok(
+      !pubWebBody.notices.some((n: any) => n.title === "Confidential Internal Draft Circular"),
+      "Draft notice must never be exposed on public school website"
+    );
+
+    // 4. Unified ERP + Mobile App dashboard payload contains live studentRoster and syncTimestamp
+    const appSyncRes = await fetch(`${BASE_URL}/api/erp/dashboard`, {
+      method: "GET",
+      headers: getHeaders(tenantA_AdminToken, tenantA_Id)
+    });
+    assert.strictEqual(appSyncRes.status, 200);
+    const appSyncBody = await appSyncRes.json();
+    assert.strictEqual(appSyncBody.success, true);
+    assert.ok(Array.isArray(appSyncBody.studentRoster), "studentRoster must be returned for Mobile App sync");
+    assert.strictEqual(appSyncBody.studentRoster.length, 1, "Tenant A must have 1 student in live roster");
+    assert.ok(appSyncBody.syncTimestamp, "syncTimestamp must be present");
+  });
+
+  test("11. Phase 4: Guarded Safe Deletion Preview protects production data and allows safe accidental cleanup", async () => {
     // 1. Seed demo tenant protected from deletion
     const seedPreview = await fetch(`${BASE_URL}/api/admin/organizations/b17780e5-3832-4ac6-9aeb-33fd80c5cb0e/delete-preview`, {
       method: "GET",
