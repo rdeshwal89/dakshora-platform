@@ -18,6 +18,153 @@
   </head>
   <body class="bg-[#EDF2F7] text-slate-950 font-['Plus_Jakarta_Sans',sans-serif] antialiased selection:bg-indigo-600 selection:text-white">
     <div id="root"></div>
+    <!-- Dakshora 2.0 Single-Use Principal / Admin Activation Workflow -->
+    <div id="dakshora-activation-overlay" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(15,23,42,0.82); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); overflow-y:auto; padding:1.5rem; align-items:center; justify-content:center;">
+      <div id="dakshora-activation-card" style="background:#ffffff; border-radius:1.5rem; max-width:28rem; width:100%; box-shadow:0 25px 50px -12px rgba(0,0,0,0.35); border:1px solid #e2e8f0; overflow:hidden; font-family:'Plus Jakarta Sans',sans-serif; margin:auto;">
+        <div style="background:linear-gradient(135deg, #4f46e5 0%, #312e81 100%); padding:2rem 1.75rem; text-align:center; color:#ffffff;">
+          <div style="display:inline-flex; align-items:center; justify-content:center; width:3.25rem; height:3.25rem; background:rgba(255,255,255,0.15); border-radius:1rem; margin-bottom:1rem; border:1px solid rgba(255,255,255,0.25);">
+            <svg style="width:1.75rem; height:1.75rem; fill:none; stroke:#ffffff; stroke-width:2; stroke-linecap:round; stroke-linejoin:round;" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </div>
+          <h2 style="margin:0; font-size:1.35rem; font-weight:800; letter-spacing:-0.02em;">Activate School Account</h2>
+          <p style="margin:0.35rem 0 0 0; font-size:0.875rem; color:#c7d2fe;">Single-Use Administrator Cryptographic Setup</p>
+        </div>
+        <div id="dakshora-activation-body" style="padding:1.75rem;">
+          <div style="text-align:center; padding:1.5rem 0;">
+            <div style="display:inline-block; width:2.5rem; height:2.5rem; border:3px solid #e0e7ff; border-top-color:#4f46e5; border-radius:50%; animation:dakshora-spin 0.8s linear infinite;"></div>
+            <p style="margin-top:1rem; font-size:0.875rem; color:#64748b; font-weight:500;">Verifying cryptographic activation token...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <style>
+      @keyframes dakshora-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script>
+      (function() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const action = params.get('action');
+          const token = params.get('token');
+          if (action === 'activate' && token) {
+            const overlay = document.getElementById('dakshora-activation-overlay');
+            const body = document.getElementById('dakshora-activation-body');
+            if (overlay && body) {
+              overlay.style.display = 'flex';
+              fetch('/api/auth/verify-activation-token?token=' + encodeURIComponent(token))
+                .then(function(res) { return res.json().then(function(d) { return { status: res.status, data: d }; }); })
+                .then(function(result) {
+                  if (result.status === 200 && result.data.success && result.data.valid) {
+                    const info = result.data;
+                    body.innerHTML = `
+                      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:1rem; padding:1rem; margin-bottom:1.25rem;">
+                        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:700; color:#6366f1;">Verified School Entity</div>
+                        <div style="font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:0.25rem;">${info.schoolName || 'Your School'}</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.5rem; font-size:0.75rem;">
+                          <span style="background:#e0e7ff; color:#3730a3; padding:0.2rem 0.6rem; border-radius:0.5rem; font-weight:600;">Code: ${info.tenantCode || 'SCH-01'}</span>
+                          <span style="background:#e2e8f0; color:#334155; padding:0.2rem 0.6rem; border-radius:0.5rem; font-weight:600;">Board: ${info.board || 'CBSE'}</span>
+                        </div>
+                        <div style="margin-top:0.5rem; font-size:0.8rem; color:#64748b;">Principal Email: <strong style="color:#1e293b;">${info.email}</strong></div>
+                      </div>
+                      <form id="dakshora-activate-form" style="display:flex; flex-direction:column; gap:1rem;">
+                        <div>
+                          <label style="display:block; font-size:0.8rem; font-weight:600; color:#334155; margin-bottom:0.35rem;">Set Master Password</label>
+                          <input type="password" id="dakshora-act-pass" required minlength="8" placeholder="At least 8 characters" style="width:100%; box-sizing:border-box; padding:0.65rem 0.85rem; border:1.5px solid #cbd5e1; border-radius:0.65rem; font-size:0.9rem; outline:none; transition:border-color 0.2s;" onfocus="this.style.borderColor='#4f46e5'" onblur="this.style.borderColor='#cbd5e1'" />
+                        </div>
+                        <div>
+                          <label style="display:block; font-size:0.8rem; font-weight:600; color:#334155; margin-bottom:0.35rem;">Confirm Master Password</label>
+                          <input type="password" id="dakshora-act-confirm" required minlength="8" placeholder="Re-enter your password" style="width:100%; box-sizing:border-box; padding:0.65rem 0.85rem; border:1.5px solid #cbd5e1; border-radius:0.65rem; font-size:0.9rem; outline:none; transition:border-color 0.2s;" onfocus="this.style.borderColor='#4f46e5'" onblur="this.style.borderColor='#cbd5e1'" />
+                        </div>
+                        <div id="dakshora-act-error" style="display:none; background:#fef2f2; border:1px solid #fecaca; color:#dc2626; padding:0.65rem 0.85rem; border-radius:0.65rem; font-size:0.8rem;"></div>
+                        <button type="submit" id="dakshora-act-btn" style="background:#4f46e5; color:#ffffff; border:none; padding:0.85rem; border-radius:0.75rem; font-size:0.95rem; font-weight:700; cursor:pointer; transition:background 0.2s; box-shadow:0 10px 15px -3px rgba(79,70,229,0.3);" onmouseover="this.style.background='#4338ca'" onmouseout="this.style.background='#4f46e5'">
+                          Activate Account & Enter ERP
+                        </button>
+                      </form>
+                    `;
+                    const form = document.getElementById('dakshora-activate-form');
+                    const passInput = document.getElementById('dakshora-act-pass');
+                    const confirmInput = document.getElementById('dakshora-act-confirm');
+                    const errBox = document.getElementById('dakshora-act-error');
+                    const btn = document.getElementById('dakshora-act-btn');
+                    form.addEventListener('submit', function(e) {
+                      e.preventDefault();
+                      const p = passInput.value;
+                      const c = confirmInput.value;
+                      if (p.length < 8) {
+                        errBox.textContent = 'Password must be at least 8 characters long.';
+                        errBox.style.display = 'block';
+                        return;
+                      }
+                      if (p !== c) {
+                        errBox.textContent = 'Passwords do not match.';
+                        errBox.style.display = 'block';
+                        return;
+                      }
+                      errBox.style.display = 'none';
+                      btn.disabled = true;
+                      btn.textContent = 'Activating School Workspace...';
+                      fetch('/api/auth/activate-account', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token, password: p, confirmPassword: c })
+                      })
+                      .then(function(res) { return res.json().then(function(d) { return { status: res.status, data: d }; }); })
+                      .then(function(actResult) {
+                        if (actResult.status === 200 && actResult.data.success) {
+                          body.innerHTML = `
+                            <div style="text-align:center; padding:1.5rem 0;">
+                              <div style="display:inline-flex; align-items:center; justify-content:center; width:4rem; height:4rem; background:#ecfdf5; border-radius:50%; border:2px solid #a7f3d0; margin-bottom:1rem;">
+                                <svg style="width:2rem; height:2rem; stroke:#059669; fill:none; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round;" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                              </div>
+                              <h3 style="margin:0; font-size:1.25rem; font-weight:800; color:#065f46;">Account Activated!</h3>
+                              <p style="margin:0.5rem 0 1.5rem 0; font-size:0.875rem; color:#475569;">Your institutional credentials are secure. You can now access your School ERP portal.</p>
+                              <a href="/portal" style="display:block; text-decoration:none; background:#059669; color:#ffffff; padding:0.85rem; border-radius:0.75rem; font-size:0.95rem; font-weight:700; box-shadow:0 10px 15px -3px rgba(5,150,105,0.3);">
+                                Launch School ERP Workspace →
+                              </a>
+                            </div>
+                          `;
+                        } else {
+                          btn.disabled = false;
+                          btn.textContent = 'Activate Account & Enter ERP';
+                          errBox.textContent = (actResult.data && actResult.data.message) || 'Activation failed. Please try again.';
+                          errBox.style.display = 'block';
+                        }
+                      })
+                      .catch(function(err) {
+                        btn.disabled = false;
+                        btn.textContent = 'Activate Account & Enter ERP';
+                        errBox.textContent = 'Network error during activation. Please verify your connection.';
+                        errBox.style.display = 'block';
+                      });
+                    });
+                  } else {
+                    const msg = (result.data && result.data.message) || 'This activation link is invalid, expired, or has already been used.';
+                    body.innerHTML = `
+                      <div style="text-align:center; padding:1rem 0;">
+                        <div style="display:inline-flex; align-items:center; justify-content:center; width:3.5rem; height:3.5rem; background:#fef2f2; border-radius:50%; border:2px solid #fecaca; margin-bottom:1rem;">
+                          <svg style="width:1.75rem; height:1.75rem; stroke:#dc2626; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        </div>
+                        <h3 style="margin:0; font-size:1.15rem; font-weight:800; color:#991b1b;">Link Not Valid</h3>
+                        <p style="margin:0.5rem 0 1.5rem 0; font-size:0.85rem; color:#64748b; line-height:1.5;">${msg}</p>
+                        <a href="/portal" style="display:block; text-decoration:none; background:#4f46e5; color:#ffffff; padding:0.75rem; border-radius:0.75rem; font-size:0.9rem; font-weight:700;">
+                          Return to Portal Sign In
+                        </a>
+                      </div>
+                    `;
+                  }
+                })
+                .catch(function(err) {
+                  body.innerHTML = `
+                    <div style="text-align:center; padding:1rem 0;">
+                      <p style="color:#dc2626; font-size:0.875rem;">Unable to verify token. Please check your internet connection.</p>
+                      <a href="/portal" style="display:inline-block; margin-top:1rem; text-decoration:none; background:#4f46e5; color:#ffffff; padding:0.6rem 1.25rem; border-radius:0.5rem; font-size:0.85rem; font-weight:600;">Go to Portal</a>
+                    </div>
+                  `;
+                });
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
     <script>
       if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
         window.addEventListener('load', function() {
