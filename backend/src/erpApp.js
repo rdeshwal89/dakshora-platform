@@ -34,14 +34,13 @@ app.use(cors({
       origin.endsWith(".dakshora.co.in") ||
       origin.endsWith(".dakshora.in") ||
       origin.endsWith(".dakshora.app") ||
-      origin === "https://dakshora.co.in" ||
-      origin === "https://dakshora.in" ||
       /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
     ) {
       callback(null, true);
     } else {
-      // Allow custom domains registered with schools or public website visitors
-      callback(null, true);
+      // Unknown origin — reject CORS. Custom school domains must be allowlisted
+      // via the school's verified domain configuration in the platform.
+      callback(new Error(`CORS: Origin '${origin}' is not permitted`));
     }
   },
   credentials: true,
@@ -14647,6 +14646,110 @@ app.get(["/api/erp/staff/import-template", "/api/erp/staff/template"], (req, res
   res.send(csv);
 });
 
+// =========================================================================
+// TEACHER PROFILES — Extension of public.staff (canonical employee table)
+// P1-02 FIX: Previously linked to orphaned school_staff table. Now correctly
+// links to public.staff which is the production employee table.
+// Routes: /api/erp/staff/:id/teacher-profile (ERP namespace, tenant-scoped)
+// =========================================================================
+
+// POST/PUT /api/erp/staff/:id/teacher-profile — Upsert teacher-specific profile fields
+app.put("/api/erp/staff/:id/teacher-profile", requireAuth, async (req, res) => {
+  try {
+    const orgId = resolveTenantOrgId(req);
+    const staffId = req.params.id;
+
+    // Verify staff belongs to this tenant
+    const staffMember = ERP_STAFF.find(s =>
+      (s.organization_id === orgId) &&
+      (s.id === staffId || s.db_id === staffId)
+    );
+    if (!staffMember) {
+      return res.status(404).json({ success: false, error: "Staff member not found in your organization" });
+    }
+
+    const { subject_specialization, classes_assigned, salary_grade, profile_picture_url, bio } = req.body || {};
+
+    if (supabase) {
+      // Verify the staff row exists in public.staff with matching org
+      const { data: dbStaff } = await supabase
+        .from("staff")
+        .select("id, organization_id")
+        .eq("id", staffMember.db_id || staffId)
+        .eq("organization_id", orgId)
+        .maybeSingle();
+
+      if (!dbStaff) {
+        return res.status(404).json({ success: false, error: "Staff record not found in database" });
+      }
+
+      const { data: profile, error } = await supabase
+        .from("teacher_profiles")
+        .upsert({
+          staff_id: dbStaff.id,
+          subject_specialization: subject_specialization || null,
+          grade: Array.isArray(classes_assigned) ? classes_assigned.join(",") : (classes_assigned || null),
+          profile_picture_url: profile_picture_url || null,
+          bio: bio || null,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "staff_id" })
+        .select()
+        .single();
+
+      if (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      await recordAuditLog("TEACHER_PROFILE_UPDATED", req.user?.email, "teacher_profile", dbStaff.id, req);
+      return res.status(200).json({ success: true, profile });
+    }
+
+    return res.status(200).json({ success: true, profile: { staff_id: staffId, subject_specialization, bio } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
+  }
+});
+
+// GET /api/erp/staff/:id/teacher-profile — Retrieve teacher profile
+app.get("/api/erp/staff/:id/teacher-profile", requireAuth, async (req, res) => {
+  try {
+    const orgId = resolveTenantOrgId(req);
+    const staffId = req.params.id;
+
+    // Verify staff belongs to this tenant
+    const staffMember = ERP_STAFF.find(s =>
+      (s.organization_id === orgId) &&
+      (s.id === staffId || s.db_id === staffId)
+    );
+    if (!staffMember) {
+      return res.status(404).json({ success: false, error: "Staff member not found in your organization" });
+    }
+
+    if (supabase) {
+      const { data: profile, error } = await supabase
+        .from("teacher_profiles")
+        .select("*")
+        .eq("staff_id", staffMember.db_id || staffId)
+        .maybeSingle();
+
+      if (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      return res.status(200).json({
+        success: true,
+        profile: profile || null,
+        staff: { id: staffMember.id, name: staffMember.name, designation: staffMember.designation }
+      });
+    }
+
+    return res.status(404).json({ success: false, error: "Database not connected" });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message || "Internal server error" });
+  }
+});
+
+
 // GET /api/erp/staff/:id - Single staff record
 app.get("/api/erp/staff/:id", (req, res, next) => {
   const { id } = req.params;
@@ -17320,47 +17423,10 @@ app.post("/api/erp/responsibilities", (req, res) => {
   res.status(201).json({ success: true, responsibility: created });
 });
 
-// 3. GET /api/erp/staff/:id/responsibilities - List incharge assignments for staff
-app.get("/api/erp/staff/:id/responsibilities", (req, res) => {
-  const orgId = resolveTenantOrgId(req);
-  const staffId = req.params.id;
-  const list = ResponsibilityService.getStaffResponsibilities(orgId, staffId, req.query.session);
-  res.json({ success: true, staffId, responsibilities: list });
-});
-
-// 4. POST /api/erp/staff/:id/responsibilities - Assign incharge role with scope
-app.post("/api/erp/staff/:id/responsibilities", (req, res) => {
-  const orgId = resolveTenantOrgId(req);
-  const staffId = req.params.id;
-  const { responsibility_type_id, responsibility_code, scope_type, scope_id, academic_session_id } = req.body;
-  if (!responsibility_type_id && !responsibility_code) {
-    return res.status(400).json({ success: false, message: "Responsibility type or code is required" });
-  }
-  const assigned = ResponsibilityService.assignStaffResponsibility(orgId, staffId, req.body);
-  res.status(201).json({ success: true, responsibility: assigned });
-});
-
-// 5. PATCH /api/erp/staff/:id/responsibilities/:respId - Update incharge assignment
-app.patch("/api/erp/staff/:id/responsibilities/:respId", (req, res) => {
-  const orgId = resolveTenantOrgId(req);
-  const { id: staffId, respId } = req.params;
-  const updated = ResponsibilityService.updateStaffResponsibility(orgId, staffId, respId, req.body);
-  if (!updated) {
-    return res.status(404).json({ success: false, message: "Staff responsibility record not found" });
-  }
-  res.json({ success: true, responsibility: updated });
-});
-
-// 6. DELETE /api/erp/staff/:id/responsibilities/:respId - Revoke responsibility
-app.delete("/api/erp/staff/:id/responsibilities/:respId", (req, res) => {
-  const orgId = resolveTenantOrgId(req);
-  const { id: staffId, respId } = req.params;
-  const deleted = ResponsibilityService.deleteStaffResponsibility(orgId, staffId, respId);
-  if (!deleted) {
-    return res.status(404).json({ success: false, message: "Staff responsibility record not found" });
-  }
-  res.json({ success: true, message: "Responsibility assignment revoked successfully" });
-});
+// NOTE: Staff responsibility CRUD routes are registered in the canonical
+// Staff Responsibility Scoping Module below (Section 14g, lines ~38605+).
+// That implementation includes authorization checks, conflict detection,
+// and audit logging. P1-04 FIX: Removed duplicate block — 2026-10-14.
 
 // 7. GET /api/erp/staff/:id/effective-access - Effective Access Preview for Admin
 app.get("/api/erp/staff/:id/effective-access", (req, res) => {
@@ -18083,7 +18149,7 @@ app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) =>
     };
   }
 
-  const exIdx = ERP_CLASSES.findIndex(c => (c.organization_id === orgId) && c.grade.toLowerCase() === effectiveGrade.toLowerCase());
+  const exIdx = ERP_CLASSES.findIndex(c => (c.organization_id === orgId) && (c.grade || c.name || "").toLowerCase() === effectiveGrade.toLowerCase());
   if (exIdx !== -1) ERP_CLASSES[exIdx] = newClass;
   else ERP_CLASSES.push(newClass);
 
@@ -18101,8 +18167,8 @@ app.post(["/api/erp/academics/classes", "/api/erp/classes"], async (req, res) =>
     }
     const existingSec = ERP_SECTIONS.find(s => 
       (s.organization_id === orgId) && 
-      s.grade.toLowerCase() === effectiveGrade.toLowerCase() && 
-      s.section.toUpperCase() === secName
+      (s.grade || "").toLowerCase() === effectiveGrade.toLowerCase() && 
+      (s.section || s.name || "").toUpperCase() === secName
     );
     if (!existingSec) {
       ERP_SECTIONS.push({
@@ -39142,6 +39208,152 @@ app.post("/api/erp/test/reset-state", (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ─── P0-01: STARTUP DATABASE SYNC ──────────────────────────────────────────
+// Loads all persisted DB records back into ERP_* in-memory arrays so that data
+// is not lost across server restarts. Called once during module initialisation.
+async function syncFromDatabase() {
+  if (!supabase) {
+    console.warn("[SyncDB] Supabase client not available — skipping startup sync.");
+    return;
+  }
+  console.log("[SyncDB] Starting startup database sync...");
+  try {
+    // 0. Organizations (load all registered schools into IN_MEMORY_ORGANIZATIONS)
+    const { data: orgs } = await supabase.from("organizations").select("*");
+    if (orgs && orgs.length) {
+      const seedOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+      const orgMap = new Map();
+      if (seedOrg) orgMap.set(seedOrg.id, seedOrg);
+      for (const org of orgs) {
+        orgMap.set(org.id, { ...orgMap.get(org.id), ...org });
+      }
+      IN_MEMORY_ORGANIZATIONS = Array.from(orgMap.values());
+      console.log(`[SyncDB] Loaded ${IN_MEMORY_ORGANIZATIONS.length} organizations`);
+    }
+
+    // 1. Staff (production employees — public.staff is the canonical employee table)
+    const { data: staff } = await supabase.from("staff").select("*");
+    if (staff && staff.length) {
+      ERP_STAFF = staff.map((s) => ({
+        ...s,
+        empId: s.emp_id || s.empId,
+        org_id: s.organization_id || s.org_id,
+        employmentType: s.employment_type || s.employmentType,
+        joiningDate: s.joining_date || s.joiningDate,
+      }));
+      console.log(`[SyncDB] Loaded ${staff.length} staff records`);
+    }
+
+    // 2. Students
+    const { data: students } = await supabase.from("students").select("*");
+    if (students && students.length) {
+      ERP_STUDENTS = students.map((std) => ({
+        ...std,
+        org_id: std.organization_id || std.org_id,
+        admissionNo: std.admission_number || std.admission_no || std.admissionNo,
+        rollNo: std.roll_number || std.roll_no || std.rollNo,
+      }));
+      console.log(`[SyncDB] Loaded ${students.length} students`);
+    }
+
+    // 3. Academic sessions
+    const { data: sessions } = await supabase.from("academic_sessions").select("*");
+    if (sessions && sessions.length) {
+      ERP_ACADEMIC_SESSIONS = sessions;
+      console.log(`[SyncDB] Loaded ${sessions.length} academic sessions`);
+    }
+
+    // 4. Classes (normalize grade and display_order)
+    const { data: classes } = await supabase.from("classes").select("*");
+    if (classes && classes.length) {
+      ERP_CLASSES = classes.map((c) => ({
+        ...c,
+        grade: c.name || c.grade || "",
+        name: c.name || c.grade || "",
+        order: c.display_order ?? c.order ?? 1,
+        wing: c.code || c.wing || "Secondary Wing",
+        status: c.status || "active",
+      }));
+      console.log(`[SyncDB] Loaded ${classes.length} classes`);
+    }
+
+    // 5. Sections (resolve grade from matched class)
+    const { data: sections } = await supabase.from("sections").select("*");
+    if (sections && sections.length) {
+      ERP_SECTIONS = sections.map((s) => {
+        const matchedClass = ERP_CLASSES.find((c) => c.id === s.class_id);
+        return {
+          ...s,
+          grade: matchedClass?.grade || matchedClass?.name || s.grade || "",
+          section: s.name || s.section || "A",
+          roomNumber: s.room_no || s.roomNumber || "R101",
+          status: s.status || "active",
+        };
+      });
+      console.log(`[SyncDB] Loaded ${sections.length} sections`);
+    }
+
+    // 6. Subjects
+    const { data: subjects } = await supabase.from("subjects").select("*");
+    if (subjects && subjects.length) {
+      ERP_SUBJECTS = subjects.map((sub) => ({
+        ...sub,
+        name: sub.name || "",
+        code: sub.code || "",
+        category: sub.type || sub.category || "Core",
+        status: sub.status || "active",
+      }));
+      console.log(`[SyncDB] Loaded ${subjects.length} subjects`);
+    }
+
+    // 7. Fee structures
+    const { data: feeStructures } = await supabase.from("fee_structures").select("*");
+    if (feeStructures && feeStructures.length) {
+      ERP_FEE_STRUCTURES = feeStructures;
+      console.log(`[SyncDB] Loaded ${feeStructures.length} fee structures`);
+    }
+
+    // 8. Fee payments (last 90 days to bound memory usage)
+    const since90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: feePayments } = await supabase
+      .from("fee_payments")
+      .select("*")
+      .gte("created_at", since90);
+    if (feePayments && feePayments.length) {
+      ERP_FEE_PAYMENTS = feePayments;
+      console.log(`[SyncDB] Loaded ${feePayments.length} fee payments (last 90d)`);
+    }
+
+    // 9. SaaS subscriptions
+    const { data: subs } = await supabase.from("saas_subscriptions").select("*");
+    if (subs && subs.length) {
+      SAAS_SUBSCRIPTIONS = subs;
+      console.log(`[SyncDB] Loaded ${subs.length} SaaS subscriptions`);
+    }
+
+    // 10. Websites / CMS sites
+    const { data: websites } = await supabase.from("websites").select("*");
+    if (websites && websites.length) {
+      IN_MEMORY_WEBSITES = websites;
+      console.log(`[SyncDB] Loaded ${websites.length} websites`);
+    }
+
+    // NOTE: school_onboarding (16-step ERP wizard) is queried live from the DB
+    // on every request via getOrCreateOnboarding() — no in-memory cache needed.
+    // NOTE: ONBOARDING_REQUESTS_STORE (school join applications) uses demo seed data
+    // only; a future migration will link this to a DB table.
+
+    console.log("[SyncDB] ✅ Startup database sync complete.");
+  } catch (err) {
+    console.error("[SyncDB] ❌ Startup sync error:", err.message);
+  }
+}
+
+// Run the sync immediately (non-blocking — errors are logged but do not crash the server)
+syncFromDatabase().catch((err) =>
+  console.error("[SyncDB] Unhandled sync error:", err.message)
+);
 
 export default app;
 export { app as erpApp };

@@ -11,6 +11,7 @@ import { authRoutes } from "./modules/auth/routes.js";
 import { bootstrapSuperAdmin } from "./services/bootstrapSuperAdmin.js";
 // @ts-ignore
 import erpApp from "./erpApp.js";
+import { registerTeacherProfileRoutes } from "./modules/education/teacherProfile.routes.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -51,15 +52,14 @@ export async function buildApp() {
         origin.endsWith(".dakshora.co.in") ||
         origin.endsWith(".dakshora.in") ||
         origin.endsWith(".dakshora.app") ||
-        origin === "https://dakshora.co.in" ||
-        origin === "https://dakshora.in" ||
         /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)
       ) {
         cb(null, true);
         return;
       }
-      // Allow custom domains registered with schools or public website visitors
-      cb(null, true);
+      // Unknown origin — reject CORS. Custom school domains must be allowlisted
+      // via the school's verified domain configuration in the platform.
+      cb(new Error(`CORS: Origin '${origin}' is not permitted`), false);
     },
     credentials: true,
     allowedHeaders: [
@@ -298,6 +298,9 @@ export async function buildApp() {
       };
     }
   );
+
+  // Register teacher profile Fastify routes
+  await registerTeacherProfileRoutes(app);
 
   // Securely bootstrap Super Admin if environment credentials configured
   await bootstrapSuperAdmin();
