@@ -7,6 +7,12 @@ import { ResponsibilityService } from "./services/responsibilityStore.js";
 import { SecureOtpService } from "./services/secureOtpService.js";
 import WebSocket from "ws";
 import Razorpay from "razorpay";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 if (typeof globalThis.WebSocket === "undefined") {
   globalThis.WebSocket = WebSocket;
@@ -5392,6 +5398,38 @@ app.get("/api/public/schools/:slug/mobile-app/download", async (req, res) => {
     verifiedSsl: true,
     hostDomain
   });
+});
+
+// Helper to locate physical APK file on server
+function resolvePhysicalApkPath() {
+  const candidates = [
+    path.resolve(process.cwd(), "android-build/Dakshora ERP-unsigned.apk"),
+    path.resolve(process.cwd(), "../android-build/Dakshora ERP-unsigned.apk"),
+    path.resolve(process.cwd(), "android-build/Dakshora ERP.apk"),
+    path.resolve(__dirname, "../../android-build/Dakshora ERP-unsigned.apk"),
+    path.resolve(__dirname, "../android-build/Dakshora ERP-unsigned.apk")
+  ];
+  return candidates.find(c => fs.existsSync(c)) || null;
+}
+
+// GET /assets/mobile/:filename, /api/public/schools/:slug/mobile-app/apk, /api/public/mobile-app/:id/download
+app.get([
+  "/assets/mobile/:filename",
+  "/api/public/schools/:slug/mobile-app/apk",
+  "/api/public/mobile-app/:id/download"
+], (req, res) => {
+  const apkPath = resolvePhysicalApkPath();
+  if (!apkPath) {
+    return res.status(404).json({
+      success: false,
+      message: "Mobile application package (.apk) artifact not found on server."
+    });
+  }
+
+  const requestedFilename = req.params.filename || (req.params.slug ? `${req.params.slug}-parentapp-v2.0.0.apk` : "newidealpublicschool-parentapp-v2.0.0.apk");
+  res.setHeader("Content-Type", "application/vnd.android.package-archive");
+  res.setHeader("Content-Disposition", `attachment; filename="${requestedFilename}"`);
+  return res.sendFile(apkPath);
 });
 
 // GET /api/admin/white-label/config/:orgId & GET /api/erp/white-label/config
