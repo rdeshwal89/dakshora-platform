@@ -71,6 +71,16 @@ const nextConfig: NextConfig = {
         destination: "/privacy-policy.html",
       },
 
+      // 2b. Dedicated School Routes
+      {
+        source: "/new-ideal-public-school",
+        destination: "/school/new-ideal-public-school",
+      },
+      {
+        source: "/school",
+        destination: "/school/new-ideal-public-school",
+      },
+
       // 3. SPA Portal Entry & Sub-routes
       {
         source: "/",

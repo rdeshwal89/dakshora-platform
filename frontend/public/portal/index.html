@@ -5,6 +5,18 @@
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DAKSHORA 2.0 | School ERP & Academic Management System</title>
+    <script>
+      (function() {
+        try {
+          var p = new URLSearchParams(window.location.search);
+          var s = p.get('school') || p.get('orgId') || p.get('tenant');
+          var path = window.location.pathname.toLowerCase();
+          if ((s && s.toLowerCase().includes('ideal')) || path.includes('ideal')) {
+            document.title = "New Ideal Public School | Official Smart Campus Website";
+          }
+        } catch(e) {}
+      })();
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#F8FAFC" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
