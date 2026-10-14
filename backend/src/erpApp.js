@@ -35410,6 +35410,17 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           slug: slug.toLowerCase().trim(),
           plan: plan || onboarding.draft_data?.plan || "growth"
         };
+
+        if (supabase) {
+          try {
+            await supabase.from("organizations").update({
+              name: name.trim(),
+              slug: slug.toLowerCase().trim()
+            }).eq("id", orgId);
+          } catch (e) {
+            console.warn("[Onboarding Step 1] DB org update warning:", e.message);
+          }
+        }
         break;
       }
 
@@ -35529,6 +35540,48 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           ...onboarding.draft_data,
           campus: { name: name.trim(), code: code.trim().toUpperCase(), address, city, state, pin, contactPhone, contactEmail, capacity, isMain: !!isMain }
         };
+
+        if (supabase) {
+          try {
+            const { data: existingDbCamp } = await supabase
+              .from("campuses")
+              .select("id")
+              .eq("organization_id", orgId)
+              .eq("code", code.trim().toUpperCase())
+              .maybeSingle();
+
+            if (existingDbCamp) {
+              await supabase.from("campuses").update({
+                name: name.trim(),
+                address: address || "Campus Address",
+                city: city || "Gurugram",
+                state: state || "Haryana",
+                pincode: pin || "122001",
+                contact_phone: contactPhone || null,
+                contact_email: contactEmail || null,
+                principal_name: payload.principalName || null,
+                is_main_branch: !!isMain
+              }).eq("id", existingDbCamp.id);
+            } else {
+              await supabase.from("campuses").insert([{
+                organization_id: orgId,
+                name: name.trim(),
+                code: code.trim().toUpperCase(),
+                address: address || "Campus Address",
+                city: city || "Gurugram",
+                state: state || "Haryana",
+                pincode: pin || "122001",
+                contact_phone: contactPhone || null,
+                contact_email: contactEmail || null,
+                principal_name: payload.principalName || null,
+                is_main_branch: !!isMain,
+                status: "active"
+              }]);
+            }
+          } catch (e) {
+            console.warn("[Onboarding Step 3] DB campus write warning:", e.message);
+          }
+        }
         break;
       }
 
@@ -35568,6 +35621,20 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           ...onboarding.draft_data,
           academicSession: { name: name.trim(), startDate, endDate, status, isCurrent: !!isCurrent }
         };
+
+        if (supabase) {
+          try {
+            await supabase.from("academic_sessions").upsert([{
+              organization_id: orgId,
+              name: name.trim(),
+              start_date: startDate,
+              end_date: endDate,
+              is_current: !!isCurrent
+            }], { onConflict: "organization_id, name" });
+          } catch (e) {
+            console.warn("[Onboarding Step 4] DB session write warning:", e.message);
+          }
+        }
         break;
       }
 
@@ -35593,6 +35660,35 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
             });
           }
         });
+
+        if (supabase) {
+          try {
+            for (let i = 0; i < classesToAdd.length; i++) {
+              const cls = classesToAdd[i];
+              const grade = cls.grade || cls.name;
+              const sectionName = cls.section || "A";
+
+              const { data: dbCls } = await supabase.from("classes").upsert([{
+                organization_id: orgId,
+                name: grade,
+                code: (grade || "").replace(/\s+/g, '-').toUpperCase(),
+                display_order: i + 1
+              }], { onConflict: "organization_id, name" }).select().maybeSingle();
+
+              if (dbCls) {
+                await supabase.from("sections").upsert([{
+                  organization_id: orgId,
+                  class_id: dbCls.id,
+                  name: sectionName,
+                  room_no: cls.roomNumber || "Room 101",
+                  capacity: 40
+                }], { onConflict: "class_id, name" });
+              }
+            }
+          } catch (e) {
+            console.warn("[Onboarding Step 5] DB classes write warning:", e.message);
+          }
+        }
         break;
       }
 
@@ -35616,6 +35712,23 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
               });
             }
           });
+
+          if (supabase) {
+            try {
+              for (const sub of subjectsToAdd) {
+                const subjectName = sub.subjectName || sub.name;
+                const subjectCode = (sub.subjectCode || sub.code || `SUB-${subjectName.slice(0, 3).toUpperCase()}`).toUpperCase();
+                await supabase.from("subjects").upsert([{
+                  organization_id: orgId,
+                  name: subjectName,
+                  code: subjectCode,
+                  subject_type: sub.category?.toLowerCase() === "elective" ? "elective" : "mandatory"
+                }], { onConflict: "organization_id, name" });
+              }
+            } catch (e) {
+              console.warn("[Onboarding Step 6] DB subjects write warning:", e.message);
+            }
+          }
         }
         break;
       }
@@ -35644,6 +35757,33 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
               }
             }
           });
+
+          if (supabase) {
+            try {
+              for (const st of payload.staff) {
+                if (st.name && st.email) {
+                  const empCode = st.empId || `EMP-${Date.now().toString().slice(-4)}`;
+                  const parts = st.name.trim().split(" ");
+                  const firstName = parts[0] || "Staff";
+                  const lastName = parts.slice(1).join(" ") || "";
+                  await supabase.from("staff").upsert([{
+                    organization_id: orgId,
+                    employee_code: empCode,
+                    first_name: firstName,
+                    last_name: lastName,
+                    email: st.email.trim().toLowerCase(),
+                    phone: st.phone || "+91 98000 00000",
+                    designation: st.designation || st.role || "Faculty",
+                    department: st.department || "Academic Faculty",
+                    employment_type: st.staffType || "full_time",
+                    is_active: true
+                  }], { onConflict: "organization_id, employee_code" });
+                }
+              }
+            } catch (e) {
+              console.warn("[Onboarding Step 7] DB staff write warning:", e.message);
+            }
+          }
         }
         break;
       }
@@ -35674,6 +35814,31 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
               }
             }
           });
+
+          if (supabase) {
+            try {
+              for (const std of payload.students) {
+                if (std.name && std.grade) {
+                  const rollNo = std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`;
+                  const parts = std.name.trim().split(" ");
+                  const firstName = parts[0] || "Student";
+                  const lastName = parts.slice(1).join(" ") || "";
+                  await supabase.from("students").upsert([{
+                    organization_id: orgId,
+                    admission_no: rollNo,
+                    first_name: firstName,
+                    last_name: lastName,
+                    gender: std.gender || "other",
+                    phone: std.parentPhone || "+91 98000 00000",
+                    email: std.parentEmail || "parent@example.com",
+                    admission_status: "admitted"
+                  }], { onConflict: "organization_id, admission_no" });
+                }
+              }
+            } catch (e) {
+              console.warn("[Onboarding Step 8] DB students write warning:", e.message);
+            }
+          }
         }
         break;
       }
@@ -35700,6 +35865,44 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
               }
             }
           });
+
+          if (supabase) {
+            try {
+              const { data: dbSess } = await supabase
+                .from("academic_sessions")
+                .select("id")
+                .eq("organization_id", orgId)
+                .maybeSingle();
+
+              for (const f of feeHeads) {
+                if (f.feeHead && f.amountInr !== undefined) {
+                  const { data: existingFee } = await supabase
+                    .from("fee_structures")
+                    .select("id")
+                    .eq("organization_id", orgId)
+                    .eq("name", f.feeHead.trim())
+                    .maybeSingle();
+
+                  if (existingFee) {
+                    await supabase.from("fee_structures").update({
+                      amount: parseFloat(f.amountInr) || 12000,
+                      frequency: f.frequency || "quarterly"
+                    }).eq("id", existingFee.id);
+                  } else {
+                    await supabase.from("fee_structures").insert([{
+                      organization_id: orgId,
+                      academic_session_id: dbSess?.id || null,
+                      name: f.feeHead.trim(),
+                      amount: parseFloat(f.amountInr) || 12000,
+                      frequency: f.frequency || "quarterly"
+                    }]);
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("[Onboarding Step 9] DB fees write warning:", e.message);
+            }
+          }
         }
         break;
       }
@@ -37276,14 +37479,31 @@ app.get("/api/admin/plans", (req, res) => {
 });
 
 // 11. GET /api/admin/usage - Platform Usage Telemetry
-app.get("/api/admin/usage", (req, res) => {
+app.get("/api/admin/usage", async (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
+
+  let studentsCount = ERP_STUDENTS.length;
+  let staffCount = ERP_STAFF.length;
+  let campusesCount = ERP_CAMPUSES.length;
+
+  if (supabase) {
+    try {
+      const [stuRes, stfRes, cmpRes] = await Promise.all([
+        supabase.from("students").select("id", { count: "exact", head: true }),
+        supabase.from("staff").select("id", { count: "exact", head: true }),
+        supabase.from("campuses").select("id", { count: "exact", head: true })
+      ]);
+      if (typeof stuRes.count === "number") studentsCount = stuRes.count;
+      if (typeof stfRes.count === "number") staffCount = stfRes.count;
+      if (typeof cmpRes.count === "number" && cmpRes.count > 0) campusesCount = cmpRes.count;
+    } catch (_) {}
+  }
 
   const usage = {
     platformTotals: {
-      students: ERP_STUDENTS.length,
-      staff: ERP_STAFF.length,
-      campuses: ERP_CAMPUSES.length,
+      students: studentsCount,
+      staff: staffCount,
+      campuses: campusesCount,
       storageGB: 1.45,
       aiRequests: SAAS_AI_USAGE_LOGS.length || 142,
       communicationMessages: ERP_MESSAGE_DELIVERIES.length || 18,
@@ -37304,11 +37524,21 @@ app.get("/api/admin/usage", (req, res) => {
 });
 
 // 12. GET /api/admin/onboarding - Platform Onboarding Monitor
-app.get("/api/admin/onboarding", (req, res) => {
+app.get("/api/admin/onboarding", async (req, res) => {
   if (!checkPlatformAdminRole(req, res)) return;
 
+  let dbOnboardingMap = new Map();
+  if (supabase) {
+    try {
+      const { data: dbOnbs } = await supabase.from("school_onboarding").select("*");
+      if (dbOnbs) {
+        dbOnbs.forEach(o => dbOnboardingMap.set(o.organization_id, o));
+      }
+    } catch (_) {}
+  }
+
   const records = IN_MEMORY_ORGANIZATIONS.map(org => {
-    const onb = ERP_ONBOARDING[org.id] || {
+    const onb = dbOnboardingMap.get(org.id) || ERP_ONBOARDING[org.id] || {
       id: `onb-${org.id.slice(0, 6)}`,
       organization_id: org.id,
       status: org.status === "active" ? "active" : "in_progress",
@@ -37318,17 +37548,19 @@ app.get("/api/admin/onboarding", (req, res) => {
       activated_at: org.status === "active" ? "2026-04-01T12:00:00Z" : null
     };
 
+    const completed = Array.isArray(onb.completed_steps) ? onb.completed_steps : [];
+
     return {
       organizationId: org.id,
       organizationName: org.name,
       organizationSlug: org.slug,
       onboardingId: onb.id,
-      status: onb.status,
-      currentStep: onb.current_step,
-      completedStepsCount: onb.completed_steps.length,
-      progressPercentage: Math.round((onb.completed_steps.length / 16) * 100),
-      startedAt: onb.started_at,
-      activatedAt: onb.activated_at
+      status: onb.status || (org.status === "active" ? "active" : "in_progress"),
+      currentStep: onb.current_step || 1,
+      completedStepsCount: completed.length,
+      progressPercentage: Math.round((completed.length / 16) * 100),
+      startedAt: onb.started_at || org.created_at,
+      activatedAt: onb.activated_at || null
     };
   });
 
@@ -39339,10 +39571,84 @@ async function syncFromDatabase() {
       console.log(`[SyncDB] Loaded ${websites.length} websites`);
     }
 
-    // NOTE: school_onboarding (16-step ERP wizard) is queried live from the DB
-    // on every request via getOrCreateOnboarding() — no in-memory cache needed.
-    // NOTE: ONBOARDING_REQUESTS_STORE (school join applications) uses demo seed data
-    // only; a future migration will link this to a DB table.
+    // 11. Campuses
+    const { data: campuses } = await supabase.from("campuses").select("*");
+    if (campuses && campuses.length) {
+      const demoCampuses = ERP_CAMPUSES.filter(c => c.organization_id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+      const mappedCampuses = campuses.map(c => ({
+        id: c.id,
+        organization_id: c.organization_id,
+        name: c.name,
+        code: c.code,
+        address: c.address || "Campus Address",
+        city: c.city || "Gurugram",
+        state: c.state || "Haryana",
+        pin: c.pincode || "122001",
+        contactPhone: c.contact_phone || "+91 11 2613 8900",
+        contactEmail: c.contact_email || "campus@school.edu",
+        principalName: c.principal_name || "Campus Head",
+        status: c.status || "active",
+        isMain: !!c.is_main_branch,
+        capacity: 1500,
+        createdAt: c.created_at
+      }));
+      // Merge with demo, deduplicating by id
+      const campusMap = new Map();
+      demoCampuses.forEach(c => campusMap.set(c.id, c));
+      mappedCampuses.forEach(c => campusMap.set(c.id, c));
+      ERP_CAMPUSES = Array.from(campusMap.values());
+      console.log(`[SyncDB] Loaded ${campuses.length} campuses (total active in memory: ${ERP_CAMPUSES.length})`);
+    }
+
+    // 12. Timetable Slots
+    const { data: timetables } = await supabase.from("timetables").select("*");
+    if (timetables && timetables.length) {
+      const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const dbSlots = timetables.map(t => {
+        const matchedSection = ERP_SECTIONS.find(s => s.id === t.section_id);
+        const matchedClass = matchedSection ? ERP_CLASSES.find(c => c.id === matchedSection.class_id) : null;
+        const matchedSub = ERP_SUBJECTS.find(sub => sub.id === t.subject_id);
+        const matchedStaff = ERP_STAFF.find(st => st.id === t.teacher_member_id || st.user_id === t.teacher_member_id);
+        const dayOfWeek = weekdayNames[t.weekday] || "Monday";
+        return {
+          id: t.id,
+          db_id: t.id,
+          organization_id: t.organization_id,
+          session: "2026-27",
+          grade: matchedClass?.grade || matchedClass?.name || matchedSection?.grade || "Class 10",
+          section: matchedSection?.section || matchedSection?.name || "A",
+          dayOfWeek,
+          periodNumber: t.period_no,
+          subjectId: t.subject_id,
+          subjectName: matchedSub?.name || "Subject",
+          subjectCode: matchedSub?.code || "",
+          teacherId: t.teacher_member_id,
+          teacherName: matchedStaff?.name || "",
+          roomNumber: t.room_no || "Room 101",
+          slotType: "regular",
+          startTime: t.start_time,
+          endTime: t.end_time,
+          createdAt: t.created_at
+        };
+      });
+      const demoSlots = ERP_TIMETABLE_SLOTS.filter(s => s.organization_id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" && !dbSlots.some(dbS => dbS.id === s.id));
+      ERP_TIMETABLE_SLOTS = [...demoSlots, ...dbSlots];
+      console.log(`[SyncDB] Loaded ${timetables.length} timetable slots from PostgreSQL (total active: ${ERP_TIMETABLE_SLOTS.length})`);
+    }
+
+    // 13. School Onboarding Progress
+    const { data: onbList } = await supabase.from("school_onboarding").select("*");
+    if (onbList && onbList.length) {
+      onbList.forEach(onb => {
+        ERP_ONBOARDING[onb.organization_id] = {
+          ...onb,
+          organizationId: onb.organization_id,
+          currentStep: onb.current_step,
+          completedSteps: onb.completed_steps || []
+        };
+      });
+      console.log(`[SyncDB] Loaded ${onbList.length} school onboarding progress records`);
+    }
 
     console.log("[SyncDB] ✅ Startup database sync complete.");
   } catch (err) {
