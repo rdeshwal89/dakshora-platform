@@ -5265,7 +5265,7 @@ app.get("/api/public/schools/:slug/mobile-app/twa-config", async (req, res) => {
       };
     }
 
-    const hostDomain = (website?.domain || `${org.slug}.school.dakshora.app`).replace(/^https?:\/\//, "");
+    const hostDomain = (website?.domain || "dakshora.co.in").replace(/^https?:\/\//, "");
     const cleanPackageSlug = org.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
     const packageId = `in.edu.${cleanPackageSlug}.parentapp`;
     const themeColor = org.branding?.primaryColor || "#0B0F19";
@@ -5370,7 +5370,7 @@ app.get("/api/public/schools/:slug/mobile-app/download", async (req, res) => {
     };
   }
 
-  const hostDomain = (website?.domain || `${org.slug}.school.dakshora.app`).replace(/^https?:\/\//, "");
+  const hostDomain = (website?.domain || "dakshora.co.in").replace(/^https?:\/\//, "");
   const cleanPackageSlug = org.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
   const packageId = `in.edu.${cleanPackageSlug}.parentapp`;
   const sha256Checksum = crypto.createHash("sha256").update(`${packageId}_build_release_v2.0.0`).digest("hex");
@@ -5464,7 +5464,7 @@ app.get(["/api/admin/white-label/config/:orgId", "/api/erp/white-label/config"],
 
   const cleanPackageSlug = (org.slug || "school").toLowerCase().replace(/[^a-z0-9]/g, "");
   const packageId = `in.edu.${cleanPackageSlug}.parentapp`;
-  const hostDomain = (website?.domain || `${org.slug}.school.dakshora.app`).replace(/^https?:\/\//, "");
+  const hostDomain = (website?.domain || "dakshora.co.in").replace(/^https?:\/\//, "");
 
   const pastBuilds = [];
   IN_MEMORY_WHITE_LABEL_BUILDS.forEach((b) => {
@@ -5564,7 +5564,7 @@ app.post("/api/admin/white-label/build", requireAuth, requireSuperAdmin, async (
   const cleanPackageSlug = (org.slug || "school").toLowerCase().replace(/[^a-z0-9]/g, "");
   const finalPackageId = (customPackageId || `in.edu.${cleanPackageSlug}.parentapp`).trim();
   const finalAppName = (customAppName || org.name.split(" ").slice(0, 2).join(" ") || org.name).slice(0, 25).trim();
-  const hostDomain = (website?.domain || `${org.slug}.school.dakshora.app`).replace(/^https?:\/\//, "");
+  const hostDomain = (website?.domain || "dakshora.co.in").replace(/^https?:\/\//, "");
 
   const buildId = crypto.randomUUID ? crypto.randomUUID() : `bld-${Date.now()}`;
   const sha256Fingerprint = crypto.createHash("sha256").update(`release_key_${finalPackageId}_${organizationId}`).digest("hex").toUpperCase().match(/.{2}/g).join(":");

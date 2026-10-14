@@ -52,6 +52,14 @@ const nextConfig: NextConfig = {
         source: "/health/supabase",
         destination: `${backendUrl}/health/supabase`,
       },
+      {
+        source: "/assets/mobile/:path*",
+        destination: `${backendUrl}/assets/mobile/:path*`,
+      },
+      {
+        source: "/.well-known/:path*",
+        destination: `${backendUrl}/.well-known/:path*`,
+      },
 
       // 2. Legal & Policy Pages
       {
