@@ -24,6 +24,21 @@ export default function SchoolPublicPage() {
   const [lang, setLang] = useState<"en" | "hi">("en");
   const isHi = lang === "hi";
 
+  // Login Modal State
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [loginRole, setLoginRole] = useState<"principal" | "teacher" | "parent">("principal");
+  const [loginMethod, setLoginMethod] = useState<"password" | "otp">("password");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginMobile, setLoginMobile] = useState("");
+  const [loginOtp, setLoginOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [loginSuccessMsg, setLoginSuccessMsg] = useState("");
+
   const [school, setSchool] = useState<SchoolInfo>({
     id: "87be8580-89af-4d9c-952b-73a02a9eae82",
     name: "New Ideal Public School",
@@ -52,6 +67,18 @@ export default function SchoolPublicPage() {
   useEffect(() => {
     // Dynamic page title
     document.title = `${school.name} | Official School Website`;
+
+    // Check if URL requested login modal immediately
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get("action") === "login" || q.get("login") === "true") {
+        setIsLoginOpen(true);
+        const r = q.get("role");
+        if (r === "teacher" || r === "parent" || r === "principal") {
+          setLoginRole(r);
+        }
+      }
+    } catch {}
 
     // Attempt to fetch fresh CMS data
     fetch(`/api/public/schools/${encodeURIComponent(slugParam)}/cms`)
@@ -115,8 +142,188 @@ export default function SchoolPublicPage() {
     }
   };
 
+  // Instant Persona Sandbox Login
+  const handlePersonaLogin = (role: "principal" | "teacher" | "parent") => {
+    const roleMapping = {
+      principal: {
+        role: "admin",
+        name: "Dr. Meenakshi Sundaram (Principal)",
+        email: "principal@newidealpublicschool.edu.in",
+        surface: "school_erp",
+      },
+      teacher: {
+        role: "teacher",
+        name: "Rajeev Malhotra (PGT Math)",
+        email: "teacher@newidealpublicschool.edu.in",
+        surface: "school_erp",
+      },
+      parent: {
+        role: "parent",
+        name: "Vikram Sharma (Parent of Aarav - 10A)",
+        email: "parent@newidealpublicschool.edu.in",
+        surface: "parent_portal",
+      },
+    };
+
+    const target = roleMapping[role];
+    const userObj = {
+      id: `usr-${role}-${Date.now()}`,
+      name: target.name,
+      email: target.email,
+      role: target.role,
+      isDemo: true,
+      organizationId: school.id,
+      organization_id: school.id,
+      schoolName: school.name,
+    };
+    const token = `dakshora-jwt-${role}-${Date.now()}`;
+
+    try {
+      localStorage.setItem("dakshora_auth_token", token);
+      localStorage.setItem("dakshora_superadmin_user", JSON.stringify(userObj));
+      localStorage.setItem(
+        "dakshora_school_brand",
+        JSON.stringify({
+          name: school.name,
+          board: school.board,
+          city: school.city,
+          code: "2026100001",
+        })
+      );
+    } catch {}
+
+    setLoginSuccessMsg(`Entering ${target.name}'s workspace...`);
+    setTimeout(() => {
+      window.location.href = `/portal?surface=${target.surface}`;
+    }, 600);
+  };
+
+  // Real Credential Login Submission
+  const handlePasswordLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginIdentifier.trim() || !loginPassword.trim()) {
+      setLoginError("Please enter email/mobile/ID and password.");
+      return;
+    }
+    setAuthenticating(true);
+    setLoginError("");
+    setLoginSuccessMsg("");
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: loginIdentifier.trim(),
+          password: loginPassword.trim(),
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && (data?.token || data?.access_token) && data?.user) {
+        const token = data.access_token || data.token;
+        localStorage.setItem("dakshora_auth_token", token);
+        localStorage.setItem("dakshora_superadmin_user", JSON.stringify(data.user));
+        if (data.school) {
+          localStorage.setItem("dakshora_school_brand", JSON.stringify(data.school));
+        }
+
+        const userRole = (data.user.role || "").toLowerCase();
+        const surface =
+          userRole === "parent" || userRole === "student"
+            ? "parent_portal"
+            : userRole === "superadmin"
+            ? "admin_panel"
+            : "school_erp";
+
+        setLoginSuccessMsg(`Authentication Successful! Welcome, ${data.user.name || "User"}.`);
+        setTimeout(() => {
+          window.location.href = `/portal?surface=${surface}`;
+        }, 700);
+      } else {
+        setLoginError(data?.message || "Invalid credentials. Please verify username and password.");
+      }
+    } catch {
+      setLoginError("Server communication error. Please check your connection.");
+    } finally {
+      setAuthenticating(false);
+    }
+  };
+
+  // Send Mobile OTP
+  const handleSendOtp = async (channel: "sms" | "whatsapp") => {
+    const cleanPhone = loginMobile.replace(/\D/g, "").slice(-10);
+    if (cleanPhone.length < 10) {
+      setLoginError("Please enter a valid 10-digit registered mobile number.");
+      return;
+    }
+    setSendingOtp(true);
+    setLoginError("");
+    try {
+      const res = await fetch("/api/auth/otp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleanPhone, channel }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        setOtpSent(true);
+        setLoginSuccessMsg(`6-Digit OTP sent via ${channel === "whatsapp" ? "WhatsApp" : "SMS"}.`);
+      } else {
+        setLoginError(data?.message || "Could not dispatch OTP. Please check your mobile number.");
+      }
+    } catch {
+      setLoginError("Network error while sending OTP.");
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // Verify Mobile OTP
+  const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginOtp.trim() || loginOtp.trim().length !== 6) {
+      setLoginError("Please enter the 6-digit OTP code.");
+      return;
+    }
+    setAuthenticating(true);
+    setLoginError("");
+    try {
+      const cleanPhone = loginMobile.replace(/\D/g, "").slice(-10);
+      const res = await fetch("/api/auth/otp/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleanPhone, otp: loginOtp.trim() }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data?.user) {
+        const token = data.access_token || data.token;
+        localStorage.setItem("dakshora_auth_token", token);
+        localStorage.setItem("dakshora_superadmin_user", JSON.stringify(data.user));
+
+        const userRole = (data.user.role || "").toLowerCase();
+        const surface =
+          userRole === "parent" || userRole === "student"
+            ? "parent_portal"
+            : userRole === "superadmin"
+            ? "admin_panel"
+            : "school_erp";
+
+        setLoginSuccessMsg(`OTP Verified! Welcome, ${data.user.name || "User"}.`);
+        setTimeout(() => {
+          window.location.href = `/portal?surface=${surface}`;
+        }, 700);
+      } else {
+        setLoginError(data?.message || "Invalid or expired OTP code.");
+      }
+    } catch {
+      setLoginError("Verification failed due to a network error.");
+    } finally {
+      setAuthenticating(false);
+    }
+  };
+
   const apkUrl = "/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk";
-  const erpPortalUrl = `/portal?school=${encodeURIComponent(school.slug)}`;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
@@ -204,12 +411,13 @@ export default function SchoolPublicPage() {
               <span>📱</span>
               <span>Parent App</span>
             </a>
-            <a
-              href={erpPortalUrl}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer"
+            <button
+              onClick={() => setIsLoginOpen(true)}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer flex items-center gap-1.5"
             >
-              ERP Login →
-            </a>
+              <span>🔐</span>
+              <span>ERP Login →</span>
+            </button>
           </div>
         </div>
       </header>
@@ -252,12 +460,13 @@ export default function SchoolPublicPage() {
                 <span>📥</span>
                 <span>Download Parent App (v2.0.0 APK)</span>
               </a>
-              <a
-                href={erpPortalUrl}
-                className="px-5 py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/25 text-white font-bold text-sm transition-all cursor-pointer"
+              <button
+                onClick={() => setIsLoginOpen(true)}
+                className="px-5 py-3.5 rounded-2xl bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 text-indigo-100 font-bold text-sm transition-all cursor-pointer inline-flex items-center gap-2"
               >
-                🔐 Staff / Student ERP Login
-              </a>
+                <span>🔐</span>
+                <span>Staff / Parent ERP Login</span>
+              </button>
             </div>
 
             {/* Quick Badges */}
@@ -680,12 +889,12 @@ export default function SchoolPublicPage() {
           <div className="space-y-2 text-xs">
             <div className="font-bold text-white uppercase font-mono">Quick Access</div>
             <div className="flex flex-wrap gap-2">
-              <a
-                href={erpPortalUrl}
+              <button
+                onClick={() => setIsLoginOpen(true)}
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer"
               >
                 School ERP Login
-              </a>
+              </button>
               <a
                 href={apkUrl}
                 download
@@ -706,6 +915,316 @@ export default function SchoolPublicPage() {
           </div>
         </div>
       </footer>
+
+      {/* 10. DEDICATED ERP LOGIN MODAL (PRINCIPAL • TEACHER • PARENT) */}
+      {isLoginOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-indigo-500/30 shadow-2xl rounded-3xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 p-5 sm:p-6 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-black text-xl shadow-lg">
+                  {school.name.charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white leading-tight">
+                    {school.name}
+                  </h3>
+                  <p className="text-xs font-mono text-indigo-300">
+                    School ERP & Institutional Login Portal
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsLoginOpen(false);
+                  setLoginError("");
+                  setLoginSuccessMsg("");
+                }}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Role Selection Tabs */}
+            <div className="p-4 sm:p-6 space-y-5">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+                  Select Your Institutional Role (अपनी भूमिका चुनें):
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    {
+                      id: "principal" as const,
+                      icon: "🏫",
+                      title: "Principal / Admin",
+                      hi: "प्रिंसिपल",
+                      color: "from-amber-500 to-orange-600",
+                    },
+                    {
+                      id: "teacher" as const,
+                      icon: "👨‍🏫",
+                      title: "Teacher / Staff",
+                      hi: "शिक्षक",
+                      color: "from-indigo-600 to-blue-600",
+                    },
+                    {
+                      id: "parent" as const,
+                      icon: "👨‍👩‍👧",
+                      title: "Parent / Student",
+                      hi: "अभिभावक",
+                      color: "from-emerald-500 to-teal-600",
+                    },
+                  ].map((role) => (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => {
+                        setLoginRole(role.id);
+                        setLoginError("");
+                      }}
+                      className={`p-3 rounded-2xl text-center border-2 transition-all cursor-pointer ${
+                        loginRole === role.id
+                          ? `bg-gradient-to-br ${role.color} text-white border-white/40 shadow-lg scale-[1.02]`
+                          : "bg-slate-800/80 hover:bg-slate-800 text-slate-300 border-slate-700/80"
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">{role.icon}</div>
+                      <div className="text-xs font-black leading-tight">{role.title}</div>
+                      <div className="text-[10px] opacity-80 font-medium">({role.hi})</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Role Context Helper Banner */}
+              <div className="p-3 rounded-xl bg-slate-800/70 border border-slate-700 text-xs flex items-center gap-2.5">
+                <span className="text-lg">
+                  {loginRole === "principal" ? "🏫" : loginRole === "teacher" ? "👨‍🏫" : "👨‍👩‍👧"}
+                </span>
+                <div className="text-slate-300">
+                  {loginRole === "principal" && (
+                    <span>
+                      <strong>Principal / Admin Mode:</strong> Institutional governance, fee collection, staff allocation & CBSE records.
+                    </span>
+                  )}
+                  {loginRole === "teacher" && (
+                    <span>
+                      <strong>Teacher / Staff Mode:</strong> Class attendance marking, homework assignment, gradebook & exams.
+                    </span>
+                  )}
+                  {loginRole === "parent" && (
+                    <span>
+                      <strong>Parent / Student Portal:</strong> Ward attendance, homework, live school bus GPS & fee payment receipts.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Login Method Switcher (Password vs OTP) */}
+              <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800 text-xs font-mono font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod("password");
+                    setLoginError("");
+                  }}
+                  className={`flex-1 py-2 rounded-lg text-center transition-all cursor-pointer ${
+                    loginMethod === "password"
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  🔑 Email / ID & Password
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod("otp");
+                    setLoginError("");
+                  }}
+                  className={`flex-1 py-2 rounded-lg text-center transition-all cursor-pointer ${
+                    loginMethod === "otp"
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  📱 Mobile OTP
+                </button>
+              </div>
+
+              {/* Error & Success Messages */}
+              {loginError && (
+                <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs font-mono">
+                  ⚠️ {loginError}
+                </div>
+              )}
+              {loginSuccessMsg && (
+                <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-mono">
+                  ✅ {loginSuccessMsg}
+                </div>
+              )}
+
+              {/* Form A: Password Login */}
+              {loginMethod === "password" && (
+                <form onSubmit={handlePasswordLoginSubmit} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-mono text-slate-300 mb-1">
+                      {loginRole === "principal"
+                        ? "Principal Email / Mobile Number *"
+                        : loginRole === "teacher"
+                        ? "Teacher Email / Employee Code *"
+                        : "Registered Mobile Number / Admission No. *"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={loginIdentifier}
+                      onChange={(e) => setLoginIdentifier(e.target.value)}
+                      placeholder={
+                        loginRole === "principal"
+                          ? "e.g. principal@newidealpublicschool.edu.in"
+                          : loginRole === "teacher"
+                          ? "e.g. teacher@newidealpublicschool.edu.in or EMP102"
+                          : "e.g. 9876543210 or ADM202601"
+                      }
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-mono text-slate-300">
+                        Password (पासवर्ड) *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="text-[11px] font-mono text-indigo-400 hover:underline cursor-pointer"
+                      >
+                        {showPassword ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authenticating}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:brightness-110 text-white font-bold text-xs font-mono shadow-lg shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {authenticating ? "Verifying Credentials..." : "Sign In to School ERP (लॉगिन करें) →"}
+                  </button>
+                </form>
+              )}
+
+              {/* Form B: Mobile OTP Login */}
+              {loginMethod === "otp" && (
+                <div className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-mono text-slate-300 mb-1">
+                      10-Digit Registered Mobile Number *
+                    </label>
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      value={loginMobile}
+                      onChange={(e) => setLoginMobile(e.target.value.replace(/\D/g, ""))}
+                      placeholder="9876543210"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  {!otpSent ? (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleSendOtp("sms")}
+                        disabled={sendingOtp || loginMobile.length < 10}
+                        className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-mono font-bold transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {sendingOtp ? "Sending..." : "📱 Send SMS OTP"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSendOtp("whatsapp")}
+                        disabled={sendingOtp || loginMobile.length < 10}
+                        className="py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {sendingOtp ? "Sending..." : "💬 WhatsApp OTP"}
+                      </button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleVerifyOtpSubmit} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-mono text-cyan-300 mb-1">
+                          Enter 6-Digit OTP received on +91 {loginMobile.slice(-10)}
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          value={loginOtp}
+                          onChange={(e) => setLoginOtp(e.target.value.replace(/\D/g, ""))}
+                          placeholder="••••••"
+                          className="w-full bg-slate-950 border border-cyan-500/50 rounded-xl px-3.5 py-2.5 text-center text-lg font-mono tracking-widest text-cyan-300 focus:outline-none"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={authenticating || loginOtp.length !== 6}
+                        className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white font-bold text-xs font-mono shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {authenticating ? "Verifying OTP..." : "Verify OTP & Enter ERP →"}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              {/* Quick Persona Demo Buttons (1-Click Test Drive) */}
+              <div className="pt-3 border-t border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-slate-400">⚡ 1-Click Instant Role Login (डेमो टेस्ट ड्राइव):</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePersonaLogin("principal")}
+                    className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
+                  >
+                    <div>🏫 Principal</div>
+                    <div className="text-[10px] text-slate-400 font-normal">Full ERP</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePersonaLogin("teacher")}
+                    className="p-2.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
+                  >
+                    <div>👨‍🏫 Teacher</div>
+                    <div className="text-[10px] text-slate-400 font-normal">Attendance & Marks</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePersonaLogin("parent")}
+                    className="p-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
+                  >
+                    <div>👨‍👩‍👧 Parent</div>
+                    <div className="text-[10px] text-slate-400 font-normal">Ward & Bus GPS</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

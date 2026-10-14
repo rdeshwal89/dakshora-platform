@@ -83,6 +83,10 @@ const nextConfig: NextConfig = {
 
       // 3. SPA Portal Entry & Sub-routes
       {
+        source: "/login",
+        destination: "/portal/index.html",
+      },
+      {
         source: "/",
         destination: "/portal/index.html",
       },
