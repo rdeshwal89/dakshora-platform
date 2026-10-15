@@ -64,18 +64,20 @@ app.use(cors({
 }));
 app.use(express.json());
 
+import { supabase as serviceSupabase } from "./lib/supabase.js";
+
 // Supabase client initialization
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 
-const supabase = (supabaseUrl && supabaseKey)
+const supabase = serviceSupabase || ((supabaseUrl && supabaseKey)
   ? createClient(supabaseUrl, supabaseKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
       }
     })
-  : null;
+  : null);
 
 // =========================================================================
 // IN-MEMORY ACTIVE STATE CACHE (Guarantees Instant Sync & High Availability)
@@ -14332,9 +14334,9 @@ app.get("/api/erp/staff", async (req, res) => {
     }
   }
 
-  // If DB returned nothing, only seed org b17780e5-3832-4ac6-9aeb-33fd80c5cb0e may use memory seed
-  if (tenantStaff.length === 0 && orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e") {
-    tenantStaff = ERP_STAFF.filter(s => s.organization_id === orgId);
+  // Fallback to ERP_STAFF in-memory cache if DB returned nothing
+  if (tenantStaff.length === 0 && orgId) {
+    tenantStaff = ERP_STAFF.filter(s => s.organization_id === orgId || s.org_id === orgId);
   }
 
   // Calculate live KPI summary metrics from database
@@ -39507,13 +39509,24 @@ async function syncFromDatabase() {
     // 1. Staff (production employees — public.staff is the canonical employee table)
     const { data: staff } = await supabase.from("staff").select("*");
     if (staff && staff.length) {
-      ERP_STAFF = staff.map((s) => ({
-        ...s,
-        empId: s.emp_id || s.empId,
-        org_id: s.organization_id || s.org_id,
-        employmentType: s.employment_type || s.employmentType,
-        joiningDate: s.joining_date || s.joiningDate,
-      }));
+      ERP_STAFF = staff.map((s) => {
+        const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+        return {
+          ...s,
+          name: fullName,
+          firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+          lastName: s.last_name || "",
+          empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
+          organization_id: s.organization_id || s.org_id,
+          org_id: s.organization_id || s.org_id,
+          employmentType: s.employment_type || s.employmentType || "Teacher",
+          joiningDate: s.joining_date || s.joiningDate || "2026-04-01",
+          role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+          status: s.is_active ? "active" : "inactive",
+          isActive: s.is_active !== false,
+          salaryINR: 50000
+        };
+      });
       console.log(`[SyncDB] Loaded ${staff.length} staff records`);
     }
 

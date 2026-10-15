@@ -593,7 +593,7 @@ export default function SchoolPublicPage() {
 
     setLoginSuccessMsg(isHi ? `${target.name} के कार्यक्षेत्र में प्रवेश हो रहा है...` : `Entering ${target.name}'s workspace...`);
     setTimeout(() => {
-      window.location.href = `/portal?surface=${target.surface}`;
+      window.location.href = `/portal?surface=${target.surface}&school=${slugParam}`;
     }, 600);
   };
 
@@ -637,7 +637,7 @@ export default function SchoolPublicPage() {
 
         setLoginSuccessMsg(isHi ? `लॉगिन सफल! स्वागत है, ${data.user.name || "उपयोगकर्ता"}।` : `Authentication Successful! Welcome, ${data.user.name || "User"}.`);
         setTimeout(() => {
-          window.location.href = `/portal?surface=${surface}`;
+          window.location.href = `/portal?surface=${surface}&school=${slugParam}`;
         }, 700);
       } else {
         setLoginError(data?.message || (isHi ? "अमान्य क्रेडेंशियल्स। कृपया आईडी एवं पासवर्ड की पुष्टि करें।" : "Invalid credentials. Please verify username and password."));
@@ -716,7 +716,7 @@ export default function SchoolPublicPage() {
 
         setLoginSuccessMsg(isHi ? `ओटीपी सत्यापित! स्वागत है, ${data.user.name || "उपयोगकर्ता"}।` : `OTP Verified! Welcome, ${data.user.name || "User"}.`);
         setTimeout(() => {
-          window.location.href = `/portal?surface=${surface}`;
+          window.location.href = `/portal?surface=${surface}&school=${slugParam}`;
         }, 700);
       } else {
         setLoginError(data?.message || (isHi ? "अमान्य या समाप्त हो चुका ओटीपी कोड।" : "Invalid or expired OTP code."));
