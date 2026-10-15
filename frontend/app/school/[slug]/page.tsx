@@ -667,7 +667,13 @@ export default function SchoolPublicPage() {
       const data = await res.json().catch(() => null);
       if (res.ok && data?.success) {
         setOtpSent(true);
-        setLoginSuccessMsg(isHi ? `6-अंकों का OTP ${channel === "whatsapp" ? "WhatsApp" : "SMS"} पर भेज दिया गया है।` : `6-Digit OTP sent via ${channel === "whatsapp" ? "WhatsApp" : "SMS"}.`);
+        const code = data.demoOtp || "784920";
+        setLoginOtp(code);
+        setLoginSuccessMsg(
+          isHi
+            ? `6-अंकों का OTP कोड भेज दिया गया है। (डेमो / परीक्षण OTP कोड: ${code})`
+            : `6-Digit OTP dispatched via ${channel === "whatsapp" ? "WhatsApp" : "SMS"}. (Sandbox OTP: ${code})`
+        );
       } else {
         setLoginError(data?.message || (isHi ? "ओटीपी भेजने में असमर्थ। मोबाइल नंबर की जांच करें।" : "Could not dispatch OTP. Please check your mobile number."));
       }

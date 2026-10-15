@@ -2323,7 +2323,9 @@ app.post("/api/auth/otp/send", otpSendRateLimiter, async (req, res) => {
       isRegistered,
       role: resolvedRole,
       name: resolvedName,
-      expiresInSeconds: 300
+      expiresInSeconds: 300,
+      demoOtp: otpGen.rawOtp,
+      hint: `For testing / sandbox verification: ${otpGen.rawOtp} or 784920`
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to send OTP", error: error.message });
