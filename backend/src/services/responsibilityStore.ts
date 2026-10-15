@@ -1,4 +1,4 @@
-﻿import crypto from "crypto";
+import crypto from "crypto";
 import { supabase } from "../lib/supabase.js";
 
 export interface ResponsibilityType {
@@ -473,7 +473,7 @@ export class ResponsibilityService {
       domains: []
     };
 
-    if (baseRole === "admin" || baseRole === "superadmin" || baseRole === "principal") {
+    if (baseRole === "admin" || baseRole === "superadmin" || baseRole === "principal" || baseRole === "school-admin" || baseRole === "school_admin") {
       moduleAccess = [...allModules];
       scopes.domains = ["*"];
     } else if (baseRole === "teacher") {
@@ -513,9 +513,12 @@ export class ResponsibilityService {
 
     const restrictedModules = allModules.filter(m => !moduleAccess.includes(m));
 
+    // Resolve school name dynamically from user context instead of hardcoding
+    const schoolName = user?.schoolName || user?.organizationName || "School Dashboard";
+
     return {
       organizationId,
-      schoolName: "Delhi Public Heritage School",
+      schoolName,
       campus: "Main Campus",
       academicSession: sessionId,
       user: {
