@@ -33,6 +33,21 @@ describe("DAKSHORA 2.0 — MASTER PRODUCTION TRANSFORMATION & VERIFICATION SUITE
   });
 
   after(async () => {
+    if (registeredOrgId) {
+      try { await supabase.from("certificates").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("fee_payments").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("student_fees").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("student_enrollments").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("students").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("sections").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("classes").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("fee_structures").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("academic_sessions").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("organization_members").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("users").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("schools").delete().eq("organization_id", registeredOrgId); } catch (_) {}
+      try { await supabase.from("organizations").delete().eq("id", registeredOrgId); } catch (_) {}
+    }
     if (app) await app.close();
   });
 

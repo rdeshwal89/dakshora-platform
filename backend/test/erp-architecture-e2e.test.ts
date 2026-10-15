@@ -69,9 +69,34 @@ describe("DAKSHORA 2.0 — UNIFIED SCHOOL ERP ARCHITECTURE & INTEGRATION TEST", 
         console.warn("Could not create dynamic SuperAdmin test user:", err.message);
       }
     }
+
+    if (supabase) {
+      await supabase.from("organizations").upsert({
+        id: TEST_ORG_ID,
+        name: "Test E2E School",
+        slug: "test-e2e-school"
+      }, { onConflict: "id" });
+      await supabase.from("schools").upsert({
+        organization_id: TEST_ORG_ID,
+        name: "Test E2E School",
+        slug: "test-e2e-school",
+        school_code: "1234567890"
+      }, { onConflict: "organization_id" });
+    }
   });
 
   after(async () => {
+    if (supabase) {
+      try { await supabase.from("fee_payments").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("student_fees").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("student_enrollments").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("students").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("classes").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("fee_structures").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("academic_sessions").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("schools").delete().eq("organization_id", TEST_ORG_ID); } catch (_) {}
+      try { await supabase.from("organizations").delete().eq("id", TEST_ORG_ID); } catch (_) {}
+    }
     if (app) {
       await app.close();
     }

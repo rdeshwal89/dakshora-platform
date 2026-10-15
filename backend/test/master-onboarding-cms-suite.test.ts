@@ -104,6 +104,12 @@ describe("DAKSHORA 2.0 — MASTER ONBOARDING, CMS & 16-STEP WIZARD PRODUCTION SU
   });
 
   after(async () => {
+    if (testTenantId) {
+      try { await supabase.from("school_onboarding").delete().eq("organization_id", testTenantId); } catch (_) {}
+      try { await supabase.from("school_onboarding_invitations").delete().eq("organization_id", testTenantId); } catch (_) {}
+      try { await supabase.from("schools").delete().eq("organization_id", testTenantId); } catch (_) {}
+      try { await supabase.from("organizations").delete().eq("id", testTenantId); } catch (_) {}
+    }
     if (app) await app.close();
   });
 
