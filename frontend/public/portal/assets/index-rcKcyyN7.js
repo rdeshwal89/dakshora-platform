@@ -1530,9 +1530,12 @@ Rohan Gupta,Class 9,B,DPS-2026-103,Manoj Gupta,+91 98300 34567,manoj.gupta@gmail
 function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:openLogin,onNavigateSurface:setSurface,onShowToast:showToast,onSelectOrg:setSelectedOrgId}){
   const isSuper=(x==null?void 0:x.role)==="superadmin";
   const hostKey=detectSchoolDomainKey();
-  const effectiveOrgKey=propOrgId||(x&&(x.organizationId||x.organization_id))||hostKey||"b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const effectiveOrgKey=hostKey||propOrgId||(x&&(x.organizationId||x.organization_id))||"b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const[loading,setLoading]=m.useState(!0);
-  const[activeSection,setActiveSection]=m.useState("home");const[lang,setLang]=m.useState("en");const isHi=lang==="hi";
+  const[activeSection,setActiveSection]=m.useState("home");
+  const[lang,setLang]=m.useState(()=>{try{return localStorage.getItem("dakshora_preferred_lang")||"hi"}catch{return"hi"}});
+  const isHi=lang==="hi";
+  const toggleLang=()=>{const n=isHi?"en":"hi";try{localStorage.setItem("dakshora_preferred_lang",n)}catch{}setLang(n);};
   const[schoolData,setSchoolData]=m.useState(null);
   const[cmsTree,setCmsTree]=m.useState(null);
   const[notices,setNotices]=m.useState([]);
@@ -1562,45 +1565,50 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
           setSchoolData(res.data.school||null);
           setCmsTree(res.data.cmsTree||null);
           setNotices(Array.isArray(res.data.notices)?res.data.notices:[]);
+          try{
+            if(res.data.school&&res.data.school.name){
+              document.title=isHi?(res.data.school.name+" | आधिकारिक विद्यालय वेबसाइट (Official CBSE Campus)"):(res.data.school.name+" | Official School Website");
+            }
+          }catch{}
         }
       }catch{}finally{
         if(!cancelled)setLoading(!1);
       }
     })();
     return()=>{cancelled=!0};
-  },[effectiveOrgKey,hostKey]);
+  },[effectiveOrgKey,hostKey,isHi]);
 
-  const schoolName=(schoolData==null?void 0:schoolData.name)||(cmsTree==null?void 0:cmsTree.name)||"School Smart Campus";
+  const schoolName=(schoolData==null?void 0:schoolData.name)||(cmsTree==null?void 0:cmsTree.name)||"New Ideal Public School";
   const board=((schoolData==null?void 0:schoolData.board)||"CBSE").toUpperCase();
-  const city=(schoolData==null?void 0:schoolData.city)||"India";
-  const phone=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.contactPhone)||(schoolData==null?void 0:schoolData.contactPhone)||(schoolData==null?void 0:schoolData.phone)||"+91 98765 43210";
-  const email=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.contactEmail)||(schoolData==null?void 0:schoolData.contactEmail)||(schoolData==null?void 0:schoolData.email)||"info@school.edu.in";
-  const address=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.address)||(schoolData==null?void 0:schoolData.address)||city;
-  const heroHeadline=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.heroHeadline)||`Welcome to ${schoolName}`;
-  const heroSubheadline=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.heroSubheadline)||`Affiliated to ${board} • Fostering Academic Excellence, Smart Classrooms, Robotics & Holistic Character Building in ${city}.`;
-  const principalMessage=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.principalMessage)||"Our mission is to empower every child with modern scientific inquiry, strong moral values, and global leadership skills.";
+  const city=(schoolData==null?void 0:schoolData.city)||"Mathura";
+  const phone=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.contactPhone)||(schoolData==null?void 0:schoolData.contactPhone)||(schoolData==null?void 0:schoolData.phone)||"+91 8529575588";
+  const email=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.contactEmail)||(schoolData==null?void 0:schoolData.contactEmail)||(schoolData==null?void 0:schoolData.email)||"contact@newidealpublicschool.edu.in";
+  const address=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.address)||(schoolData==null?void 0:schoolData.address)||"Shankar Gali Dauli Pyau, Mathura, Uttar Pradesh - 281001";
+  const heroHeadline=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.heroHeadline)||(isHi?"न्यू आइडियल पब्लिक स्कूल में आपका स्वागत है":`Welcome to ${schoolName}`);
+  const heroSubheadline=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.heroSubheadline)||(isHi?"मथुरा में आधुनिक स्मार्ट डिजिटल कक्षाएं, अटल टिंकरिंग व रोबोटिक्स लैब, संस्कारयुक्त अनुशासित वातावरण एवं सर्वांगीण विकास का प्रमुख केंद्र।":`Affiliated to ${board} • Fostering Academic Excellence, Smart Classrooms, Robotics & Holistic Character Building in ${city}.`);
+  const principalMessage=((cmsTree==null?void 0:cmsTree.content)==null?void 0:cmsTree.content.principalMessage)||(isHi?"हमारा ध्येय प्रत्येक विद्यार्थी में आधुनिक वैज्ञानिक सोच, नैतिक मूल्य, अनुशासित आचरण और सीबीएसई मानकों के अनुरूप शैक्षणिक उत्कृष्टता का विकास करना है।":"Our mission is to empower every child with modern scientific inquiry, strong moral values, and global leadership skills.");
   const pages=Array.isArray(cmsTree==null?void 0:cmsTree.pages)&&cmsTree.pages.length>0?cmsTree.pages.filter(p=>p.visible!==!1):[
-    {id:"pg-home",title:"Home",slug:"/"},
-    {id:"pg-about",title:"About Us",slug:"/about"},
-    {id:"pg-academics",title:"Academics",slug:"/academics"},
-    {id:"pg-facilities",title:"Smart Labs & Facilities",slug:"/labs"},
-    {id:"pg-admissions",title:"Admissions 2026-27",slug:"/admissions"},
-    {id:"pg-contact",title:"Contact Us",slug:"/contact"}
+    {id:"pg-home",title:isHi?"होम":"Home",slug:"/"},
+    {id:"pg-about",title:isHi?"परिचय व प्रधानाचार्य":"About Us",slug:"/about"},
+    {id:"pg-academics",title:isHi?"शिक्षा प्रणाली":"Academics",slug:"/academics"},
+    {id:"pg-facilities",title:isHi?"स्मार्ट लैब्स":"Smart Labs & Facilities",slug:"/labs"},
+    {id:"pg-admissions",title:isHi?"प्रवेश 2026-27":"Admissions 2026-27",slug:"/admissions"},
+    {id:"pg-contact",title:isHi?"संपर्क":"Contact Us",slug:"/contact"}
   ];
   const mediaList=Array.isArray(cmsTree==null?void 0:cmsTree.media)&&cmsTree.media.length>0?cmsTree.media:[
-    {id:"m1",name:"Main Smart Campus Building",url:"https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=800"},
-    {id:"m2",name:"AI & Robotics Innovation Lab",url:"https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800"},
-    {id:"m3",name:"Digital Coding & STEM Arena",url:"https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800"},
-    {id:"m4",name:"Knowledge Resource Library",url:"https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=800"}
+    {id:"m1",name:isHi?"मुख्य स्मार्ट स्कूल भवन (Main Campus)":"Main Smart Campus Building",url:"https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=800"},
+    {id:"m2",name:isHi?"एआई एवं रोबोटिक्स इनोवेशन लैब":"AI & Robotics Innovation Lab",url:"https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800"},
+    {id:"m3",name:isHi?"कंप्यूटर कोडिंग एवं डिजिटल लैब":"Digital Coding & STEM Arena",url:"https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800"},
+    {id:"m4",name:isHi?"ज्ञान संपदा पुस्तकालय (लाइब्रेरी)":"Knowledge Resource Library",url:"https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=800"}
   ];
   const appConfig=(cmsTree==null?void 0:cmsTree.mobile_app)||{appName:`${schoolName} Official App`,packageName:"in.edu.school.app",version:"2.1.0",enabledModules:["attendance","homework","fees","notices","timetable","exams","bus_tracking"]};
   const domainConfig=(cmsTree==null?void 0:cmsTree.website_integration)||(cmsTree==null?void 0:cmsTree.domain)||{};
-  const displayDomain=domainConfig.customDomain||domainConfig.subdomain||`${(schoolData==null?void 0:schoolData.slug)||"campus"}.dakshora.in`;
+  const displayDomain=domainConfig.customDomain||domainConfig.subdomain||"new-ideal-public-school.dakshora.in";
 
   const handleAdmissionSubmit=async ev=>{
     ev.preventDefault();
     if(!admForm.studentName.trim()||!admForm.phone.trim()){
-      showToast&&showToast("error","Required Fields","Please enter Student Name and 10-digit Mobile Number.");
+      showToast&&showToast("error",isHi?"आवश्यक जानकारी":"Required Fields",isHi?"कृपया विद्यार्थी का नाम और 10-अंकों का मोबाइल नंबर दर्ज करें।":"Please enter Student Name and 10-digit Mobile Number.");
       return;
     }
     setSubmittingAdm(!0);
@@ -1620,12 +1628,12 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
       });
       if(res.status===200||res.status===201){
         setAdmSubmitted(!0);
-        showToast&&showToast("success","Admission Inquiry Submitted! 🎓",`${schoolName} admission desk will contact you shortly.`);
+        showToast&&showToast("success",isHi?"प्रवेश आवेदन प्राप्त हुआ! 🎓":"Admission Inquiry Submitted! 🎓",isHi?`${schoolName} का प्रवेश विभाग आपसे शीघ्र संपर्क करेगा।`:`${schoolName} admission desk will contact you shortly.`);
       }else{
-        showToast&&showToast("error","Submission Error",(res.data&&res.data.message)||"Could not submit inquiry.");
+        showToast&&showToast("error",isHi?"त्रुटि":"Submission Error",(res.data&&res.data.message)||(isHi?"आवेदन सबमिट नहीं हो सका।":"Could not submit inquiry."));
       }
     }catch{
-      showToast&&showToast("error","Network Error","Unable to submit admission form right now.");
+      showToast&&showToast("error",isHi?"नेटवर्क त्रुटि":"Network Error",isHi?"फॉर्म सबमिट करने में असमर्थ। कृपया पुनः प्रयास करें।":"Unable to submit admission form right now.");
     }finally{
       setSubmittingAdm(!1);
     }
@@ -1640,11 +1648,11 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
   return e.jsxs("div",{className:"min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans",children:[
     isSuper&&e.jsxs("div",{className:"bg-slate-900 text-white px-4 py-2.5 border-b border-slate-700 flex flex-wrap items-center justify-between gap-3 text-xs",children:[
       e.jsxs("div",{className:"flex items-center gap-2",children:[
-        e.jsx("span",{className:"px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-bold text-[10px] uppercase",children:"White-Label School Website Mode"}),
-        e.jsx("span",{className:"text-slate-300",children:"Schools & Parents only see this website (Dakshora SaaS Marketing page is hidden for them)."})
+        e.jsx("span",{className:"px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 font-mono font-bold text-[10px] uppercase",children:isHi?"व्हाइट-लेबल स्कूल वेबसाइट मोड":"White-Label School Website Mode"}),
+        e.jsx("span",{className:"text-slate-300",children:isHi?"अभिभावक व विद्यार्थियों को केवल यह विद्यालय वेबसाइट दिखेगी।":"Schools & Parents only see this website (Dakshora SaaS Marketing page is hidden for them)."})
       ]}),
       e.jsxs("div",{className:"flex items-center gap-2",children:[
-        e.jsx("span",{className:"text-slate-400 font-mono text-[11px]",children:"Preview School:"}),
+        e.jsx("span",{className:"text-slate-400 font-mono text-[11px]",children:isHi?"स्कूल चुनें:":"Preview School:"}),
         e.jsx("select",{
           value:effectiveOrgKey,
           onChange:ev=>setSelectedOrgId&&setSelectedOrgId(ev.target.value),
@@ -1654,20 +1662,20 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
         e.jsx("button",{
           onClick:()=>setSurface&&setSurface("admin_panel"),
           className:"px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer",
-          children:"Edit in 11-Step CMS"
+          children:isHi?"CMS में संपादित करें":"Edit in 11-Step CMS"
         })
       ]})
     ]}),
     e.jsx("div",{className:"bg-gradient-to-r from-indigo-950 via-blue-900 to-indigo-950 text-white px-4 py-2 text-xs border-b border-indigo-800/60",children:
       e.jsxs("div",{className:"max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2",children:[
         e.jsxs("div",{className:"flex flex-wrap items-center gap-3",children:[
-          e.jsx("span",{className:"px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider",children:"ADMISSIONS OPEN 2026-27"}),
-          e.jsxs("span",{className:"font-semibold text-indigo-100",children:[board," Affiliated Smart Campus • ",city]}),
+          e.jsx("span",{className:"px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider",children:isHi?"सत्र 2026-27 प्रवेश प्रारंभ (ADMISSIONS OPEN)":"ADMISSIONS OPEN 2026-27"}),
+          e.jsxs("span",{className:"font-semibold text-indigo-100",children:[isHi?`${board} संबद्धता प्राप्त स्मार्ट परिसर • ${city}`:`${board} Affiliated Smart Campus • ${city}`]}),
           e.jsxs("span",{className:"hidden md:inline text-indigo-200 font-mono",children:["🌐 ",displayDomain]})
         ]}),
         e.jsxs("div",{className:"flex items-center gap-4 text-[11px] font-mono text-indigo-100",children:[
-          e.jsxs("span",{children:["📞 ",phone]}),
-          e.jsxs("span",{className:"hidden sm:inline",children:["✉️ ",email]})
+          e.jsxs("span",{children:[isHi?"📞 हेल्पलाइन: ":"📞 ",phone]}),
+          e.jsxs("span",{className:"hidden sm:inline",children:[isHi?"✉️ ईमेल: ":"✉️ ",email]})
         ]})
       ]})
     }),
@@ -1679,17 +1687,17 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
           }),
           e.jsxs("div",{children:[
             e.jsx("h1",{className:"text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-tight",children:schoolName}),
-            e.jsxs("p",{className:"text-xs font-bold text-indigo-600 uppercase tracking-wider",children:[board," • ",city," • Official School Website"]})
+            e.jsxs("p",{className:"text-xs font-bold text-indigo-600 uppercase tracking-wider",children:[isHi?`${board} • ${city} • आधिकारिक विद्यालय वेबसाइट`:`${board} • ${city} • Official School Website`]})
           ]})
         ]}),
         e.jsxs("nav",{className:"hidden lg:flex items-center gap-1",children:[
-          {id:"home",label:"Home"},
-          {id:"about",label:"About & Principal"},
-          {id:"academics",label:"Academics"},
-          {id:"facilities",label:"Smart Labs & Gallery"},
-          {id:"notices",label:"Notice Board"},
-          {id:"admissions",label:"Admissions 2026-27"},
-          {id:"contact",label:"Contact"}
+          {id:"home",label:isHi?"होम":"Home"},
+          {id:"about",label:isHi?"परिचय व प्रधानाचार्य":"About & Principal"},
+          {id:"academics",label:isHi?"शिक्षा प्रणाली":"Academics"},
+          {id:"facilities",label:isHi?"स्मार्ट लैब्स":"Smart Labs & Facilities"},
+          {id:"notices",label:isHi?"सूचना पट्ट":"Notice Board"},
+          {id:"admissions",label:isHi?"प्रवेश 2026-27":"Admissions 2026-27"},
+          {id:"contact",label:isHi?"संपर्क":"Contact"}
         ].map(nav=>e.jsx("button",{
           onClick:()=>scrollToId(nav.id),
           className:`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${activeSection===nav.id?"bg-indigo-50 text-indigo-700 border border-indigo-200":"text-slate-600 hover:text-slate-900 hover:bg-slate-100"}`,
@@ -1697,8 +1705,8 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
         },nav.id))}),
         e.jsxs("div",{className:"flex items-center gap-2.5",children:[
           e.jsx("button",{
-            onClick:()=>setLang(isHi?"en":"hi"),
-            className:"px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs cursor-pointer",
+            onClick:toggleLang,
+            className:"px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs cursor-pointer shadow-sm",
             children:isHi?"🇬🇧 English":"🇮🇳 हिंदी"
           }),e.jsx("button",{
             onClick:()=>scrollToId("admissions"),
@@ -1708,16 +1716,16 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
           x?e.jsx("button",{
             onClick:()=>setSurface&&setSurface("school_erp"),
             className:"px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer",
-            children:"Open School ERP →"
+            children:isHi?"स्कूल ERP खोलें →":"Open School ERP →"
           }):e.jsx("button",{
             onClick:()=>openLogin&&openLogin(),
             className:"px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer",
-            children:"ERP / Parent Login"
+            children:isHi?"स्कूल ERP लॉगिन":"ERP / Parent Login"
           })
         ]})
       ]})
     }),
-    loading?e.jsx("div",{className:"py-24 text-center text-slate-500 font-mono text-sm",children:"Loading official school website..."}):e.jsxs("div",{className:"flex-1",children:[
+    loading?e.jsx("div",{className:"py-24 text-center text-slate-500 font-mono text-sm",children:isHi?"विद्यालय वेबसाइट लोड हो रही है...":"Loading official school website..."}):e.jsxs("div",{className:"flex-1",children:[
       e.jsxs("section",{id:"school-sec-home",className:"relative overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 text-white py-16 sm:py-24 px-4 sm:px-6 lg:px-8",children:[
         e.jsx("div",{className:"absolute -top-32 -right-32 w-96 h-96 bg-cyan-500/20 rounded-full blur-3xl pointer-events-none"}),
         e.jsx("div",{className:"absolute -bottom-32 -left-32 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"}),
@@ -1725,7 +1733,7 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
           e.jsxs("div",{className:"lg:col-span-7 space-y-6",children:[
             e.jsxs("div",{className:"inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-cyan-300 text-xs font-bold",children:[
               e.jsx("span",{className:"w-2 h-2 rounded-full bg-emerald-400 animate-pulse"}),
-              e.jsxs("span",{children:[board," AFFILIATED INSTITUTION • ",city.toUpperCase()]})
+              e.jsxs("span",{children:[isHi?`${board} से संबद्ध मान्यता प्राप्त शिक्षण संस्थान • ${city.toUpperCase()}`:`${board} AFFILIATED INSTITUTION • ${city.toUpperCase()}`]})
             ]}),
             e.jsx("h2",{className:"text-3xl sm:text-5xl font-black tracking-tight leading-tight text-white",children:heroHeadline}),
             e.jsx("p",{className:"text-base sm:text-lg text-slate-300 leading-relaxed max-w-2xl",children:heroSubheadline}),
@@ -1733,25 +1741,30 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
               e.jsx("button",{
                 onClick:()=>scrollToId("admissions"),
                 className:"px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all cursor-pointer",
-                children:"🎓 Apply for Admission 2026-27"
+                children:isHi?"🎓 सत्र 2026-27 प्रवेश आवेदन":"🎓 Apply for Admission 2026-27"
               }),
               e.jsx("button",{
                 onClick:()=>setSurface&&setSurface("school_app"),
                 className:"px-6 py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 border border-white/25 text-white font-bold text-sm transition-all cursor-pointer",
-                children:"📱 Open School Mobile App"
+                children:isHi?"📱 पेरेंट मोबाइल ऐप खोलें":"📱 Open School Mobile App"
               }),
               !x&&e.jsx("button",{
                 onClick:()=>openLogin&&openLogin(),
                 className:"px-5 py-3.5 rounded-2xl bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 text-indigo-100 font-bold text-sm transition-all cursor-pointer",
-                children:"🔐 Student / Staff ERP Login"
+                children:isHi?"🔐 स्कूल स्टाफ / अभिभावक ERP लॉगिन":"🔐 Student / Staff ERP Login"
               })
             ]}),
-            e.jsx("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6",children:[
+            e.jsx("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6",children:(isHi?[
+              {val:"100%",lbl:"सीबीएसई बोर्ड परीक्षा परिणाम"},
+              {val:"स्मार्ट",lbl:"डिजिटल स्मार्ट क्लासरूम"},
+              {val:"जीपीएस",lbl:"सुरक्षित स्कूल बसें"},
+              {val:"24×7",lbl:"अभिभावक मोबाइल ऐप"}
+            ]:[
               {val:"100%",lbl:"Board Result"},
               {val:"Smart",lbl:"Digital Classrooms"},
               {val:"GPS",lbl:"Safe School Buses"},
               {val:"24×7",lbl:"Parent App Portal"}
-            ].map((st,idx)=>e.jsxs("div",{className:"p-3.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm",children:[
+            ]).map((st,idx)=>e.jsxs("div",{className:"p-3.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm",children:[
               e.jsx("div",{className:"text-xl font-black text-cyan-300",children:st.val}),
               e.jsx("div",{className:"text-xs text-slate-300 font-medium",children:st.lbl})
             ]},idx))})
@@ -1760,7 +1773,7 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
             e.jsxs("div",{className:"rounded-3xl overflow-hidden border-2 border-white/15 shadow-2xl bg-slate-900/80",children:[
               e.jsx("img",{src:(mediaList[0]&&mediaList[0].url)||"https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=800",alt:schoolName,className:"w-full h-64 sm:h-72 object-cover"}),
               e.jsxs("div",{className:"p-5 space-y-2",children:[
-                e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-400 font-bold",children:"Official Campus Showcase"}),
+                e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-400 font-bold",children:isHi?"आधिकारिक मथुरा परिसर (Official Campus)":"Official Campus Showcase"}),
                 e.jsx("div",{className:"text-lg font-black text-white",children:schoolName}),
                 e.jsx("p",{className:"text-xs text-slate-300",children:address})
               ]})
@@ -1772,17 +1785,21 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
         e.jsxs("div",{className:"max-w-7xl mx-auto space-y-4",children:[
           e.jsxs("div",{className:"flex items-center justify-between",children:[
             e.jsxs("div",{className:"flex items-center gap-2.5",children:[
-              e.jsx("span",{className:"px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-black uppercase",children:"📢 Live Notice Board"}),
-              e.jsx("h3",{className:"text-lg font-black text-slate-900",children:"Latest Campus Circulars & Announcements"})
+              e.jsx("span",{className:"px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-black uppercase",children:isHi?"📢 लाइव सूचना पट्ट (Notice Board)":"📢 Live Notice Board"}),
+              e.jsx("h3",{className:"text-lg font-black text-slate-900",children:isHi?"नवीनतम विद्यालय परिपत्र एवं घोषणाएं (Circulars)":"Latest Campus Circulars & Announcements"})
             ]}),
-            e.jsx("span",{className:"text-xs font-mono text-indigo-700 font-bold",children:"Academic Session 2026-27"})
+            e.jsx("span",{className:"text-xs font-mono text-indigo-700 font-bold",children:isHi?"शैक्षणिक सत्र 2026-27":"Academic Session 2026-27"})
           ]}),
-          e.jsx("div",{className:"grid grid-cols-1 md:grid-cols-3 gap-4",children:(notices.length>0?notices:[
+          e.jsx("div",{className:"grid grid-cols-1 md:grid-cols-3 gap-4",children:(notices.length>0?notices:(isHi?[
+            {id:"n1",title:"शैक्षणिक सत्र 2026-27 हेतु प्रवेश प्रारंभ",body:"नर्सरी से 12वीं तक की कक्षाओं में प्रवेश हेतु पंजीकरण फॉर्म वेबसाइट पर ऑनलाइन एवं विद्यालय रिसेप्शन काउंटर पर उपलब्ध हैं।"},
+            {id:"n2",title:"आधिकारिक पेरेंट मोबाइल ऐप जारी",body:`समस्त अभिभावक ${schoolName} पेरेंट ऐप डाउनलोड करें। दैनिक उपस्थिति, गृहकार्य एवं फीस विवरण ऐप पर उपलब्ध है।`},
+            {id:"n3",title:"सीबीएसई स्टेम रोबोटिक्स व विज्ञान लैब कार्यशाला",body:"कक्षा 6 से 12वीं के विद्यार्थियों हेतु रोबोटिक्स, कोडिंग एवं प्रयोगात्मक विज्ञान लैब सत्र का आयोजन।"}
+          ]:[
             {id:"n1",title:`Admissions Open for Academic Session 2026-27 at ${schoolName}`,body:"Registration forms for Nursery to Class XII are now open online and at the school reception desk."},
             {id:"n2",title:"Parent-Teacher Interactive Orientation & Smart App Launch",body:`Download the official ${appConfig.appName} to track daily attendance, homework, fee receipts, and live bus GPS.`},
             {id:"n3",title:"Annual STEM, Robotics & Science Exhibition Schedule",body:"Students from Classes VI to XII will showcase working robotics and AI models in the main auditorium."}
-          ]).slice(0,3).map((nt,idx)=>e.jsxs("div",{className:"p-4 rounded-2xl bg-white border border-indigo-100 shadow-sm space-y-1.5",children:[
-            e.jsx("div",{className:"text-[10px] font-mono font-bold text-indigo-600 uppercase",children:"Official Circular"}),
+          ])).slice(0,3).map((nt,idx)=>e.jsxs("div",{className:"p-4 rounded-2xl bg-white border border-indigo-100 shadow-sm space-y-1.5",children:[
+            e.jsx("div",{className:"text-[10px] font-mono font-bold text-indigo-600 uppercase",children:isHi?"आधिकारिक परिपत्र":"Official Circular"}),
             e.jsx("h4",{className:"text-sm font-black text-slate-900",children:nt.title}),
             e.jsx("p",{className:"text-xs text-slate-600 leading-relaxed",children:nt.body||nt.content})
           ]},nt.id||idx))})
@@ -1791,21 +1808,25 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
       e.jsx("section",{id:"school-sec-about",className:"py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto",children:
         e.jsxs("div",{className:"grid grid-cols-1 lg:grid-cols-12 gap-8 items-center",children:[
           e.jsxs("div",{className:"lg:col-span-7 space-y-4",children:[
-            e.jsx("span",{className:"px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black uppercase",children:"About Our Institution & Leadership"}),
-            e.jsxs("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:["Principal's Desk — ",schoolName]}),
+            e.jsx("span",{className:"px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black uppercase",children:isHi?"संस्थान एवं नेतृत्व परिचय":"About Our Institution & Leadership"}),
+            e.jsxs("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:[isHi?"प्रधानाचार्य की कलम से — ":"Principal's Desk — ",schoolName]}),
             e.jsxs("blockquote",{className:"p-5 rounded-2xl bg-white border-l-4 border-indigo-600 shadow-sm text-slate-700 italic text-sm sm:text-base leading-relaxed",children:['"',principalMessage,'"']}),
             e.jsxs("p",{className:"text-sm text-slate-600 leading-relaxed",children:[
-              schoolName," is committed to delivering world-class ",board," curriculum integrated with experiential STEM labs, digital smart boards, sports excellence, and personalized student mentorship."
+              isHi?`मथुरा में स्थित ${schoolName} आधुनिक स्मार्ट क्लासरूम, रोबोटिक्स लैब, सुसज्जित खेल परिसर और अनुभवी शिक्षकों के मार्गदर्शन में भारतीय संस्कारों के साथ 21वीं सदी की आधुनिक शिक्षा प्रदान करता है।`:`${schoolName} is committed to delivering world-class ${board} curriculum integrated with experiential STEM labs, digital smart boards, sports excellence, and personalized student mentorship.`
             ]})
           ]}),
           e.jsxs("div",{id:"school-sec-academics",className:"lg:col-span-5 p-6 rounded-3xl bg-gradient-to-br from-indigo-900 to-slate-900 text-white space-y-4 shadow-xl",children:[
-            e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-300 font-bold",children:"Academic Wings & Curriculum"}),
-            e.jsx("h4",{className:"text-xl font-black",children:`${board} Holistic Academic Framework`}),
-            e.jsx("div",{className:"space-y-2.5",children:[
+            e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-300 font-bold",children:isHi?"शैक्षणिक प्रभाग एवं पाठ्यक्रम":"Academic Wings & Curriculum"}),
+            e.jsx("h4",{className:"text-xl font-black",children:isHi?`${board} सर्वांगीण शैक्षणिक संरचना`:`${board} Holistic Academic Framework`}),
+            e.jsx("div",{className:"space-y-2.5",children:(isHi?[
+              {wing:"प्राथमिक प्रभाग (नर्सरी – कक्षा 2)",desc:"गतिविधि आधारित मोंटेसरी एवं एनईपी 2020 आधारभूत शिक्षा।"},
+              {wing:"माध्यमिक प्रभाग (कक्षा 3 – 8)",desc:"अवधारणात्मक दक्षता, ओलंपियाड तैयारी, कोडिंग व रोबोटिक्स लैब्स।"},
+              {wing:"उच्च माध्यमिक प्रभाग (कक्षा 9 – 12)",desc:"विज्ञान, वाणिज्य एवं कला संकाय, बोर्ड परीक्षा व प्रतियोगी परीक्षा तैयारी।"}
+            ]:[
               {wing:"Foundational Wing (Nursery – Class II)",desc:"Activity-based Montessori & NEP 2020 foundational literacy."},
               {wing:"Preparatory & Middle Wing (Class III – VIII)",desc:"Concept mastery, Olympiad foundation, Coding & Robotics labs."},
               {wing:"Secondary & Senior Wing (Class IX – XII)",desc:"Science, Commerce & Humanities streams with Board & competitive prep."}
-            ].map((w,i)=>e.jsxs("div",{className:"p-3 rounded-xl bg-white/10 border border-white/10",children:[
+            ]).map((w,i)=>e.jsxs("div",{className:"p-3 rounded-xl bg-white/10 border border-white/10",children:[
               e.jsx("div",{className:"text-xs font-black text-amber-300",children:w.wing}),
               e.jsx("div",{className:"text-xs text-slate-200 mt-0.5",children:w.desc})
             ]},i))})
@@ -1815,9 +1836,9 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
       e.jsx("section",{id:"school-sec-facilities",className:"py-16 px-4 sm:px-6 lg:px-8 bg-white border-y border-slate-200",children:
         e.jsxs("div",{className:"max-w-7xl mx-auto space-y-8",children:[
           e.jsxs("div",{className:"text-center max-w-2xl mx-auto space-y-2",children:[
-            e.jsx("span",{className:"px-3 py-1 rounded-full bg-cyan-100 text-cyan-800 text-xs font-black uppercase",children:"Campus Infrastructure & Gallery"}),
-            e.jsx("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:"World-Class Smart Labs & Campus Facilities"}),
-            e.jsx("p",{className:"text-xs sm:text-sm text-slate-600",children:"Managed via Step 8 (Media Gallery) & Step 4 (Sections) of the School CMS."})
+            e.jsx("span",{className:"px-3 py-1 rounded-full bg-cyan-100 text-cyan-800 text-xs font-black uppercase",children:isHi?"परिसर सुविधाएं व स्मार्ट लैब्स":"Campus Infrastructure & Gallery"}),
+            e.jsx("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:isHi?"विश्वस्तरीय स्मार्ट लैब्स एवं आधुनिक सुविधाएं":"World-Class Smart Labs & Campus Facilities"}),
+            e.jsx("p",{className:"text-xs sm:text-sm text-slate-600",children:isHi?"अत्याधुनिक कंप्यूटर लैब, रोबोटिक्स, पुस्तकालय एवं खेल मैदान।":"Managed via Step 8 (Media Gallery) & Step 4 (Sections) of the School CMS."})
           ]}),
           e.jsx("div",{className:"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5",children:mediaList.map((item,idx)=>e.jsxs("div",{className:"group rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 shadow-sm hover:shadow-xl transition-all",children:[
             e.jsx("div",{className:"h-48 overflow-hidden",children:
@@ -1833,19 +1854,19 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
       e.jsx("section",{id:"school-sec-admissions",className:"py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto",children:
         e.jsxs("div",{className:"grid grid-cols-1 lg:grid-cols-12 gap-8 items-start",children:[
           e.jsxs("div",{className:"lg:col-span-6 space-y-4",children:[
-            e.jsx("span",{className:"px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-black uppercase",children:"Online Admission Portal 2026-27"}),
-            e.jsxs("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:["Apply for Admission at ",schoolName]}),
-            e.jsx("p",{className:"text-sm text-slate-600 leading-relaxed",children:"Fill out the online admission inquiry form below. Our school admission counselor will schedule a campus visit and interaction session."}),
+            e.jsx("span",{className:"px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-black uppercase",children:isHi?"ऑनलाइन प्रवेश पोर्टल 2026-27":"Online Admission Portal 2026-27"}),
+            e.jsxs("h3",{className:"text-2xl sm:text-3xl font-black text-slate-900",children:[isHi?`${schoolName} में प्रवेश हेतु आवेदन करें`:`Apply for Admission at ${schoolName}`]}),
+            e.jsx("p",{className:"text-sm text-slate-600 leading-relaxed",children:isHi?"कृपया नीचे दिया गया ऑनलाइन प्रवेश आवेदन पत्र भरें। विद्यालय प्रवेश परामर्शदाता आपसे शीघ्र संपर्क करेंगे।":"Fill out the online admission inquiry form below. Our school admission counselor will schedule a campus visit and interaction session."}),
             e.jsxs("div",{className:"p-5 rounded-2xl bg-indigo-950 text-white space-y-3",children:[
-              e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-300 font-bold",children:"📱 White-Label School Mobile App (Step 11)"}),
-              e.jsx("div",{className:"text-lg font-black",children:appConfig.appName}),
-              e.jsxs("p",{className:"text-xs text-slate-300",children:["Package ID: ",e.jsx("code",{className:"text-amber-300",children:appConfig.packageName})," • Version ",appConfig.version||"2.1.0"]}),
+              e.jsx("div",{className:"text-xs font-mono uppercase text-cyan-300 font-bold",children:isHi?"📱 आधिकारिक स्कूल मोबाइल ऐप":"📱 White-Label School Mobile App (Step 11)"}),
+              e.jsx("div",{className:"text-lg font-black",children:isHi?`${schoolName} अभिभावक ऐप`:appConfig.appName}),
+              e.jsxs("p",{className:"text-xs text-slate-300",children:[isHi?"सुरक्षित एंड्रॉइड ऐप":"Package ID: ",e.jsx("code",{className:"text-amber-300",children:appConfig.packageName})," • v2.0.0"]}),
               e.jsx("div",{className:"flex flex-wrap gap-1.5 pt-1",children:(appConfig.enabledModules||[]).map(mod=>e.jsx("span",{className:"px-2.5 py-0.5 rounded-full bg-white/10 text-[10px] font-mono uppercase text-cyan-200",children:mod},mod))}),
               e.jsx("div",{className:"pt-2",children:
                 e.jsx("button",{
                   onClick:()=>setSurface&&setSurface("school_app"),
                   className:"px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-xs cursor-pointer",
-                  children:"Launch School Mobile App →"
+                  children:isHi?"स्कूल मोबाइल ऐप खोलें →":"Launch School Mobile App →"
                 })
               })
             ]})
@@ -1853,34 +1874,34 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
           e.jsx("div",{className:"lg:col-span-6 p-6 sm:p-8 rounded-3xl bg-white border-2 border-slate-200 shadow-xl",children:
             admSubmitted?e.jsxs("div",{className:"text-center py-8 space-y-3",children:[
               e.jsx("div",{className:"text-4xl",children:"🎉"}),
-              e.jsx("h4",{className:"text-xl font-black text-emerald-700",children:"Admission Inquiry Registered!"}),
-              e.jsxs("p",{className:"text-xs text-slate-600",children:["Thank you! The admission office at ",schoolName," has received your application details."]}),
-              e.jsx("button",{onClick:()=>setAdmSubmitted(!1),className:"px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer",children:"Submit Another Inquiry"})
+              e.jsx("h4",{className:"text-xl font-black text-emerald-700",children:isHi?"प्रवेश आवेदन सफलतापूर्वक प्राप्त हुआ!":"Admission Inquiry Registered!"}),
+              e.jsxs("p",{className:"text-xs text-slate-600",children:[isHi?`धन्यवाद! ${schoolName} के प्रवेश कार्यालय को आपका विवरण प्राप्त हो चुका है।`:`Thank you! The admission office at ${schoolName} has received your application details.`]}),
+              e.jsx("button",{onClick:()=>setAdmSubmitted(!1),className:"px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer",children:isHi?"दूसरा आवेदन पत्र भरें":"Submit Another Inquiry"})
             ]}):e.jsxs("form",{onSubmit:handleAdmissionSubmit,className:"space-y-4",children:[
-              e.jsx("h4",{className:"text-lg font-black text-slate-900",children:"Student Admission Registration Form"}),
+              e.jsx("h4",{className:"text-lg font-black text-slate-900",children:isHi?"विद्यार्थी प्रवेश पंजीकरण फॉर्म (Online Admission Form)":"Student Admission Registration Form"}),
               e.jsxs("div",{className:"grid grid-cols-1 sm:grid-cols-2 gap-3.5",children:[
                 e.jsxs("div",{children:[
-                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:"Student Full Name *"}),
-                  e.jsx("input",{type:"text",required:!0,value:admForm.studentName,onChange:ev=>setAdmForm({...admForm,studentName:ev.target.value}),placeholder:"e.g. Aarav Sharma",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
+                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:isHi?"विद्यार्थी का पूरा नाम (Student Name) *":"Student Full Name *"}),
+                  e.jsx("input",{type:"text",required:!0,value:admForm.studentName,onChange:ev=>setAdmForm({...admForm,studentName:ev.target.value}),placeholder:isHi?"उदा. आरव शर्मा / Aarav Sharma":"e.g. Aarav Sharma",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
                 ]}),
                 e.jsxs("div",{children:[
-                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:"Applying For Class *"}),
+                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:isHi?"प्रवेश हेतु कक्षा (Grade/Class) *":"Applying For Class *"}),
                   e.jsx("select",{value:admForm.grade,onChange:ev=>setAdmForm({...admForm,grade:ev.target.value}),className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold",children:["Nursery / KG","Class 1","Class 2","Class 3","Class 4","Class 5","Class 6","Class 7","Class 8","Class 9","Class 10","Class 11 (Science)","Class 11 (Commerce)","Class 11 (Humanities)","Class 12"].map(c=>e.jsx("option",{value:c,children:c},c))})
                 ]}),
                 e.jsxs("div",{children:[
-                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:"Parent / Guardian Name *"}),
-                  e.jsx("input",{type:"text",required:!0,value:admForm.parentName,onChange:ev=>setAdmForm({...admForm,parentName:ev.target.value}),placeholder:"e.g. Rajesh Sharma",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
+                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:isHi?"पिता / माता / अभिभावक का नाम (Parent Name) *":"Parent / Guardian Name *"}),
+                  e.jsx("input",{type:"text",required:!0,value:admForm.parentName,onChange:ev=>setAdmForm({...admForm,parentName:ev.target.value}),placeholder:isHi?"उदा. श्री राजेश शर्मा / Rajesh Sharma":"e.g. Rajesh Sharma",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
                 ]}),
                 e.jsxs("div",{children:[
-                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:"10-Digit Mobile Number *"}),
+                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:isHi?"10-अंकों का मोबाइल नंबर (Mobile Number) *":"10-Digit Mobile Number *"}),
                   e.jsx("input",{type:"tel",required:!0,value:admForm.phone,onChange:ev=>setAdmForm({...admForm,phone:ev.target.value}),placeholder:"9876543210",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
                 ]}),
                 e.jsxs("div",{className:"sm:col-span-2",children:[
-                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:"Parent Email Address"}),
+                  e.jsx("label",{className:"block text-xs font-bold text-slate-700 mb-1",children:isHi?"अभिभावक ईमेल पता (Parent Email)":"Parent Email Address"}),
                   e.jsx("input",{type:"email",value:admForm.email,onChange:ev=>setAdmForm({...admForm,email:ev.target.value}),placeholder:"parent@example.com",className:"w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold"})
                 ]})
               ]}),
-              e.jsx("button",{type:"submit",disabled:submittingAdm,className:"w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-black text-xs shadow-lg shadow-indigo-500/20 cursor-pointer",children:submittingAdm?"Submitting Application...":"Submit Online Admission Inquiry →"})
+              e.jsx("button",{type:"submit",disabled:submittingAdm,className:"w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-black text-xs shadow-lg shadow-indigo-500/20 cursor-pointer",children:submittingAdm?(isHi?"आवेदन सबमिट हो रहा है...":"Submitting Application..."):(isHi?"ऑनलाइन प्रवेश आवेदन सबमिट करें →":"Submit Online Admission Inquiry →")})
             ]})
           })
         ]})
@@ -1889,20 +1910,20 @@ function SchoolPublicWebsiteView({orgId:propOrgId,currentUser:x,onOpenLogin:open
         e.jsxs("div",{className:"max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8",children:[
           e.jsxs("div",{className:"space-y-2",children:[
             e.jsx("div",{className:"text-lg font-black text-white",children:schoolName}),
-            e.jsxs("p",{className:"text-xs text-slate-400",children:[board," Affiliated Institution • ",city]}),
+            e.jsxs("p",{className:"text-xs text-slate-400",children:[isHi?`${board} संबद्धता प्राप्त शिक्षण संस्थान • ${city}`:`${board} Affiliated Institution • ${city}`]}),
             e.jsxs("p",{className:"text-xs text-slate-400",children:["📍 ",address]})
           ]}),
           e.jsxs("div",{className:"space-y-1.5 text-xs",children:[
-            e.jsx("div",{className:"font-bold text-white uppercase font-mono",children:"Contact & Helpline"}),
-            e.jsxs("div",{children:["📞 Phone: ",phone]}),
-            e.jsxs("div",{children:["✉️ Email: ",email]}),
+            e.jsx("div",{className:"font-bold text-white uppercase font-mono",children:isHi?"संपर्क एवं हेल्पलाइन":"Contact & Helpline"}),
+            e.jsxs("div",{children:[isHi?"📞 फोन: ":"📞 Phone: ",phone]}),
+            e.jsxs("div",{children:[isHi?"✉️ ईमेल: ":"✉️ Email: ",email]}),
             e.jsxs("div",{children:["🌐 Domain: ",displayDomain]})
           ]}),
           e.jsxs("div",{className:"space-y-2 text-xs",children:[
-            e.jsx("div",{className:"font-bold text-white uppercase font-mono",children:"Quick Portal Links"}),
+            e.jsx("div",{className:"font-bold text-white uppercase font-mono",children:isHi?"त्वरित लिंक्स":"Quick Portal Links"}),
             e.jsxs("div",{className:"flex flex-wrap gap-2",children:[
-              e.jsx("button",{onClick:()=>openLogin&&openLogin(),className:"px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer",children:"ERP Login"}),
-              e.jsx("button",{onClick:()=>setSurface&&setSurface("school_app"),className:"px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer",children:"Mobile App"}),
+              e.jsx("button",{onClick:()=>openLogin&&openLogin(),className:"px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer",children:isHi?"स्कूल ERP लॉगिन":"ERP Login"}),
+              e.jsx("button",{onClick:()=>setSurface&&setSurface("school_app"),className:"px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer",children:isHi?"मोबाइल ऐप":"Mobile App"}),
               e.jsx("button",{onClick:()=>scrollToId("admissions"),className:"px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold cursor-pointer",children:isHi?"प्रवेश 2026-27":"Admissions 2026-27"})
             ]}),
             e.jsx("p",{className:"text-[11px] font-mono font-bold text-cyan-400 pt-2",children:"Powered by DAKSHORA TECHNOLOGIES"})

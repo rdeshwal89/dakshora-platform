@@ -16,13 +16,395 @@ interface SchoolInfo {
   affiliationNumber?: string;
 }
 
+const translations = {
+  en: {
+    announcement: "ADMISSIONS OPEN 2026-27",
+    affiliationText: (board: string, affNo: string, city: string) => `${board} Affiliated (${affNo}) • ${city} Campus`,
+    callUs: "Helpline",
+    officialCampus: "Official Campus",
+    nav: {
+      home: "Home",
+      about: "About Us",
+      academics: "Academics & CBSE",
+      facilities: "Smart Labs & Facilities",
+      notices: "Notice Board",
+      admissions: "Admissions 2026-27",
+      contact: "Contact Us",
+      parentApp: "Parent App",
+      erpLogin: "ERP Login",
+    },
+    hero: {
+      badge: (board: string, city: string) => `${board} AFFILIATED INSTITUTION • ${city.toUpperCase()}`,
+      title: "Welcome to New Ideal Public School",
+      hindiSubtitle: "New Ideal Public School, Mathura",
+      desc: "Fostering Academic Excellence, Smart Classrooms, Robotics, STEM Labs & Holistic Character Building in Mathura.",
+      btnAdmission: "🎓 Apply for Admission 2026-27",
+      btnApp: "📥 Download Parent App (v2.0.0 APK)",
+      btnLogin: "🔐 Staff / Parent ERP Login",
+      stats: [
+        { val: "100%", lbl: "CBSE Board Result" },
+        { val: "Smart", lbl: "Digital Classrooms" },
+        { val: "GPS", lbl: "Safe School Buses" },
+        { val: "24×7", lbl: "Parent Mobile App" },
+      ],
+      campusCard: {
+        badge: "Official Mathura Campus",
+        affiliationNo: "Affiliation No",
+        helpline: "Helpline",
+        classes: "Nursery to Class XII",
+        open: "Admissions Open",
+      },
+    },
+    appSection: {
+      badge: "Official School Android Application",
+      title: "Download New Ideal Public School Parent App",
+      desc: "Track live daily attendance, homework assignments, fees receipts, circulars, report cards & school bus GPS tracking directly on your mobile.",
+      btnBadge: "Direct Android Download",
+      btnTitle: "Download APK v2.0.0 (1.87 MB)",
+    },
+    noticesSection: {
+      badge: "Notice Board",
+      title: "Latest Circulars & Campus Announcements",
+      session: "Academic Session 2026-27",
+      items: [
+        {
+          tag: "Admissions 2026-27",
+          title: "Registration Open for Academic Session 2026-27",
+          body: "Registration and admission inquiry forms for Nursery to Class XII are available online and at the school reception desk in Mathura.",
+        },
+        {
+          tag: "Digital Campus",
+          title: "Launch of Official Parent Mobile App v2.0.0",
+          body: "Parents can now download the official New Ideal Public School Android App (.apk) from the website to access daily attendance, homework, report cards, and fee receipts.",
+        },
+        {
+          tag: "STEM & Labs",
+          title: "STEM Robotics & Smart Science Lab Orientation",
+          body: "Interactive hands-on robotics, computer coding, and STEM sessions are scheduled for students from Class VI onwards in our state-of-the-art campus lab.",
+        },
+      ],
+    },
+    aboutSection: {
+      badge: "About Our Institution & Leadership",
+      title: "Principal's Desk — New Ideal Public School",
+      quote: '"Our mission is to empower every child with modern scientific inquiry, strong moral values, disciplined character, and CBSE-aligned academic excellence to lead the future."',
+      p1: "Located in the heart of Mathura at Shankar Gali Dauli Pyau, New Ideal Public School provides a nurturing environment where children discover their highest potential. With smart digital classrooms, robotics labs, sports grounds, and dedicated faculty, we bridge traditional values with 21st-century education.",
+      factsTitle: "Institution Fast Facts",
+      facts: [
+        { label: "Affiliation", val: "CBSE (CBSE-AFF-2130894)" },
+        { label: "School Code", val: "2026100001" },
+        { label: "Campus City", val: "Mathura, Uttar Pradesh" },
+        { label: "Medium of Instruction", val: "English & Hindi (Bilingual)" },
+        { label: "Session", val: "2026 - 2027" },
+      ],
+    },
+    facilitiesSection: {
+      badge: "Academic Excellence",
+      title: "Curriculum & Modern Infrastructure",
+      desc: "Comprehensive holistic education aligned with CBSE guidelines and NEP 2020.",
+      items: [
+        {
+          icon: "🤖",
+          title: "AI & Robotics Innovation Lab",
+          desc: "Hands-on robotics kits, sensors, STEM projects, and early programming logic for students from Class VI onwards.",
+        },
+        {
+          icon: "💻",
+          title: "Digital Coding & Computer Arena",
+          desc: "High-speed networked computer lab equipped with coding workstations, internet access, and interactive learning tools.",
+        },
+        {
+          icon: "🔬",
+          title: "Integrated Science Laboratories",
+          desc: "Equipped Physics, Chemistry, and Biology practical labs encouraging experiential learning and CBSE practical examinations.",
+        },
+        {
+          icon: "📚",
+          title: "Knowledge Resource Library",
+          desc: "Rich collection of academic reference books, encyclopedia, periodicals, fiction, and competitive exam guidance material.",
+        },
+        {
+          icon: "🚌",
+          title: "Safe Transport & GPS Buses",
+          desc: "Fleet of school buses covering all major neighborhoods across Mathura with verified drivers, conductors, and GPS tracking.",
+        },
+        {
+          icon: "🎯",
+          title: "Sports, Yoga & Cultural Arena",
+          desc: "Comprehensive physical education including cricket, volleyball, badminton, yoga sessions, and annual cultural celebrations.",
+        },
+      ],
+    },
+    admissionsSection: {
+      badge: "Academic Session 2026-27",
+      title: "Online Admission Inquiry Form",
+      desc: "Submit your inquiry below. Our admissions desk at New Ideal Public School will contact you with admission details and fee structure.",
+      successTitle: "Admission Inquiry Submitted Successfully!",
+      successDesc: (phone: string) => `Thank you! The admission desk at New Ideal Public School has received your details and will call you at ${phone} shortly.`,
+      btnAnother: "Submit Another Inquiry",
+      lblName: "Student Full Name *",
+      placeholderName: "e.g. Aarav Sharma",
+      lblGrade: "Grade / Class Applying For *",
+      lblParent: "Parent / Guardian Name *",
+      placeholderParent: "e.g. Rajesh Sharma",
+      lblPhone: "10-Digit Mobile Number *",
+      placeholderPhone: "9876543210",
+      lblEmail: "Parent Email Address",
+      placeholderEmail: "parent@example.com",
+      btnSubmit: "Submit Online Admission Inquiry →",
+      btnSubmitting: "Submitting Inquiry...",
+    },
+    footerSection: {
+      tagline: "CBSE Affiliated Institution (CBSE-AFF-2130894) • Mathura Campus",
+      contactTitle: "Contact & Helpline",
+      phone: "Phone",
+      email: "Email",
+      code: "School Code",
+      quickAccess: "Quick Access",
+      erpLogin: "School ERP Login",
+      downloadApp: "Download App (.apk)",
+      applyAdm: "Apply Admission",
+      portalTag: "Official Institutional Campus Portal",
+    },
+    loginModal: {
+      title: "School ERP & Institutional Login Portal",
+      selectRole: "Select Your Institutional Role:",
+      principal: {
+        title: "Principal / Admin",
+        sub: "प्रिंसिपल / एडमिन",
+        context: "Principal / Admin Mode: Institutional governance, fee collection, staff allocation & CBSE records.",
+        placeholderId: "e.g. principal@newidealpublicschool.edu.in or 8529575588",
+        labelId: "Principal Email / Mobile Number *",
+      },
+      teacher: {
+        title: "Teacher / Staff",
+        sub: "शिक्षक / स्टाफ",
+        context: "Teacher / Staff Mode: Class attendance marking, homework assignment, gradebook & exams.",
+        placeholderId: "e.g. teacher@newidealpublicschool.edu.in or EMP102",
+        labelId: "Teacher Email / Employee Code *",
+      },
+      parent: {
+        title: "Parent / Student",
+        sub: "अभिभावक / छात्र",
+        context: "Parent / Student Portal: Ward attendance, homework, live school bus GPS & fee payment receipts.",
+        placeholderId: "e.g. 9876543210 or ADM202601",
+        labelId: "Registered Mobile Number / Admission No. *",
+      },
+      tabPassword: "🔑 Email / ID & Password",
+      tabOtp: "📱 Mobile OTP",
+      lblPassword: "Password *",
+      btnSignIn: "Sign In to School ERP →",
+      btnVerifying: "Verifying Credentials...",
+      lblMobile: "10-Digit Registered Mobile Number *",
+      btnSmsOtp: "📱 Send SMS OTP",
+      btnWhatsappOtp: "💬 WhatsApp OTP",
+      otpSentTo: (phone: string) => `Enter 6-Digit OTP received on +91 ${phone}`,
+      btnVerifyOtp: "Verify OTP & Enter ERP →",
+      demoTitle: "⚡ 1-Click Instant Role Login (Demo Sandbox):",
+      demoPrincipal: "🏫 Principal (Full ERP)",
+      demoTeacher: "👨‍🏫 Teacher (Attendance & Marks)",
+      demoParent: "👨‍👩‍👧 Parent (Ward & Bus GPS)",
+    },
+  },
+  hi: {
+    announcement: "सत्र 2026-27 प्रवेश प्रारंभ (ADMISSIONS OPEN 2026-27)",
+    affiliationText: (board: string, affNo: string, city: string) => `${board} से संबद्धता प्राप्त (${affNo}) • ${city} परिसर`,
+    callUs: "हेल्पलाइन",
+    officialCampus: "आधिकारिक परिसर",
+    nav: {
+      home: "होम",
+      about: "हमारे बारे में",
+      academics: "शिक्षा एवं सीबीएसई",
+      facilities: "स्मार्ट लैब्स व सुविधाएं",
+      notices: "सूचना पट्ट",
+      admissions: "प्रवेश 2026-27",
+      contact: "संपर्क करें",
+      parentApp: "पेरेंट ऐप",
+      erpLogin: "ERP लॉगिन",
+    },
+    hero: {
+      badge: (board: string, city: string) => `${board} से संबद्ध मान्यता प्राप्त शिक्षण संस्थान • ${city.toUpperCase()}`,
+      title: "न्यू आइडियल पब्लिक स्कूल में आपका स्वागत है",
+      hindiSubtitle: "New Ideal Public School, Mathura",
+      desc: "मथुरा में आधुनिक स्मार्ट डिजिटल कक्षाएं, अटल टिंकरिंग व रोबोटिक्स लैब, संस्कारयुक्त अनुशासित वातावरण एवं सर्वांगीण विकास का प्रमुख केंद्र।",
+      btnAdmission: "🎓 सत्र 2026-27 प्रवेश हेतु ऑनलाइन आवेदन करें",
+      btnApp: "📥 पेरेंट मोबाइल ऐप डाउनलोड करें (APK v2.0.0)",
+      btnLogin: "🔐 स्कूल स्टाफ / अभिभावक ERP लॉगिन",
+      stats: [
+        { val: "100%", lbl: "सीबीएसई बोर्ड परीक्षा परिणाम" },
+        { val: "स्मार्ट", lbl: "डिजिटल स्मार्ट क्लासरूम" },
+        { val: "जीपीएस", lbl: "सुरक्षित स्कूल बसें" },
+        { val: "24×7", lbl: "अभिभावक मोबाइल ऐप" },
+      ],
+      campusCard: {
+        badge: "आधिकारिक मथुरा परिसर",
+        affiliationNo: "मान्यता क्रमांक (Affiliation No)",
+        helpline: "हेल्पलाइन नंबर",
+        classes: "नर्सरी से 12वीं कक्षा तक",
+        open: "प्रवेश आवेदन खुले हैं",
+      },
+    },
+    appSection: {
+      badge: "आधिकारिक स्कूल एंड्रॉइड ऐप (Android Mobile App)",
+      title: "न्यू आइडियल पब्लिक स्कूल अभिभावक ऐप डाउनलोड करें",
+      desc: "छात्र की दैनिक उपस्थिति, गृहकार्य (होमवर्क), फीस रसीदें, परीक्षा अंकतालिका, विद्यालय सर्कुलर एवं स्कूल बस की लाइव जीपीएस ट्रैकिंग सीधे अपने मोबाइल फोन पर देखें।",
+      btnBadge: "डायरेक्ट एंड्रॉइड एपीके डाउनलोड",
+      btnTitle: "डाउनलोड करें APK v2.0.0 (1.87 MB)",
+    },
+    noticesSection: {
+      badge: "सूचना पट्ट (Notice Board)",
+      title: "नवीनतम विद्यालय परिपत्र एवं घोषणाएं (Circulars)",
+      session: "शैक्षणिक सत्र 2026-27",
+      items: [
+        {
+          tag: "प्रवेश 2026-27",
+          title: "शैक्षणिक सत्र 2026-27 हेतु प्रवेश प्रारंभ",
+          body: "नर्सरी से 12वीं तक की कक्षाओं में प्रवेश हेतु पंजीकरण फॉर्म वेबसाइट पर ऑनलाइन एवं विद्यालय रिसेप्शन काउंटर पर उपलब्ध हैं।",
+        },
+        {
+          tag: "डिजिटल कैंपस",
+          title: "आधिकारिक पेरेंट मोबाइल ऐप v2.0.0 जारी",
+          body: "समस्त अभिभावक अपने मोबाइल पर न्यू आइडियल पब्लिक स्कूल ऐप तुरंत डाउनलोड करें। उपस्थिति, होमवर्क एवं फीस विवरण ऐप पर उपलब्ध है।",
+        },
+        {
+          tag: "रोबोटिक्स व लैब",
+          title: "सीबीएसई स्टेम रोबोटिक्स व विज्ञान लैब कार्यशाला",
+          body: "कक्षा 6 से 12वीं के विद्यार्थियों हेतु रोबोटिक्स, कोडिंग एवं प्रयोगात्मक विज्ञान लैब सत्र का आयोजन किया जा रहा है।",
+        },
+      ],
+    },
+    aboutSection: {
+      badge: "संस्थान एवं नेतृत्व परिचय",
+      title: "प्रधानाचार्य की कलम से — न्यू आइडियल पब्लिक स्कूल",
+      quote: '"हमारा ध्येय प्रत्येक विद्यार्थी में आधुनिक वैज्ञानिक सोच, नैतिक मूल्य, अनुशासित आचरण और सीबीएसई मानकों के अनुरूप शैक्षणिक उत्कृष्टता का विकास करना है।"',
+      p1: "मथुरा के हृदय स्थल शंकर गली, डौली प्याऊ में स्थित न्यू आइडियल पब्लिक स्कूल विद्यार्थियों के सर्वांगीण विकास हेतु समर्पित है। आधुनिक स्मार्ट क्लासरूम, रोबोटिक्स लैब, सुसज्जित खेल परिसर और अनुभवी शिक्षकों के मार्गदर्शन में हम भारतीय संस्कारों के साथ 21वीं सदी की आधुनिक शिक्षा प्रदान करते हैं।",
+      factsTitle: "विद्यालय के मुख्य तथ्य (Fast Facts)",
+      facts: [
+        { label: "बोर्ड संबद्धता", val: "सीबीएसई (CBSE-AFF-2130894)" },
+        { label: "स्कूल कोड", val: "2026100001" },
+        { label: "शहर व राज्य", val: "मथुरा, उत्तर प्रदेश" },
+        { label: "शिक्षा का माध्यम", val: "हिंदी एवं अंग्रेजी (द्विभाषी / Bilingual)" },
+        { label: "शैक्षणिक सत्र", val: "2026 - 2027" },
+      ],
+    },
+    facilitiesSection: {
+      badge: "शैक्षणिक उत्कृष्टता व सुविधाएं",
+      title: "सीबीएसई पाठ्यक्रम एवं आधुनिक शिक्षण सुविधाएं",
+      desc: "राष्ट्रीय शिक्षा नीति (NEP 2020) एवं सीबीएसई के दिशानिर्देशों पर आधारित समग्र शिक्षा।",
+      items: [
+        {
+          icon: "🤖",
+          title: "एआई एवं रोबोटिक्स इनोवेशन लैब",
+          desc: "कक्षा 6 से 12वीं के विद्यार्थियों हेतु हैंड्स-ऑन रोबोटिक्स किट्स, सेंसर्स, स्टेम मॉडल्स एवं प्रारंभिक कोडिंग प्रशिक्षण।",
+        },
+        {
+          icon: "💻",
+          title: "कंप्यूटर कोडिंग एवं डिजिटल लैब",
+          desc: "हाई-स्पीड इंटरनेट, आधुनिक कंप्यूटर वर्कस्टेशन, इंटरैक्टिव लर्निंग टूल्स और डिजिटल साक्षरता प्रशिक्षण।",
+        },
+        {
+          icon: "🔬",
+          title: "एकीकृत विज्ञान प्रयोगशालाएं",
+          desc: "भौतिकी (Physics), रसायन (Chemistry) एवं जीव विज्ञान (Biology) की सुसज्जित प्रायोगिक प्रयोगशालाएं।",
+        },
+        {
+          icon: "📚",
+          title: "ज्ञान संपदा पुस्तकालय (लाइब्रेरी)",
+          desc: "हजारों शैक्षणिक पुस्तकें, ज्ञानकोष (Encyclopedias), पत्र-पत्रिकाएं, हिंदी-अंग्रेजी साहित्य और प्रतियोगी परीक्षा सामग्री।",
+        },
+        {
+          icon: "🚌",
+          title: "सुरक्षित स्कूल बसें एवं जीपीएस ट्रैकिंग",
+          desc: "मथुरा शहर व आसपास के प्रमुख क्षेत्रों में अनुभवी चालकों, सहायकों एवं लाइव जीपीएस से लैस सुरक्षित बस सेवा।",
+        },
+        {
+          icon: "🎯",
+          title: "खेलकूद, योग एवं सांस्कृतिक मंच",
+          desc: "क्रिकेट, वॉलीबॉल, बैडमिंटन, दैनिक योग सत्र, मार्शल आर्ट्स एवं वार्षिक सांस्कृतिक उत्सवों का आयोजन।",
+        },
+      ],
+    },
+    admissionsSection: {
+      badge: "शैक्षणिक सत्र 2026-27",
+      title: "ऑनलाइन प्रवेश आवेदन पत्र (Admission Inquiry)",
+      desc: "कृपया नीचे दिया गया फॉर्म भरें। न्यू आइडियल पब्लिक स्कूल का प्रवेश विभाग आपसे फीस संरचना व प्रवेश प्रक्रिया हेतु शीघ्र संपर्क करेगा।",
+      successTitle: "प्रवेश आवेदन सफलतापूर्वक प्राप्त हुआ! (Form Submitted)",
+      successDesc: (phone: string) => `धन्यवाद! न्यू आइडियल पब्लिक स्कूल प्रवेश कार्यालय को आपका विवरण मिल चुका है। हमारे प्रतिनिधि आपसे शीघ्र मोबाइल नंबर ${phone} पर संपर्क करेंगे।`,
+      btnAnother: "दूसरा आवेदन फॉर्म भरें",
+      lblName: "विद्यार्थी का पूरा नाम (Student Name) *",
+      placeholderName: "उदा. आरव शर्मा / Aarav Sharma",
+      lblGrade: "प्रवेश हेतु कक्षा (Grade/Class) *",
+      lblParent: "पिता / माता / अभिभावक का नाम (Parent Name) *",
+      placeholderParent: "उदा. श्री राजेश शर्मा / Rajesh Sharma",
+      lblPhone: "10-अंकों का मोबाइल नंबर (Mobile Number) *",
+      placeholderPhone: "9876543210",
+      lblEmail: "ईमेल पता (Email Address)",
+      placeholderEmail: "parent@example.com",
+      btnSubmit: "ऑनलाइन प्रवेश आवेदन सबमिट करें →",
+      btnSubmitting: "आवेदन सबमिट हो रहा है...",
+    },
+    footerSection: {
+      tagline: "सीबीएसई मान्यता प्राप्त सीनियर सेकेंडरी विद्यालय (CBSE-AFF-2130894) • मथुरा",
+      contactTitle: "संपर्क एवं हेल्पलाइन",
+      phone: "फोन",
+      email: "ईमेल",
+      code: "स्कूल कोड",
+      quickAccess: "त्वरित लिंक्स (Quick Links)",
+      erpLogin: "स्कूल ERP लॉगिन",
+      downloadApp: "पेरेंट ऐप डाउनलोड (.apk)",
+      applyAdm: "प्रवेश आवेदन 2026-27",
+      portalTag: "आधिकारिक विद्यालय परिसर पोर्टल (Dakshora Institutional Portal)",
+    },
+    loginModal: {
+      title: "विद्यालय ERP एवं संस्थागत लॉगिन पोर्टल",
+      selectRole: "अपनी संस्थागत भूमिका चुनें (Select Your Role):",
+      principal: {
+        title: "प्रधानाचार्य / एडमिन",
+        sub: "Principal / Admin",
+        context: "प्रधानाचार्य / एडमिन मोड: सम्पूर्ण विद्यालय प्रबंधन, फीस रिकॉर्ड्स, शिक्षक आवंटन एवं सीबीएसई रिकॉर्ड्स।",
+        placeholderId: "ईमेल या 10-अंकों का मोबाइल नंबर",
+        labelId: "प्रधानाचार्य ईमेल / मोबाइल नंबर *",
+      },
+      teacher: {
+        title: "शिक्षक / स्टाफ",
+        sub: "Teacher / Staff",
+        context: "शिक्षक / स्टाफ मोड: दैनिक छात्र उपस्थिति अंकन, गृहकार्य आवंटन, क्लास डायरी एवं परीक्षा अंक।",
+        placeholderId: "स्टाफ ईमेल या कर्मचारी कोड (Employee Code)",
+        labelId: "शिक्षक ईमेल / कर्मचारी कोड *",
+      },
+      parent: {
+        title: "अभिभावक / छात्र",
+        sub: "Parent / Student",
+        context: "अभिभावक / छात्र पोर्टल: छात्र उपस्थिति, गृहकार्य, स्कूल बस की लाइव जीपीएस लोकेशन एवं फीस रसीदें।",
+        placeholderId: "रजिस्टर्ड 10-डिजिट मोबाइल नंबर या छात्र एडमिशन नंबर",
+        labelId: "रजिस्टर्ड मोबाइल नंबर / छात्र एडमिशन नंबर *",
+      },
+      tabPassword: "🔑 आईडी व पासवर्ड से लॉगिन",
+      tabOtp: "📱 मोबाइल ओटीपी से लॉगिन",
+      lblPassword: "पासवर्ड (Password) *",
+      btnSignIn: "स्कूल ERP में प्रवेश करें (Sign In) →",
+      btnVerifying: "क्रेडेंशियल्स सत्यापित हो रहे हैं...",
+      lblMobile: "10-अंकों का रजिस्टर्ड मोबाइल नंबर *",
+      btnSmsOtp: "📱 SMS द्वारा OTP भेजें",
+      btnWhatsappOtp: "💬 WhatsApp द्वारा OTP भेजें",
+      otpSentTo: (phone: string) => `+91 ${phone} पर भेजा गया 6-अंकों का OTP कोड दर्ज करें`,
+      btnVerifyOtp: "ओटीपी सत्यापित कर ERP में प्रवेश करें →",
+      demoTitle: "⚡ 1-क्लिक तुरंत भूमिका लॉगिन (डेमो टेस्ट ड्राइव):",
+      demoPrincipal: "🏫 प्रधानाचार्य (पूर्ण ERP कॉकपिट)",
+      demoTeacher: "👨‍🏫 शिक्षक (उपस्थिति व अंक)",
+      demoParent: "👨‍👩‍👧 अभिभावक (छात्र प्रगति व बस GPS)",
+    },
+  },
+};
+
 export default function SchoolPublicPage() {
   const params = useParams();
   const slugParam = (params?.slug as string) || "new-ideal-public-school";
 
   const [activeSection, setActiveSection] = useState("home");
-  const [lang, setLang] = useState<"en" | "hi">("en");
+  const [lang, setLang] = useState<"en" | "hi">("hi"); // Default to Hindi for authentic Hindi medium/bilingual experience!
   const isHi = lang === "hi";
+  const t = translations[lang];
 
   // Login Modal State
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -47,7 +429,7 @@ export default function SchoolPublicPage() {
     city: "Mathura",
     address: "Shankar Gali Dauli Pyau, Mathura, Uttar Pradesh - 281001",
     contactPhone: "+91 8529575588",
-    contactEmail: "info@dpsheritage.edu.in",
+    contactEmail: "contact@newidealpublicschool.edu.in",
     logoUrl: null,
     affiliationNumber: "CBSE-AFF-2130894",
   });
@@ -65,8 +447,18 @@ export default function SchoolPublicPage() {
   });
 
   useEffect(() => {
-    // Dynamic page title
-    document.title = `${school.name} | Official School Website`;
+    // Dynamic page title based on language
+    document.title = isHi
+      ? `${school.name} | आधिकारिक विद्यालय वेबसाइट (Official CBSE Campus)`
+      : `${school.name} | Official School Website`;
+
+    // Retrieve saved language preference if any
+    try {
+      const savedLang = localStorage.getItem("dakshora_preferred_lang");
+      if (savedLang === "en" || savedLang === "hi") {
+        setLang(savedLang);
+      }
+    } catch {}
 
     // Check if URL requested login modal immediately
     try {
@@ -92,11 +484,18 @@ export default function SchoolPublicPage() {
             contactPhone: data.school.contactPhone || prev.contactPhone,
             affiliationNumber: data.school.affiliationNumber || prev.affiliationNumber || "CBSE-AFF-2130894",
           }));
-          document.title = `${data.school.name} | Official School Website`;
         }
       })
       .catch(() => {});
-  }, [slugParam, school.name]);
+  }, [slugParam, school.name, isHi]);
+
+  const toggleLanguage = () => {
+    const nextLang = lang === "hi" ? "en" : "hi";
+    setLang(nextLang);
+    try {
+      localStorage.setItem("dakshora_preferred_lang", nextLang);
+    } catch {}
+  };
 
   const scrollTo = (id: string) => {
     setActiveSection(id);
@@ -109,7 +508,7 @@ export default function SchoolPublicPage() {
   const handleAdmissionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!admForm.studentName.trim() || !admForm.phone.trim()) {
-      setAdmError("Please provide student name and mobile number.");
+      setAdmError(isHi ? "कृपया विद्यार्थी का नाम एवं 10-अंकों का मोबाइल नंबर दर्ज करें।" : "Please provide student name and mobile number.");
       return;
     }
     setSubmittingAdm(true);
@@ -133,10 +532,10 @@ export default function SchoolPublicPage() {
         setAdmSubmitted(true);
       } else {
         const d = await res.json().catch(() => null);
-        setAdmError(d?.message || "Failed to submit admission inquiry. Please call us directly.");
+        setAdmError(d?.message || (isHi ? "आवेदन सबमिट करने में असमर्थ। कृपया सीधे संपर्क करें।" : "Failed to submit admission inquiry. Please call us directly."));
       }
     } catch {
-      setAdmError("Network error. Please call our admission desk directly at " + school.contactPhone);
+      setAdmError(isHi ? `नेटवर्क त्रुटि। कृपया हमारे प्रवेश कार्यालय पर सीधे कॉल करें: ${school.contactPhone}` : "Network error. Please call our admission desk directly at " + school.contactPhone);
     } finally {
       setSubmittingAdm(false);
     }
@@ -192,7 +591,7 @@ export default function SchoolPublicPage() {
       );
     } catch {}
 
-    setLoginSuccessMsg(`Entering ${target.name}'s workspace...`);
+    setLoginSuccessMsg(isHi ? `${target.name} के कार्यक्षेत्र में प्रवेश हो रहा है...` : `Entering ${target.name}'s workspace...`);
     setTimeout(() => {
       window.location.href = `/portal?surface=${target.surface}`;
     }, 600);
@@ -202,7 +601,7 @@ export default function SchoolPublicPage() {
   const handlePasswordLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginIdentifier.trim() || !loginPassword.trim()) {
-      setLoginError("Please enter email/mobile/ID and password.");
+      setLoginError(isHi ? "कृपया ईमेल/मोबाइल/आईडी एवं पासवर्ड दर्ज करें।" : "Please enter email/mobile/ID and password.");
       return;
     }
     setAuthenticating(true);
@@ -236,15 +635,15 @@ export default function SchoolPublicPage() {
             ? "admin_panel"
             : "school_erp";
 
-        setLoginSuccessMsg(`Authentication Successful! Welcome, ${data.user.name || "User"}.`);
+        setLoginSuccessMsg(isHi ? `लॉगिन सफल! स्वागत है, ${data.user.name || "उपयोगकर्ता"}।` : `Authentication Successful! Welcome, ${data.user.name || "User"}.`);
         setTimeout(() => {
           window.location.href = `/portal?surface=${surface}`;
         }, 700);
       } else {
-        setLoginError(data?.message || "Invalid credentials. Please verify username and password.");
+        setLoginError(data?.message || (isHi ? "अमान्य क्रेडेंशियल्स। कृपया आईडी एवं पासवर्ड की पुष्टि करें।" : "Invalid credentials. Please verify username and password."));
       }
     } catch {
-      setLoginError("Server communication error. Please check your connection.");
+      setLoginError(isHi ? "सर्वर से संपर्क नहीं हो पाया। कृपया इंटरनेट कनेक्शन जांचें।" : "Server communication error. Please check your connection.");
     } finally {
       setAuthenticating(false);
     }
@@ -254,7 +653,7 @@ export default function SchoolPublicPage() {
   const handleSendOtp = async (channel: "sms" | "whatsapp") => {
     const cleanPhone = loginMobile.replace(/\D/g, "").slice(-10);
     if (cleanPhone.length < 10) {
-      setLoginError("Please enter a valid 10-digit registered mobile number.");
+      setLoginError(isHi ? "कृपया 10-अंकों का वैध रजिस्टर्ड मोबाइल नंबर दर्ज करें।" : "Please enter a valid 10-digit registered mobile number.");
       return;
     }
     setSendingOtp(true);
@@ -268,12 +667,12 @@ export default function SchoolPublicPage() {
       const data = await res.json().catch(() => null);
       if (res.ok && data?.success) {
         setOtpSent(true);
-        setLoginSuccessMsg(`6-Digit OTP sent via ${channel === "whatsapp" ? "WhatsApp" : "SMS"}.`);
+        setLoginSuccessMsg(isHi ? `6-अंकों का OTP ${channel === "whatsapp" ? "WhatsApp" : "SMS"} पर भेज दिया गया है।` : `6-Digit OTP sent via ${channel === "whatsapp" ? "WhatsApp" : "SMS"}.`);
       } else {
-        setLoginError(data?.message || "Could not dispatch OTP. Please check your mobile number.");
+        setLoginError(data?.message || (isHi ? "ओटीपी भेजने में असमर्थ। मोबाइल नंबर की जांच करें।" : "Could not dispatch OTP. Please check your mobile number."));
       }
     } catch {
-      setLoginError("Network error while sending OTP.");
+      setLoginError(isHi ? "ओटीपी भेजने के दौरान नेटवर्क त्रुटि हुई।" : "Network error while sending OTP.");
     } finally {
       setSendingOtp(false);
     }
@@ -283,7 +682,7 @@ export default function SchoolPublicPage() {
   const handleVerifyOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginOtp.trim() || loginOtp.trim().length !== 6) {
-      setLoginError("Please enter the 6-digit OTP code.");
+      setLoginError(isHi ? "कृपया 6-अंकों का ओटीपी कोड दर्ज करें।" : "Please enter the 6-digit OTP code.");
       return;
     }
     setAuthenticating(true);
@@ -309,15 +708,15 @@ export default function SchoolPublicPage() {
             ? "admin_panel"
             : "school_erp";
 
-        setLoginSuccessMsg(`OTP Verified! Welcome, ${data.user.name || "User"}.`);
+        setLoginSuccessMsg(isHi ? `ओटीपी सत्यापित! स्वागत है, ${data.user.name || "उपयोगकर्ता"}।` : `OTP Verified! Welcome, ${data.user.name || "User"}.`);
         setTimeout(() => {
           window.location.href = `/portal?surface=${surface}`;
         }, 700);
       } else {
-        setLoginError(data?.message || "Invalid or expired OTP code.");
+        setLoginError(data?.message || (isHi ? "अमान्य या समाप्त हो चुका ओटीपी कोड।" : "Invalid or expired OTP code."));
       }
     } catch {
-      setLoginError("Verification failed due to a network error.");
+      setLoginError(isHi ? "नेटवर्क त्रुटि के कारण ओटीपी सत्यापन विफल रहा।" : "Verification failed due to a network error.");
     } finally {
       setAuthenticating(false);
     }
@@ -332,14 +731,14 @@ export default function SchoolPublicPage() {
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex flex-wrap items-center gap-3">
             <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider animate-pulse">
-              ADMISSIONS OPEN 2026-27
+              {t.announcement}
             </span>
             <span className="font-semibold text-indigo-100">
-              {school.board} Affiliated ({school.affiliationNumber}) • {school.city} Campus
+              {t.affiliationText(school.board, school.affiliationNumber || "CBSE-AFF-2130894", school.city)}
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs font-mono text-indigo-200">
-            <a href={`tel:${school.contactPhone}`} className="hover:text-white transition-colors flex items-center gap-1">
+            <a href={`tel:${school.contactPhone}`} className="hover:text-white transition-colors flex items-center gap-1 font-bold">
               <span>📞</span>
               <span>{school.contactPhone}</span>
             </a>
@@ -362,10 +761,10 @@ export default function SchoolPublicPage() {
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-tight group-hover:text-indigo-600 transition-colors">
-                {school.name}
+                {isHi ? "न्यू आइडियल पब्लिक स्कूल" : school.name}
               </h1>
               <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">
-                {school.board} Affiliated • {school.city} • Official Campus
+                {isHi ? `सीबीएसई मान्यता प्राप्त • ${school.city} • आधिकारिक परिसर` : `${school.board} Affiliated • ${school.city} • Official Campus`}
               </p>
             </div>
           </div>
@@ -373,13 +772,13 @@ export default function SchoolPublicPage() {
           {/* Nav Links */}
           <nav className="hidden lg:flex items-center gap-1">
             {[
-              { id: "home", label: isHi ? "होम" : "Home" },
-              { id: "about", label: isHi ? "परिचय" : "About Us" },
-              { id: "academics", label: isHi ? "शिक्षा" : "Academics" },
-              { id: "facilities", label: isHi ? "लैब्स व सुविधाएं" : "Smart Labs & Facilities" },
-              { id: "notices", label: isHi ? "सूचना पट्ट" : "Notice Board" },
-              { id: "admissions", label: isHi ? "प्रवेश 2026-27" : "Admissions 2026-27" },
-              { id: "contact", label: isHi ? "संपर्क" : "Contact Us" },
+              { id: "home", label: t.nav.home },
+              { id: "about", label: t.nav.about },
+              { id: "academics", label: t.nav.academics },
+              { id: "facilities", label: t.nav.facilities },
+              { id: "notices", label: t.nav.notices },
+              { id: "admissions", label: t.nav.admissions },
+              { id: "contact", label: t.nav.contact },
             ].map((nav) => (
               <button
                 key={nav.id}
@@ -398,10 +797,12 @@ export default function SchoolPublicPage() {
           {/* Action CTAs */}
           <div className="flex items-center gap-2.5">
             <button
-              onClick={() => setLang(isHi ? "en" : "hi")}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs cursor-pointer transition-colors"
+              onClick={toggleLanguage}
+              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 font-bold text-xs cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
+              title={isHi ? "Switch to English" : "हिंदी भाषा में बदलें"}
             >
-              {isHi ? "🇬🇧 EN" : "🇮🇳 हिंदी"}
+              <span>{isHi ? "🇮🇳" : "🇬🇧"}</span>
+              <span className="font-extrabold">{isHi ? "हिंदी (Hindi)" : "English"}</span>
             </button>
             <a
               href={apkUrl}
@@ -409,14 +810,14 @@ export default function SchoolPublicPage() {
               className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
             >
               <span>📱</span>
-              <span>Parent App</span>
+              <span>{t.nav.parentApp}</span>
             </a>
             <button
               onClick={() => setIsLoginOpen(true)}
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer flex items-center gap-1.5"
             >
               <span>🔐</span>
-              <span>ERP Login →</span>
+              <span>{t.nav.erpLogin} →</span>
             </button>
           </div>
         </div>
@@ -434,15 +835,22 @@ export default function SchoolPublicPage() {
           <div className="lg:col-span-7 space-y-6">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 border border-white/20 text-cyan-300 text-xs font-bold">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>{school.board} AFFILIATED INSTITUTION • {school.city.toUpperCase()}</span>
+              <span>{t.hero.badge(school.board, school.city)}</span>
             </div>
 
-            <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight text-white">
-              Welcome to {school.name}
-            </h2>
+            <div className="space-y-1">
+              <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight text-white">
+                {t.hero.title}
+              </h2>
+              {isHi && (
+                <div className="text-sm font-mono text-cyan-300 font-semibold tracking-wide">
+                  New Ideal Public School • Mathura (CBSE Board)
+                </div>
+              )}
+            </div>
 
             <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-2xl">
-              Fostering Academic Excellence, Smart Classrooms, Robotics, STEM Labs & Holistic Character Building in Mathura.
+              {t.hero.desc}
             </p>
 
             <div className="flex flex-wrap items-center gap-3.5 pt-2">
@@ -450,7 +858,7 @@ export default function SchoolPublicPage() {
                 onClick={() => scrollTo("admissions")}
                 className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 hover:brightness-110 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/25 transition-all cursor-pointer"
               >
-                🎓 Apply for Admission 2026-27
+                {t.hero.btnAdmission}
               </button>
               <a
                 href={apkUrl}
@@ -458,25 +866,20 @@ export default function SchoolPublicPage() {
                 className="px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 border border-emerald-400 text-white font-bold text-sm shadow-xl shadow-emerald-600/25 transition-all inline-flex items-center gap-2 cursor-pointer"
               >
                 <span>📥</span>
-                <span>Download Parent App (v2.0.0 APK)</span>
+                <span>{t.hero.btnApp}</span>
               </a>
               <button
                 onClick={() => setIsLoginOpen(true)}
                 className="px-5 py-3.5 rounded-2xl bg-indigo-600/40 hover:bg-indigo-600/60 border border-indigo-400/40 text-indigo-100 font-bold text-sm transition-all cursor-pointer inline-flex items-center gap-2"
               >
                 <span>🔐</span>
-                <span>Staff / Parent ERP Login</span>
+                <span>{t.hero.btnLogin}</span>
               </button>
             </div>
 
             {/* Quick Badges */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6">
-              {[
-                { val: "100%", lbl: "CBSE Board Result" },
-                { val: "Smart", lbl: "Digital Classrooms" },
-                { val: "GPS", lbl: "Safe School Buses" },
-                { val: "24×7", lbl: "Parent Mobile App" },
-              ].map((st, idx) => (
+              {t.hero.stats.map((st, idx) => (
                 <div
                   key={idx}
                   className="p-3.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm"
@@ -495,23 +898,25 @@ export default function SchoolPublicPage() {
               </div>
               <div className="space-y-2">
                 <div className="text-xs font-mono uppercase text-cyan-400 font-bold">
-                  Official Mathura Campus
+                  {t.hero.campusCard.badge}
                 </div>
-                <div className="text-xl font-black text-white">{school.name}</div>
+                <div className="text-xl font-black text-white">
+                  {isHi ? "न्यू आइडियल पब्लिक स्कूल" : school.name}
+                </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   📍 {school.address}
                 </p>
                 <p className="text-xs font-mono text-indigo-300">
-                  Affiliation No: <strong>{school.affiliationNumber}</strong>
+                  {t.hero.campusCard.affiliationNo}: <strong>{school.affiliationNumber}</strong>
                 </p>
                 <p className="text-xs font-mono text-indigo-300">
-                  Helpline: <strong>{school.contactPhone}</strong>
+                  {t.hero.campusCard.helpline}: <strong>{school.contactPhone}</strong>
                 </p>
               </div>
 
               <div className="pt-2 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 font-mono">
-                <span>Nursery to Class XII</span>
-                <span className="text-emerald-400 font-bold">● Admissions Open</span>
+                <span>{t.hero.campusCard.classes}</span>
+                <span className="text-emerald-400 font-bold">● {t.hero.campusCard.open}</span>
               </div>
             </div>
           </div>
@@ -523,13 +928,13 @@ export default function SchoolPublicPage() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-2 text-center md:text-left">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold uppercase font-mono">
-              <span>📱</span> Official School Android Application
+              <span>📱</span> {t.appSection.badge}
             </div>
             <h3 className="text-2xl sm:text-3xl font-black">
-              Download {school.name} Parent App
+              {t.appSection.title}
             </h3>
-            <p className="text-xs sm:text-sm text-emerald-200 max-w-xl">
-              Track live daily attendance, homework assignments, fees receipts, circulars, report cards & school bus GPS tracking directly on your mobile.
+            <p className="text-xs sm:text-sm text-emerald-200 max-w-xl leading-relaxed">
+              {t.appSection.desc}
             </p>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
@@ -540,8 +945,8 @@ export default function SchoolPublicPage() {
             >
               <span className="text-lg">📥</span>
               <div className="text-left">
-                <div className="text-xs uppercase tracking-wider font-extrabold">Direct Android Download</div>
-                <div className="text-sm font-black">Download APK v2.0.0 (1.87 MB)</div>
+                <div className="text-xs uppercase tracking-wider font-extrabold">{t.appSection.btnBadge}</div>
+                <div className="text-sm font-black">{t.appSection.btnTitle}</div>
               </div>
             </a>
           </div>
@@ -554,40 +959,21 @@ export default function SchoolPublicPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <span className="px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-black uppercase">
-                📢 Notice Board
+                📢 {t.noticesSection.badge}
               </span>
               <h3 className="text-xl font-black text-slate-900">
-                Latest Circulars & Campus Announcements
+                {t.noticesSection.title}
               </h3>
             </div>
             <span className="text-xs font-mono text-indigo-700 font-bold">
-              Academic Session 2026-27
+              {t.noticesSection.session}
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[
-              {
-                id: 1,
-                tag: "Admissions 2026-27",
-                title: `Registration Open for Academic Session 2026-27`,
-                body: "Registration and admission forms for Pre-Primary to Class XII are available online and at the school reception desk in Mathura.",
-              },
-              {
-                id: 2,
-                tag: "Digital Campus",
-                title: "Launch of Official Parent Mobile App v2.0.0",
-                body: `Parents can now download the official ${school.name} App to access daily attendance, homework, report cards, and fee receipts.`,
-              },
-              {
-                id: 3,
-                tag: "Curriculum & Labs",
-                title: "STEM Robotics & Smart Science Lab Orientation",
-                body: "Interactive hands-on robotics and coding sessions scheduled for students from Class VI onwards in our state-of-the-art campus lab.",
-              },
-            ].map((n) => (
+            {t.noticesSection.items.map((n, idx) => (
               <div
-                key={n.id}
+                key={idx}
                 className="p-5 rounded-2xl bg-white border border-indigo-100 shadow-sm space-y-2 hover:shadow-md transition-shadow"
               >
                 <span className="text-[10px] font-mono font-bold text-indigo-600 uppercase bg-indigo-50 px-2 py-0.5 rounded">
@@ -606,45 +992,31 @@ export default function SchoolPublicPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
           <div className="lg:col-span-7 space-y-5">
             <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black uppercase">
-              About Our Institution & Leadership
+              {t.aboutSection.badge}
             </span>
             <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
-              Principal's Desk — {school.name}
+              {t.aboutSection.title}
             </h3>
             <blockquote className="p-5 rounded-2xl bg-white border-l-4 border-indigo-600 shadow-sm text-slate-700 italic text-sm sm:text-base leading-relaxed">
-              "Our mission is to empower every child with modern scientific inquiry, strong moral values, disciplined character, and CBSE-aligned academic excellence to lead the future."
+              {t.aboutSection.quote}
             </blockquote>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Located in the heart of Mathura at Shankar Gali Dauli Pyau, {school.name} provides a nurturing environment where children discover their highest potential. With smart digital classrooms, robotics labs, sports grounds, and dedicated faculty, we bridge traditional values with 21st-century education.
+              {t.aboutSection.p1}
             </p>
           </div>
 
           <div className="lg:col-span-5 space-y-4">
             <div className="p-6 rounded-3xl bg-indigo-900 text-white shadow-xl space-y-4">
               <div className="text-xs font-mono uppercase text-amber-300 font-bold">
-                Institution Fast Facts
+                {t.aboutSection.factsTitle}
               </div>
               <ul className="space-y-3 text-xs">
-                <li className="flex items-center justify-between border-b border-indigo-800 pb-2">
-                  <span className="text-indigo-200">Affiliation:</span>
-                  <span className="font-bold">{school.board} (CBSE-AFF-2130894)</span>
-                </li>
-                <li className="flex items-center justify-between border-b border-indigo-800 pb-2">
-                  <span className="text-indigo-200">School Code:</span>
-                  <span className="font-bold">2026100001</span>
-                </li>
-                <li className="flex items-center justify-between border-b border-indigo-800 pb-2">
-                  <span className="text-indigo-200">Campus City:</span>
-                  <span className="font-bold">{school.city}, Uttar Pradesh</span>
-                </li>
-                <li className="flex items-center justify-between border-b border-indigo-800 pb-2">
-                  <span className="text-indigo-200">Medium of Instruction:</span>
-                  <span className="font-bold">English & Hindi</span>
-                </li>
-                <li className="flex items-center justify-between">
-                  <span className="text-indigo-200">Session:</span>
-                  <span className="font-bold">2026 - 2027</span>
-                </li>
+                {t.aboutSection.facts.map((f, idx) => (
+                  <li key={idx} className="flex items-center justify-between border-b border-indigo-800 pb-2">
+                    <span className="text-indigo-200">{f.label}:</span>
+                    <span className="font-bold">{f.val}</span>
+                  </li>
+                ))}
               </ul>
             </div>
           </div>
@@ -656,49 +1028,18 @@ export default function SchoolPublicPage() {
         <div className="max-w-7xl mx-auto space-y-10">
           <div className="text-center max-w-2xl mx-auto space-y-2">
             <span className="px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-black uppercase">
-              Academic Excellence
+              {t.facilitiesSection.badge}
             </span>
             <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
-              Curriculum & Modern Infrastructure
+              {t.facilitiesSection.title}
             </h3>
             <p className="text-xs sm:text-sm text-slate-600">
-              Comprehensive holistic education aligned with CBSE guidelines and NEP 2020.
+              {t.facilitiesSection.desc}
             </p>
           </div>
 
           <div id="facilities" className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              {
-                icon: "🤖",
-                title: "AI & Robotics Innovation Lab",
-                desc: "Hands-on robotics kits, sensors, STEM projects, and early programming logic for students from Class VI onwards.",
-              },
-              {
-                icon: "💻",
-                title: "Digital Coding & Computer Arena",
-                desc: "High-speed networked computer lab equipped with coding workstations, internet access, and interactive learning tools.",
-              },
-              {
-                icon: "🔬",
-                title: "Integrated Science Laboratories",
-                desc: "Equipped Physics, Chemistry, and Biology practical labs encouraging experiential learning and CBSE practical examinations.",
-              },
-              {
-                icon: "📚",
-                title: "Knowledge Resource Library",
-                desc: "Rich collection of academic reference books, encyclopedia, periodicals, fiction, and competitive exam guidance material.",
-              },
-              {
-                icon: "🚌",
-                title: "Safe Transport & GPS Buses",
-                desc: "Fleet of school buses covering all major neighborhoods across Mathura with verified drivers, conductors, and GPS tracking.",
-              },
-              {
-                icon: "🎯",
-                title: "Sports, Yoga & Cultural Arena",
-                desc: "Comprehensive physical education including cricket, volleyball, badminton, yoga sessions, and annual cultural celebrations.",
-              },
-            ].map((fac, idx) => (
+            {t.facilitiesSection.items.map((fac, idx) => (
               <div
                 key={idx}
                 className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3 hover:shadow-md transition-shadow"
@@ -717,13 +1058,13 @@ export default function SchoolPublicPage() {
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
           <div className="bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 text-white p-6 sm:p-8 text-center space-y-2">
             <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-black uppercase">
-              Academic Session 2026-27
+              {t.admissionsSection.badge}
             </span>
             <h3 className="text-2xl sm:text-3xl font-black">
-              Online Admission Inquiry Form
+              {t.admissionsSection.title}
             </h3>
             <p className="text-xs sm:text-sm text-indigo-100 max-w-lg mx-auto">
-              Submit your inquiry below. Our admissions desk at {school.name} will contact you with admission details and fee structure.
+              {t.admissionsSection.desc}
             </p>
           </div>
 
@@ -734,10 +1075,10 @@ export default function SchoolPublicPage() {
                   ✓
                 </div>
                 <h4 className="text-xl font-black text-slate-900">
-                  Admission Inquiry Submitted Successfully!
+                  {t.admissionsSection.successTitle}
                 </h4>
-                <p className="text-xs text-slate-600 max-w-md mx-auto">
-                  Thank you! The admission desk at {school.name} has received your details and will call you at <strong>{admForm.phone}</strong> shortly.
+                <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                  {t.admissionsSection.successDesc(admForm.phone)}
                 </p>
                 <button
                   onClick={() => {
@@ -753,7 +1094,7 @@ export default function SchoolPublicPage() {
                   }}
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer"
                 >
-                  Submit Another Inquiry
+                  {t.admissionsSection.btnAnother}
                 </button>
               </div>
             ) : (
@@ -766,21 +1107,21 @@ export default function SchoolPublicPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Student Full Name *
+                      {t.admissionsSection.lblName}
                     </label>
                     <input
                       type="text"
                       required
                       value={admForm.studentName}
                       onChange={(e) => setAdmForm({ ...admForm, studentName: e.target.value })}
-                      placeholder="e.g. Aarav Sharma"
+                      placeholder={t.admissionsSection.placeholderName}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold focus:outline-none focus:border-indigo-600"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Grade / Class Applying For *
+                      {t.admissionsSection.lblGrade}
                     </label>
                     <select
                       value={admForm.grade}
@@ -815,41 +1156,41 @@ export default function SchoolPublicPage() {
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Parent / Guardian Name *
+                      {t.admissionsSection.lblParent}
                     </label>
                     <input
                       type="text"
                       required
                       value={admForm.parentName}
                       onChange={(e) => setAdmForm({ ...admForm, parentName: e.target.value })}
-                      placeholder="e.g. Rajesh Sharma"
+                      placeholder={t.admissionsSection.placeholderParent}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold focus:outline-none focus:border-indigo-600"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      10-Digit Mobile Number *
+                      {t.admissionsSection.lblPhone}
                     </label>
                     <input
                       type="tel"
                       required
                       value={admForm.phone}
                       onChange={(e) => setAdmForm({ ...admForm, phone: e.target.value })}
-                      placeholder="9876543210"
+                      placeholder={t.admissionsSection.placeholderPhone}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold focus:outline-none focus:border-indigo-600"
                     />
                   </div>
 
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Parent Email Address
+                      {t.admissionsSection.lblEmail}
                     </label>
                     <input
                       type="email"
                       value={admForm.email}
                       onChange={(e) => setAdmForm({ ...admForm, email: e.target.value })}
-                      placeholder="parent@example.com"
+                      placeholder={t.admissionsSection.placeholderEmail}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-semibold focus:outline-none focus:border-indigo-600"
                     />
                   </div>
@@ -860,7 +1201,7 @@ export default function SchoolPublicPage() {
                   disabled={submittingAdm}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 text-white font-black text-xs shadow-lg shadow-indigo-500/20 cursor-pointer transition-all disabled:opacity-50"
                 >
-                  {submittingAdm ? "Submitting Inquiry..." : "Submit Online Admission Inquiry →"}
+                  {submittingAdm ? t.admissionsSection.btnSubmitting : t.admissionsSection.btnSubmit}
                 </button>
               </form>
             )}
@@ -872,45 +1213,47 @@ export default function SchoolPublicPage() {
       <footer id="contact" className="bg-slate-950 text-slate-300 py-12 px-4 sm:px-6 lg:px-8 border-t border-slate-800">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="space-y-2">
-            <div className="text-lg font-black text-white">{school.name}</div>
+            <div className="text-lg font-black text-white">
+              {isHi ? "न्यू आइडियल पब्लिक स्कूल" : school.name}
+            </div>
             <p className="text-xs text-slate-400">
-              {school.board} Affiliated ({school.affiliationNumber}) • {school.city} Campus
+              {t.footerSection.tagline}
             </p>
             <p className="text-xs text-slate-400">📍 {school.address}</p>
           </div>
 
           <div className="space-y-1.5 text-xs">
-            <div className="font-bold text-white uppercase font-mono">Contact & Helpline</div>
-            <div>📞 Phone: {school.contactPhone}</div>
-            <div>✉️ Email: {school.contactEmail}</div>
-            <div>🏫 School Code: 2026100001</div>
+            <div className="font-bold text-white uppercase font-mono">{t.footerSection.contactTitle}</div>
+            <div>📞 {t.footerSection.phone}: {school.contactPhone}</div>
+            <div>✉️ {t.footerSection.email}: {school.contactEmail}</div>
+            <div>🏫 {t.footerSection.code}: 2026100001</div>
           </div>
 
           <div className="space-y-2 text-xs">
-            <div className="font-bold text-white uppercase font-mono">Quick Access</div>
+            <div className="font-bold text-white uppercase font-mono">{t.footerSection.quickAccess}</div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setIsLoginOpen(true)}
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer"
               >
-                School ERP Login
+                {t.footerSection.erpLogin}
               </button>
               <a
                 href={apkUrl}
                 download
                 className="px-3 py-1.5 rounded-lg bg-emerald-600/60 hover:bg-emerald-600 text-white font-semibold cursor-pointer"
               >
-                Download App (.apk)
+                {t.footerSection.downloadApp}
               </a>
               <button
                 onClick={() => scrollTo("admissions")}
                 className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold cursor-pointer"
               >
-                Apply Admission
+                {t.footerSection.applyAdm}
               </button>
             </div>
             <p className="text-[11px] font-mono text-slate-500 pt-2">
-              Official Institutional Campus Portal
+              {t.footerSection.portalTag}
             </p>
           </div>
         </div>
@@ -928,10 +1271,10 @@ export default function SchoolPublicPage() {
                 </div>
                 <div>
                   <h3 className="text-base font-black text-white leading-tight">
-                    {school.name}
+                    {isHi ? "न्यू आइडियल पब्लिक स्कूल" : school.name}
                   </h3>
                   <p className="text-xs font-mono text-indigo-300">
-                    School ERP & Institutional Login Portal
+                    {t.loginModal.title}
                   </p>
                 </div>
               </div>
@@ -951,29 +1294,29 @@ export default function SchoolPublicPage() {
             <div className="p-4 sm:p-6 space-y-5">
               <div className="space-y-1.5">
                 <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
-                  Select Your Institutional Role (अपनी भूमिका चुनें):
+                  {t.loginModal.selectRole}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
                     {
                       id: "principal" as const,
                       icon: "🏫",
-                      title: "Principal / Admin",
-                      hi: "प्रिंसिपल",
+                      title: t.loginModal.principal.title,
+                      sub: t.loginModal.principal.sub,
                       color: "from-amber-500 to-orange-600",
                     },
                     {
                       id: "teacher" as const,
                       icon: "👨‍🏫",
-                      title: "Teacher / Staff",
-                      hi: "शिक्षक",
+                      title: t.loginModal.teacher.title,
+                      sub: t.loginModal.teacher.sub,
                       color: "from-indigo-600 to-blue-600",
                     },
                     {
                       id: "parent" as const,
                       icon: "👨‍👩‍👧",
-                      title: "Parent / Student",
-                      hi: "अभिभावक",
+                      title: t.loginModal.parent.title,
+                      sub: t.loginModal.parent.sub,
                       color: "from-emerald-500 to-teal-600",
                     },
                   ].map((role) => (
@@ -992,7 +1335,7 @@ export default function SchoolPublicPage() {
                     >
                       <div className="text-2xl mb-1">{role.icon}</div>
                       <div className="text-xs font-black leading-tight">{role.title}</div>
-                      <div className="text-[10px] opacity-80 font-medium">({role.hi})</div>
+                      <div className="text-[10px] opacity-80 font-medium">({role.sub})</div>
                     </button>
                   ))}
                 </div>
@@ -1004,21 +1347,9 @@ export default function SchoolPublicPage() {
                   {loginRole === "principal" ? "🏫" : loginRole === "teacher" ? "👨‍🏫" : "👨‍👩‍👧"}
                 </span>
                 <div className="text-slate-300">
-                  {loginRole === "principal" && (
-                    <span>
-                      <strong>Principal / Admin Mode:</strong> Institutional governance, fee collection, staff allocation & CBSE records.
-                    </span>
-                  )}
-                  {loginRole === "teacher" && (
-                    <span>
-                      <strong>Teacher / Staff Mode:</strong> Class attendance marking, homework assignment, gradebook & exams.
-                    </span>
-                  )}
-                  {loginRole === "parent" && (
-                    <span>
-                      <strong>Parent / Student Portal:</strong> Ward attendance, homework, live school bus GPS & fee payment receipts.
-                    </span>
-                  )}
+                  {loginRole === "principal" && <span>{t.loginModal.principal.context}</span>}
+                  {loginRole === "teacher" && <span>{t.loginModal.teacher.context}</span>}
+                  {loginRole === "parent" && <span>{t.loginModal.parent.context}</span>}
                 </div>
               </div>
 
@@ -1036,7 +1367,7 @@ export default function SchoolPublicPage() {
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  🔑 Email / ID & Password
+                  {t.loginModal.tabPassword}
                 </button>
                 <button
                   type="button"
@@ -1050,7 +1381,7 @@ export default function SchoolPublicPage() {
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  📱 Mobile OTP
+                  {t.loginModal.tabOtp}
                 </button>
               </div>
 
@@ -1072,10 +1403,10 @@ export default function SchoolPublicPage() {
                   <div>
                     <label className="block text-xs font-mono text-slate-300 mb-1">
                       {loginRole === "principal"
-                        ? "Principal Email / Mobile Number *"
+                        ? t.loginModal.principal.labelId
                         : loginRole === "teacher"
-                        ? "Teacher Email / Employee Code *"
-                        : "Registered Mobile Number / Admission No. *"}
+                        ? t.loginModal.teacher.labelId
+                        : t.loginModal.parent.labelId}
                     </label>
                     <input
                       type="text"
@@ -1084,10 +1415,10 @@ export default function SchoolPublicPage() {
                       onChange={(e) => setLoginIdentifier(e.target.value)}
                       placeholder={
                         loginRole === "principal"
-                          ? "e.g. principal@newidealpublicschool.edu.in"
+                          ? t.loginModal.principal.placeholderId
                           : loginRole === "teacher"
-                          ? "e.g. teacher@newidealpublicschool.edu.in or EMP102"
-                          : "e.g. 9876543210 or ADM202601"
+                          ? t.loginModal.teacher.placeholderId
+                          : t.loginModal.parent.placeholderId
                       }
                       className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
                     />
@@ -1096,7 +1427,7 @@ export default function SchoolPublicPage() {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-xs font-mono text-slate-300">
-                        Password (पासवर्ड) *
+                        {t.loginModal.lblPassword}
                       </label>
                       <button
                         type="button"
@@ -1121,7 +1452,7 @@ export default function SchoolPublicPage() {
                     disabled={authenticating}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:brightness-110 text-white font-bold text-xs font-mono shadow-lg shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {authenticating ? "Verifying Credentials..." : "Sign In to School ERP (लॉगिन करें) →"}
+                    {authenticating ? t.loginModal.btnVerifying : t.loginModal.btnSignIn}
                   </button>
                 </form>
               )}
@@ -1131,7 +1462,7 @@ export default function SchoolPublicPage() {
                 <div className="space-y-3.5">
                   <div>
                     <label className="block text-xs font-mono text-slate-300 mb-1">
-                      10-Digit Registered Mobile Number *
+                      {t.loginModal.lblMobile}
                     </label>
                     <input
                       type="tel"
@@ -1151,7 +1482,7 @@ export default function SchoolPublicPage() {
                         disabled={sendingOtp || loginMobile.length < 10}
                         className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-mono font-bold transition-all disabled:opacity-50 cursor-pointer"
                       >
-                        {sendingOtp ? "Sending..." : "📱 Send SMS OTP"}
+                        {sendingOtp ? "..." : t.loginModal.btnSmsOtp}
                       </button>
                       <button
                         type="button"
@@ -1159,14 +1490,14 @@ export default function SchoolPublicPage() {
                         disabled={sendingOtp || loginMobile.length < 10}
                         className="py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold transition-all disabled:opacity-50 cursor-pointer"
                       >
-                        {sendingOtp ? "Sending..." : "💬 WhatsApp OTP"}
+                        {sendingOtp ? "..." : t.loginModal.btnWhatsappOtp}
                       </button>
                     </div>
                   ) : (
                     <form onSubmit={handleVerifyOtpSubmit} className="space-y-3">
                       <div>
                         <label className="block text-xs font-mono text-cyan-300 mb-1">
-                          Enter 6-Digit OTP received on +91 {loginMobile.slice(-10)}
+                          {t.loginModal.otpSentTo(loginMobile.slice(-10))}
                         </label>
                         <input
                           type="text"
@@ -1182,7 +1513,7 @@ export default function SchoolPublicPage() {
                         disabled={authenticating || loginOtp.length !== 6}
                         className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white font-bold text-xs font-mono shadow-lg transition-all cursor-pointer disabled:opacity-50"
                       >
-                        {authenticating ? "Verifying OTP..." : "Verify OTP & Enter ERP →"}
+                        {authenticating ? t.loginModal.btnVerifying : t.loginModal.btnVerifyOtp}
                       </button>
                     </form>
                   )}
@@ -1192,7 +1523,7 @@ export default function SchoolPublicPage() {
               {/* Quick Persona Demo Buttons (1-Click Test Drive) */}
               <div className="pt-3 border-t border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-slate-400">⚡ 1-Click Instant Role Login (डेमो टेस्ट ड्राइव):</span>
+                  <span className="text-slate-400">{t.loginModal.demoTitle}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -1200,24 +1531,21 @@ export default function SchoolPublicPage() {
                     onClick={() => handlePersonaLogin("principal")}
                     className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
                   >
-                    <div>🏫 Principal</div>
-                    <div className="text-[10px] text-slate-400 font-normal">Full ERP</div>
+                    <div>{t.loginModal.demoPrincipal}</div>
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePersonaLogin("teacher")}
                     className="p-2.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
                   >
-                    <div>👨‍🏫 Teacher</div>
-                    <div className="text-[10px] text-slate-400 font-normal">Attendance & Marks</div>
+                    <div>{t.loginModal.demoTeacher}</div>
                   </button>
                   <button
                     type="button"
                     onClick={() => handlePersonaLogin("parent")}
                     className="p-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-bold transition-all cursor-pointer text-center"
                   >
-                    <div>👨‍👩‍👧 Parent</div>
-                    <div className="text-[10px] text-slate-400 font-normal">Ward & Bus GPS</div>
+                    <div>{t.loginModal.demoParent}</div>
                   </button>
                 </div>
               </div>
