@@ -15649,24 +15649,45 @@ app.get("/api/erp/attendance/student", async (req, res) => {
 
   if (supabase && orgId) {
     try {
-      const { data: dbStds } = await supabase
-        .from("students")
-        .select("*")
+      const { data: dbCls } = await supabase
+        .from("classes")
+        .select("id, name, sections(id, name)")
         .eq("organization_id", orgId);
       
-      if (dbStds && dbStds.length > 0) {
-        matchingStudents = dbStds.map(s => {
-          const fullName = [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ") || s.admission_no;
-          return {
-            id: s.id,
-            admissionNo: s.admission_no,
-            rollNo: s.pen_no || s.admission_no,
-            name: fullName,
-            grade: s.grade || grade,
-            section: s.section || section,
-            organization_id: s.organization_id
-          };
-        });
+      const targetCls = dbCls?.find(c => (c.name || "").toLowerCase() === grade.toLowerCase());
+      const targetSec = targetCls?.sections?.find(sec => (sec.name || "").toLowerCase() === section.toLowerCase()) || targetCls?.sections?.[0];
+
+      if (targetCls) {
+        let enrQuery = supabase
+          .from("student_enrollments")
+          .select("student_id, roll_no, class_id, section_id, students(*)")
+          .eq("organization_id", orgId)
+          .eq("class_id", targetCls.id)
+          .is("left_on", null);
+
+        if (targetSec) {
+          enrQuery = enrQuery.eq("section_id", targetSec.id);
+        }
+
+        const { data: dbEnrs } = await enrQuery;
+
+        if (dbEnrs && dbEnrs.length > 0) {
+          matchingStudents = dbEnrs
+            .filter(e => e.students && (e.students.admission_status === "admitted" || e.students.admission_status === "active"))
+            .map(e => {
+              const s = e.students;
+              const fullName = [s.first_name, s.middle_name, s.last_name].filter(Boolean).join(" ") || s.admission_no;
+              return {
+                id: s.id,
+                admissionNo: s.admission_no,
+                rollNo: e.roll_no || s.pen_no || s.admission_no,
+                name: fullName,
+                grade: targetCls.name,
+                section: targetSec ? targetSec.name : section,
+                organization_id: s.organization_id
+              };
+            });
+        }
       }
 
       const { data: dbAtt } = await supabase
