@@ -4551,23 +4551,51 @@ function getOrCreateCmsTree(site) {
 
 // Security Helper to locate website and enforce strict tenant ownership
 async function findAuthorizedWebsite(id, req, res) {
-  let site = IN_MEMORY_WEBSITES.find(s => s.id === id);
-  if (!site && supabase) {
-    try {
-      const { data } = await supabase.from("websites").select("*").eq("id", id).maybeSingle();
-      if (data) {
-        site = {
-          id: data.id,
-          name: data.name,
-          domain: `${data.slug}.school.dakshora.app`,
-          template: "tpl-school-saas",
-          status: data.status,
-          organization_id: data.organization_id,
-          created_at: data.created_at
-        };
-      }
-    } catch (_) {}
+  const userOrg = req.user?.organizationId || req.user?.organization_id;
+  let site = null;
+
+  // If specific ID requested and not generic placeholder
+  if (id && id !== "site-1") {
+    site = IN_MEMORY_WEBSITES.find(s => s.id === id);
+    if (!site && supabase) {
+      try {
+        const { data } = await supabase.from("websites").select("*").eq("id", id).maybeSingle();
+        if (data) {
+          site = {
+            id: data.id,
+            name: data.name,
+            domain: `${data.slug}.school.dakshora.app`,
+            template: "tpl-school-saas",
+            status: data.status,
+            organization_id: data.organization_id,
+            created_at: data.created_at
+          };
+        }
+      } catch (_) {}
+    }
   }
+
+  // If id is "site-1" or site not found by ID, auto-resolve to user's school website
+  if (!site && userOrg) {
+    site = IN_MEMORY_WEBSITES.find(s => s.organization_id === userOrg);
+    if (!site && supabase) {
+      try {
+        const { data } = await supabase.from("websites").select("*").eq("organization_id", userOrg).maybeSingle();
+        if (data) {
+          site = {
+            id: data.id,
+            name: data.name,
+            domain: `${data.slug}.school.dakshora.app`,
+            template: "tpl-school-saas",
+            status: data.status,
+            organization_id: data.organization_id,
+            created_at: data.created_at
+          };
+        }
+      } catch (_) {}
+    }
+  }
+
   if (!site) {
     res.status(404).json({ success: false, code: "NOT_FOUND", message: `Website '${id}' not found` });
     return null;
@@ -4575,7 +4603,7 @@ async function findAuthorizedWebsite(id, req, res) {
   // Check authorization
   const isSuper = req.user?.isSuperAdmin || req.user?.role === "superadmin";
   if (!isSuper) {
-    if (!req.user?.organizationId || site.organization_id !== req.user.organizationId) {
+    if (!userOrg || site.organization_id !== userOrg) {
       res.status(403).json({
         success: false,
         code: "FORBIDDEN_TENANT_MISMATCH",
@@ -4589,10 +4617,12 @@ async function findAuthorizedWebsite(id, req, res) {
 
 // Helper to load persisted CMS tree from DB across server restarts
 async function loadPersistedCmsTree(site) {
+  const defaultTree = getOrCreateCmsTree(site);
+  let tree = defaultTree;
+
   if (WEBSITE_CMS_TREES.has(site.id)) {
-    return WEBSITE_CMS_TREES.get(site.id);
-  }
-  if (supabase && site.organization_id) {
+    tree = WEBSITE_CMS_TREES.get(site.id);
+  } else if (supabase && site.organization_id) {
     try {
       const { data: onb } = await supabase
         .from("school_onboarding")
@@ -4601,13 +4631,29 @@ async function loadPersistedCmsTree(site) {
         .maybeSingle();
 
       if (onb?.draft_data?.cms_trees?.[site.id]) {
-        const persistedTree = onb.draft_data.cms_trees[site.id];
-        WEBSITE_CMS_TREES.set(site.id, persistedTree);
-        return persistedTree;
+        tree = onb.draft_data.cms_trees[site.id];
       }
     } catch (_) {}
   }
-  return getOrCreateCmsTree(site);
+
+  // Ensure all 11 canonical layers are always fully populated
+  const mergedTree = {
+    ...defaultTree,
+    ...tree,
+    pages: (tree.pages && tree.pages.length > 0) ? tree.pages : defaultTree.pages,
+    sections: (tree.sections && tree.sections.length > 0) ? tree.sections : defaultTree.sections,
+    components: (tree.components && tree.components.length > 0) ? tree.components : defaultTree.components,
+    content: { ...defaultTree.content, ...(tree.content || {}) },
+    domain: { ...defaultTree.domain, ...(tree.domain || {}) },
+    template: { ...defaultTree.template, ...(tree.template || {}) },
+    seo: { ...defaultTree.seo, ...(tree.seo || {}) },
+    media: (tree.media && tree.media.length > 0) ? tree.media : defaultTree.media,
+    publishing: { ...defaultTree.publishing, ...(tree.publishing || {}) },
+    website_integration: { ...defaultTree.website_integration, ...(tree.website_integration || {}) },
+    mobile_app: { ...defaultTree.mobile_app, ...(tree.mobile_app || {}) }
+  };
+  WEBSITE_CMS_TREES.set(site.id, mergedTree);
+  return mergedTree;
 }
 
 // Helper to persist CMS tree to DB across restarts
@@ -4685,6 +4731,29 @@ async function persistCmsTree(site, tree) {
           await supabase.from("pages").upsert([pageRow], { onConflict: "id" }).catch(() => {});
         }
       }
+
+      // Sync logo_url to schools and organizations tables if present
+      if (tree.branding?.logoUrl) {
+        await supabase
+          .from("schools")
+          .update({ logo_url: tree.branding.logoUrl, updated_at: new Date().toISOString() })
+          .eq("organization_id", site.organization_id)
+          .catch(() => {});
+        await supabase
+          .from("organizations")
+          .update({ logo_url: tree.branding.logoUrl, updated_at: new Date().toISOString() })
+          .eq("id", site.organization_id)
+          .catch(() => {});
+
+        // Update in-memory caches
+        const sch = ERP_SCHOOLS.find(s => s.organization_id === site.organization_id);
+        if (sch) sch.logo_url = tree.branding.logoUrl;
+        const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === site.organization_id);
+        if (org) org.logo_url = tree.branding.logoUrl;
+        if (TENANT_SETTINGS.has(site.organization_id)) {
+          TENANT_SETTINGS.get(site.organization_id).logoUrl = tree.branding.logoUrl;
+        }
+      }
     } catch (err) {
       console.warn("[CMS DB] Failed to persist CMS tree:", err.message);
     }
@@ -4722,6 +4791,14 @@ app.post("/api/websites/:id/publish", requireAuth, async (req, res) => {
   if (!site) return;
   const tree = await loadPersistedCmsTree(site);
 
+  tree.publishing = tree.publishing || {
+    status: "draft",
+    version: 1,
+    environment: "production",
+    sslActive: true,
+    cdnProvider: "Cloudflare Edge",
+    lastPublishedAt: null
+  };
   tree.publishing.status = "live";
   tree.publishing.version = (tree.publishing.version || 1) + 1;
   tree.publishing.lastPublishedAt = new Date().toISOString();
@@ -4742,9 +4819,10 @@ app.post("/api/websites/:id/publish", requireAuth, async (req, res) => {
 
   recordAuditLog("website.publish", req.user?.email || "admin", "website", site.id, req);
 
+  const domainUrl = tree.domain?.custom || tree.domain?.subdomain || (site.slug ? `${site.slug}.dakshora.app` : "dakshora.app");
   res.json({
     success: true,
-    message: `Website published live to https://${tree.domain.subdomain} (v${tree.publishing.version}) 🚀`,
+    message: `Website published live to https://${domainUrl} (v${tree.publishing.version}) 🚀`,
     publishing: tree.publishing
   });
 });
@@ -8391,7 +8469,10 @@ async function getTenantSettings(orgId) {
   const resolvedCode = dbSchool?.school_code || draft.schoolCode || draft.tenantCode || `SCH-${orgId.slice(0, 6).toUpperCase()}`;
   const resolvedCity = dbSchool?.city || draft.city || dbOrg?.city || "Jaipur";
   const resolvedState = dbSchool?.state || draft.state || dbOrg?.state || "Rajasthan";
-  const resolvedAddress = dbSchool?.address || draft.address || `${resolvedCity}, ${resolvedState}`;
+  const baseAddr = dbSchool?.address || draft.address || "";
+  const resolvedAddress = (baseAddr && baseAddr.toLowerCase().includes(resolvedCity.toLowerCase()))
+    ? baseAddr
+    : [baseAddr, resolvedCity, resolvedState, dbSchool?.pincode || draft.pincode].filter(Boolean).join(", ");
   const resolvedEmail = dbSchool?.email || draft.email || dbOrg?.contact_email || "";
   const resolvedPhone = dbSchool?.phone || draft.phone || dbOrg?.contact_phone || "";
   const resolvedPrincipal = dbSchool?.principal_name || draft.principalName || draft.headName || "Principal";
@@ -8444,14 +8525,46 @@ async function updateTenantSettings(orgId, updates) {
       if (updates.schoolCode) schoolFields.school_code = updates.schoolCode;
       if (updates.board) schoolFields.board = updates.board;
       if (updates.address) schoolFields.address = updates.address;
+      if (updates.city) schoolFields.city = updates.city;
+      if (updates.state) schoolFields.state = updates.state;
+      if (updates.pincode || updates.pin) schoolFields.pincode = updates.pincode || updates.pin;
+      if (updates.shortName || updates.short_name) schoolFields.short_name = updates.shortName || updates.short_name;
+      if (updates.logoUrl || updates.logo_url) schoolFields.logo_url = updates.logoUrl || updates.logo_url;
       if (updates.contactPhone || updates.phone) schoolFields.phone = updates.contactPhone || updates.phone;
       if (updates.contactEmail || updates.email) schoolFields.email = updates.contactEmail || updates.email;
 
       if (Object.keys(schoolFields).length > 0) {
+        schoolFields.updated_at = new Date().toISOString();
         await supabase
           .from("schools")
           .update(schoolFields)
-          .eq("organization_id", orgId);
+          .eq("organization_id", orgId)
+          .catch(() => {});
+      }
+
+      if (updates.logoUrl || updates.logo_url || updates.schoolName) {
+        const orgFields = { updated_at: new Date().toISOString() };
+        if (updates.logoUrl || updates.logo_url) orgFields.logo_url = updates.logoUrl || updates.logo_url;
+        if (updates.schoolName) orgFields.name = updates.schoolName;
+        await supabase
+          .from("organizations")
+          .update(orgFields)
+          .eq("id", orgId)
+          .catch(() => {});
+      }
+
+      // Update in-memory caches
+      const sch = ERP_SCHOOLS.find(s => s.organization_id === orgId);
+      if (sch) {
+        if (updates.logoUrl || updates.logo_url) sch.logo_url = updates.logoUrl || updates.logo_url;
+        if (updates.schoolName) sch.name = updates.schoolName;
+        if (updates.city) sch.city = updates.city;
+        if (updates.state) sch.state = updates.state;
+      }
+      const org = IN_MEMORY_ORGANIZATIONS.find(o => o.id === orgId);
+      if (org) {
+        if (updates.logoUrl || updates.logo_url) org.logo_url = updates.logoUrl || updates.logo_url;
+        if (updates.schoolName) org.name = updates.schoolName;
       }
 
       const { data: existingOnb } = await supabase
@@ -13938,10 +14051,15 @@ app.post("/api/erp/students/:id/transfer-certificate", async (req, res) => {
       school = dbSchool;
     } catch (_) {}
   }
-  const schoolName = school?.name || "School";
-  const schoolCode = school?.school_code || "SCH001";
-  const affiliationNo = school?.affiliation_no || "CBSE/AFF/2026";
-  const board = school?.board || "CBSE";
+  const tenantBrand = await getTenantSettings(orgId);
+  const schoolName = tenantBrand?.schoolName || school?.name || "School";
+  const schoolCode = tenantBrand?.schoolCode || school?.school_code || "SCH001";
+  const affiliationNo = tenantBrand?.affiliationNo || school?.affiliation_no || "CBSE/AFF/2026";
+  const board = tenantBrand?.board || school?.board || "CBSE";
+  const logoUrl = tenantBrand?.logoUrl || "/logo.svg";
+  const principalName = tenantBrand?.principalName || "Principal";
+  const contactEmail = tenantBrand?.email || "";
+  const contactPhone = tenantBrand?.phone || "";
 
   const today = new Date();
   const curYear = today.getFullYear();
@@ -14021,9 +14139,13 @@ app.post("/api/erp/students/:id/transfer-certificate", async (req, res) => {
       schoolCode,
       affiliationNo,
       board,
-      address: school?.address || "",
-      city: school?.city || "",
-      state: school?.state || ""
+      logoUrl,
+      address: tenantBrand?.address || school?.address || "",
+      city: tenantBrand?.city || school?.city || "",
+      state: tenantBrand?.state || school?.state || "",
+      principalName,
+      contactEmail,
+      contactPhone
     },
     studentInfo: {
       studentId: student.id,
@@ -14104,6 +14226,15 @@ app.post("/api/erp/students/:id/bonafide-certificate", async (req, res) => {
       school = dbSchool;
     } catch (_) {}
   }
+  const tenantBrand = await getTenantSettings(orgId);
+  const schoolName = tenantBrand?.schoolName || school?.name || "School";
+  const schoolCode = tenantBrand?.schoolCode || school?.school_code || "SCH001";
+  const affiliationNo = tenantBrand?.affiliationNo || school?.affiliation_no || "CBSE/AFF/2026";
+  const board = tenantBrand?.board || school?.board || "CBSE";
+  const logoUrl = tenantBrand?.logoUrl || "/logo.svg";
+  const principalName = tenantBrand?.principalName || "Principal";
+  const contactEmail = tenantBrand?.email || "";
+  const contactPhone = tenantBrand?.phone || "";
 
   const today = new Date();
   const curYear = today.getFullYear();
@@ -14116,10 +14247,17 @@ app.post("/api/erp/students/:id/bonafide-certificate", async (req, res) => {
     certificateType: "BONAFIDE_CERTIFICATE",
     certificateNo: bonafideNo,
     schoolInfo: {
-      name: school?.name || "School",
-      affiliationNo: school?.affiliation_no || "CBSE/AFF/2026",
-      board: school?.board || "CBSE",
-      address: school?.address || ""
+      name: schoolName,
+      schoolCode,
+      affiliationNo,
+      board,
+      logoUrl,
+      address: tenantBrand?.address || school?.address || "",
+      city: tenantBrand?.city || school?.city || "",
+      state: tenantBrand?.state || school?.state || "",
+      principalName,
+      contactEmail,
+      contactPhone
     },
     studentInfo: {
       studentId: student.id,
@@ -17572,7 +17710,8 @@ app.get("/api/erp/academics/overview", (req, res) => {
       totalClasses: tenantClasses.length,
       totalSections: tenantSections.length,
       totalSubjects: tenantSubjects.length,
-      totalStudentsEnrolled: totalActiveStudents,
+      totalStudentsEnrolled: tenantStudents.length,
+      totalActiveStudents,
       assignedClassTeachers,
       unassignedClassTeachers,
       totalSectionSubjectMappings: tenantMappings.length,
@@ -20414,6 +20553,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", async (req, res) => {
   const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const school = {
     name: tenantBrand?.schoolName || (isDemo ? ERP_SETTINGS.schoolName : "School"),
+    logoUrl: tenantBrand?.logoUrl || null,
     affiliationNumber: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
     affiliationNo: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
     schoolCode: tenantBrand?.schoolCode || (isDemo ? ERP_SETTINGS.schoolCode : "SCH-01"),
@@ -20524,7 +20664,7 @@ app.get("/api/erp/report-cards/:examId/:studentId", async (req, res) => {
   </div>
   <div class="page-container">
     <header class="school-header">
-      <div class="school-emblem">🏫</div>
+      ${school.logoUrl ? `<div style="margin-bottom: 8px;"><img src="${school.logoUrl}" alt="${school.name} Logo" style="max-height: 75px; max-width: 180px; object-fit: contain;" /></div>` : '<div class="school-emblem">🏫</div>'}
       <h1 class="school-name">${school.name}</h1>
       <p class="school-meta">Affiliated to ${school.board} • Affiliation No: ${school.affiliationNo} • School Code: ${school.schoolCode}</p>
       <p class="school-meta">${school.address} • Contact: ${school.contact}</p>
@@ -21254,14 +21394,15 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
     if (existing) continue;
 
     const concession = ERP_FEE_CONCESSIONS.find(c => c.studentId === st.id && c.academicSession === currentSession);
+    const baseAmount = Number(struct.amountINR !== undefined ? struct.amountINR : (struct.amount || 0));
     let discountAmount = 0;
     let concessionReason = null;
     if (concession) {
       concessionReason = concession.reason || concession.concessionType;
       if (concession.discountPercentage > 0) {
-        discountAmount = Math.round((struct.amountINR * (concession.discountPercentage / 100)) * 100) / 100;
+        discountAmount = Math.round((baseAmount * (concession.discountPercentage / 100)) * 100) / 100;
       } else if (concession.discountAmountINR > 0) {
-        discountAmount = Math.min(struct.amountINR, concession.discountAmountINR);
+        discountAmount = Math.min(baseAmount, concession.discountAmountINR);
       }
     } else {
       // Automatic Indian Sibling Discount check (15% concession for sibling)
@@ -21275,11 +21416,11 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
       );
       if (hasSibling) {
         concessionReason = "Sibling Concession (15%)";
-        discountAmount = Math.round((struct.amountINR * 0.15) * 100) / 100;
+        discountAmount = Math.round((baseAmount * 0.15) * 100) / 100;
       }
     }
 
-    const netAmount = Math.max(0, struct.amountINR - discountAmount);
+    const netAmount = Math.max(0, baseAmount - discountAmount);
     const invoiceNo = `FEES-${currentSession.replace(/[^0-9]/g, '').slice(0, 4)}-Q${Math.floor(Math.random() * 4) + 1}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newDemand = {
@@ -21295,7 +21436,7 @@ app.post("/api/erp/fees/demands/generate", async (req, res) => {
       feeStructureDbId: struct.db_id,
       feeHead: struct.feeHead,
       feeType: struct.feeHead,
-      baseAmount: struct.amountINR,
+      baseAmount: baseAmount,
       discountAmount,
       fineAmount: 0,
       netAmount,
@@ -21586,6 +21727,7 @@ app.get("/api/erp/fees/receipts/:receiptNo", async (req, res) => {
     status: payment.status,
     school: {
       name: tenantBrand?.schoolName || (isDemo ? ERP_SETTINGS.schoolName : "School"),
+      logoUrl: tenantBrand?.logoUrl || null,
       affiliationNo: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
       schoolCode: tenantBrand?.schoolCode || (isDemo ? ERP_SETTINGS.schoolCode : "SCH-01"),
       address: tenantBrand?.address || (isDemo ? ERP_SETTINGS.address : "Campus Address"),
@@ -21844,6 +21986,7 @@ app.get("/api/erp/fees/receipts/:receiptNo", async (req, res) => {
   <div class="receipt-container">
     <div class="receipt-watermark">${payment.status === 'completed' ? 'PAID' : payment.status}</div>
     <div class="receipt-header">
+      ${receipt.school.logoUrl ? `<div style="margin-bottom: 8px;"><img src="${receipt.school.logoUrl}" alt="${receipt.school.name} Logo" style="max-height: 70px; max-width: 180px; object-fit: contain;" /></div>` : ''}
       <div class="school-name">${receipt.school.name}</div>
       <div class="school-meta">
         Affiliation No: ${receipt.school.affiliationNo} | School Code: ${receipt.school.schoolCode}<br>
@@ -28574,40 +28717,72 @@ app.get("/api/erp/reports/attendance", (req, res) => {
 
   // Attendance summary for target date
   const total = students.length;
-  const absentStudentsList = students.filter(s => s.id === "std-103" || s.id === "std-106");
-  const presentCount = Math.max(0, total - absentStudentsList.length);
-  const absentCount = total - presentCount;
+  const targetAttRecords = (ERP_ATTENDANCE || []).filter(a => a.organization_id === orgId && a.date === targetDate);
+  const targetAttMap = new Map();
+  targetAttRecords.forEach(a => targetAttMap.set(a.studentId, a.status));
+
+  let presentCount = 0;
+  let absentCount = 0;
+  if (targetAttRecords.length > 0) {
+    students.forEach(s => {
+      const st = targetAttMap.get(s.id);
+      if (st === "absent") absentCount++;
+      else presentCount++;
+    });
+  } else {
+    presentCount = total > 0 ? Math.round(total * 0.94) : 0;
+    absentCount = Math.max(0, total - presentCount);
+  }
   const attendanceRate = total > 0 ? Math.round((presentCount / total) * 1000) / 10 : 0;
 
   // Low attendance defaulters (< threshold, e.g. 75%)
   const lowAttendanceDefaulters = students
     .filter(s => {
-      const rate = s.id === "std-103" ? 68.4 : (s.attendancePercent || 92.0);
+      const rate = Number(s.attendancePercent !== undefined ? s.attendancePercent : 94.5);
       return rate < Number(threshold);
     })
     .map(s => {
-      const rate = s.id === "std-103" ? 68.4 : (s.attendancePercent || 68.4);
+      const rate = Number(s.attendancePercent !== undefined ? s.attendancePercent : 94.5);
       return {
         id: s.id,
         name: s.name,
-        rollNo: s.rollNo || "103",
-        grade: s.grade,
-        section: s.section,
+        rollNo: s.rollNo || "01",
+        grade: s.grade || "Class",
+        section: s.section || "A",
         attendanceRate: rate,
-        guardianName: s.parentName || "Sunil Gupta",
-        guardianPhone: s.parentPhone || "+91 98765 43210",
+        guardianName: s.parentName || "Guardian",
+        guardianPhone: s.parentPhone || s.phone || "N/A",
         workingDays: 30,
         attendedDays: Math.round((rate * 30) / 100),
         absentDays: 30 - Math.round((rate * 30) / 100)
       };
     });
 
-  // Class breakdown
-  const classBreakdown = total > 0 ? [
-    { className: "Class 10", section: "A", totalStudents: 2, present: 1, absent: 1, rate: 50.0 },
-    { className: "Class 10", section: "B", totalStudents: 1, present: 1, absent: 0, rate: 100.0 },
-    { className: "Class 11", section: "A", totalStudents: 2, present: 2, absent: 0, rate: 100.0 }
-  ] : [];
+  // Dynamic Class breakdown from actual enrolled students
+  const classBreakdownMap = {};
+  students.forEach(s => {
+    const key = `${s.grade || 'Class'}_${s.section || 'A'}`;
+    if (!classBreakdownMap[key]) {
+      classBreakdownMap[key] = {
+        className: s.grade || "Class",
+        section: s.section || "A",
+        totalStudents: 0,
+        present: 0,
+        absent: 0,
+        rate: 100
+      };
+    }
+    classBreakdownMap[key].totalStudents++;
+    const st = targetAttMap.get(s.id);
+    const isPresent = targetAttRecords.length > 0 ? (st !== "absent") : ((s.attendancePercent || 94.5) >= 75);
+    if (isPresent) classBreakdownMap[key].present++;
+    else classBreakdownMap[key].absent++;
+  });
+
+  const classBreakdown = Object.values(classBreakdownMap).map(c => ({
+    ...c,
+    rate: c.totalStudents > 0 ? Math.round((c.present / c.totalStudents) * 1000) / 10 : 0
+  }));
 
   // Staff summary
   const staff = ERP_STAFF.filter(s => s.organization_id === orgId);
@@ -28648,11 +28823,34 @@ app.get("/api/erp/reports/academics", (req, res) => {
   const subjects = isForeignEmpty ? [] : (ERP_SUBJECTS || []).filter(sub => sub.organization_id === orgId);
   const homework = isForeignEmpty ? [] : (ERP_HOMEWORK || []).filter(h => h.organization_id === orgId);
 
-  const teacherAllocations = isForeignEmpty ? [] : [
-    { teacherId: "stf-02", teacherName: "Rajeev Malhotra", subjectName: "Mathematics", subjectCode: "MATH-01", className: "Class 10", section: "A" },
-    { teacherId: "stf-05", teacherName: "Anita Sharma", subjectName: "Science & Physics", subjectCode: "SCI-01", className: "Class 10", section: "B" },
-    { teacherId: "stf-06", teacherName: "Dr. Sunita Rao", subjectName: "Biology", subjectCode: "BIO-01", className: "Class 11", section: "A" }
-  ];
+  const tenantMappings = isForeignEmpty ? [] : (ERP_SECTION_SUBJECTS || []).filter(m => m.organization_id === orgId);
+  const tenantStaff = isForeignEmpty ? [] : (ERP_STAFF || []).filter(s => s.organization_id === orgId);
+  let teacherAllocations = tenantMappings.map(m => {
+    const teacher = tenantStaff.find(s => s.id === m.assignedTeacherId || s.employee_code === m.assignedTeacherId || s.empId === m.assignedTeacherId);
+    return {
+      teacherId: m.assignedTeacherId || teacher?.id || "N/A",
+      teacherName: m.assignedTeacherName || (teacher ? `${teacher.firstName || teacher.name} ${teacher.lastName || ""}`.trim() : "Faculty"),
+      subjectName: m.subjectName || "Subject",
+      subjectCode: m.subjectCode || "SUB",
+      className: m.grade || "Class 10",
+      section: m.section || "A"
+    };
+  });
+
+  if (teacherAllocations.length === 0 && !isForeignEmpty && tenantStaff.length > 0) {
+    const defaultGrade = classes[0]?.name || "Class 10";
+    teacherAllocations = tenantStaff.map((st, idx) => {
+      const sub = subjects[idx % (subjects.length || 1)] || { name: st.designation || "General", code: "GEN" };
+      return {
+        teacherId: st.id || st.employee_code || `stf-${idx + 1}`,
+        teacherName: `${st.first_name || st.name} ${st.last_name || ""}`.trim(),
+        subjectName: sub.name,
+        subjectCode: sub.code || "SUB",
+        className: defaultGrade,
+        section: "A"
+      };
+    });
+  }
 
   res.json({
     success: true,
@@ -28689,7 +28887,7 @@ app.get("/api/erp/reports/exams", (req, res) => {
   const conductedExams = exams.filter(e => e.status === "completed" || e.status === "published" || e.isLocked).length;
   const totalResults = results.length;
   const distinctionCount = results.filter(r => (r.percentage || 0) >= 75).length;
-  const avgPct = totalResults > 0 ? Math.round(results.reduce((acc, r) => acc + (r.percentage || 0), 0) / totalResults) : (isForeignEmpty ? 0 : 82.5);
+  const avgPct = totalResults > 0 ? Math.round(results.reduce((acc, r) => acc + (r.percentage || 0), 0) / totalResults) : 0;
 
   res.json({
     success: true,
@@ -28751,8 +28949,9 @@ app.get("/api/erp/reports/fees", (req, res) => {
   if (orgId === "00000000-0000-0000-0000-000000000000") payments = [];
   const paymentModeMap = { upi: 0, cash: 0, bank_transfer: 0, card: 0, cheque: 0 };
   payments.forEach(p => {
-    const m = (p.paymentMethod || "upi").toLowerCase();
-    paymentModeMap[m] = (paymentModeMap[m] || 0) + (p.amount || 0);
+    const m = (p.paymentMode || p.paymentMethod || "cash").toLowerCase();
+    const amt = Number(p.amountPaid !== undefined ? p.amountPaid : (p.amount || 0));
+    paymentModeMap[m] = (paymentModeMap[m] || 0) + amt;
   });
 
   // Defaulters List
@@ -28780,13 +28979,13 @@ app.get("/api/erp/reports/fees", (req, res) => {
     defaultersList,
     collectionRegister: payments.map(p => ({
       paymentId: p.id,
-      receiptNumber: p.receiptNumber,
+      receiptNumber: p.receiptNo || p.receiptNumber || p.receipt_no || "REC-001",
       studentName: p.studentName,
       grade: p.grade,
-      amount: p.amount,
-      paymentMethod: p.paymentMethod,
-      paymentDate: p.paymentDate,
-      cashier: p.cashier
+      amount: Number(p.amountPaid !== undefined ? p.amountPaid : (p.amount || 0)),
+      paymentMethod: (p.paymentMode || p.paymentMethod || "cash").toUpperCase(),
+      paymentDate: p.paymentDate || (p.created_at ? p.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10)),
+      cashier: p.collectedBy || p.cashier || "Front Desk Cashier"
     }))
   });
 });
@@ -28992,10 +29191,10 @@ app.get("/api/erp/reports/communication", (req, res) => {
       deliverySuccessRate: messages.length > 0 ? Math.round((delivered / messages.length) * 1000) / 10 : 98.4
     },
     channelBreakdown: {
-      in_app: messages.filter(m => m.channel === "in_app").length || 3,
-      email: messages.filter(m => m.channel === "email").length || 1,
-      sms: messages.filter(m => m.channel === "sms").length || 1,
-      whatsapp: messages.filter(m => m.channel === "whatsapp").length || 0
+      in_app: messages.filter(m => m.channel === "in_app").length,
+      email: messages.filter(m => m.channel === "email").length,
+      sms: messages.filter(m => m.channel === "sms").length,
+      whatsapp: messages.filter(m => m.channel === "whatsapp").length
     },
     recentMessages: messages.slice(0, 10).map(m => ({
       id: m.id,
@@ -29296,10 +29495,13 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
     const rate = students.length > 0 ? Math.round((presentStudents / students.length) * 1000) / 10 : 0;
     const teachers = staff.filter(s => (s.staffType || s.role || "").toLowerCase().includes("teacher")).length;
 
+    const tenantBrand = TENANT_SETTINGS.get(orgId);
+    const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
     return {
-      schoolName: "Delhi Public Heritage Trust",
-      campus: "Main Campus (Sector 45, Gurugram)",
-      affiliation: "#CBSE-AFF-2026-DEL-8821",
+      schoolName: tenantBrand?.schoolName || (isDemo ? "Delhi Public Heritage Trust" : "School Academy"),
+      campus: tenantBrand?.city ? `${tenantBrand.city} Campus` : (isDemo ? "Main Campus (Sector 45, Gurugram)" : "Main Campus"),
+      affiliation: tenantBrand?.affiliationNo ? `#${tenantBrand.affiliationNo}` : (isDemo ? "#CBSE-AFF-2026-DEL-8821" : "#CBSE-AFF-2026"),
       academicSession: session || "2026-27",
       totalStudents: students.length,
       activeStudents: students.filter(s => s.status === "active").length,
@@ -29589,15 +29791,24 @@ function executeAiDomainTool(toolName, args, orgId, role, session, meta = {}) {
 }
 
 // 1. AI Gateway Status: GET /api/erp/ai/status
-app.get("/api/erp/ai/status", (req, res) => {
+app.get("/api/erp/ai/status", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const role = req.user?.role || "school-admin";
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+
+  const resolvedSchoolContext = {
+    schoolName: tenantBrand?.schoolName || (isDemo ? "Delhi Public Heritage Trust" : "School Academy"),
+    campus: tenantBrand?.city ? `${tenantBrand.city} Campus` : (isDemo ? "Main Campus (Sector 45, Gurugram)" : "Main Campus"),
+    affiliation: tenantBrand?.affiliationNo ? `#${tenantBrand.affiliationNo}` : (isDemo ? "#CBSE-AFF-2026-DEL-8821" : "#CBSE-AFF-2026"),
+    academicSession: "2026-27"
+  };
 
   res.json({
     success: true,
     status: "operational",
     organization_id: orgId,
-    schoolContext: ERP_AI_SETTINGS.school_context,
+    schoolContext: resolvedSchoolContext,
     activeRole: role,
     model: ERP_AI_SETTINGS.model_name,
     quota: {
@@ -29619,6 +29830,9 @@ app.post("/api/erp/ai/chat", async (req, res) => {
   const role = (req.user?.role || "school-admin").toLowerCase();
   const session = req.body?.session || "2026-27";
   const { message, conversationId, stream = false } = req.body;
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const currentSchoolName = tenantBrand?.schoolName || (isDemo ? "Delhi Public Heritage Trust" : "School Academy");
 
   // Validation: Check empty message
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -29844,7 +30058,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
       ];
     }
   } else if (intent === "fee_query") {
-    reply = `Financial summary for **Delhi Public Heritage Trust** (Session **${session}**):\n\n` +
+    reply = `Financial summary for **${currentSchoolName}** (Session **${session}**):\n\n` +
       `• **Total Fees Demanded**: INR ${toolResult.totalDemanded.toLocaleString()}\n` +
       `• **Total Fees Collected**: INR ${toolResult.totalCollected.toLocaleString()} (${toolResult.recoveryRate}% collection efficiency)\n` +
       `• **Total Outstanding Fees**: INR ${toolResult.totalOutstanding.toLocaleString()} across ${toolResult.overdueInvoicesCount} overdue student demands.\n\n` +
@@ -29945,7 +30159,7 @@ app.post("/api/erp/ai/chat", async (req, res) => {
       { label: "Review Applications", module: "admissions" }
     ];
   } else if (intent === "transport_query") {
-    reply = `Transport fleet intelligence for **Delhi Public Heritage Trust**:\n\n` +
+    reply = `Transport fleet intelligence for **${currentSchoolName}**:\n\n` +
       `• **Active Bus Routes**: **${toolResult.totalRoutes} operational routes** (DLF, Golf Course, Sohna Road)\n` +
       `• **Total Fleet Seating Capacity**: **${toolResult.totalCapacity} seats**\n` +
       `• **Assigned Student Riders**: **${toolResult.assignedRiders} commuters**\n` +
@@ -33089,6 +33303,19 @@ async function deleteTimetableSlotDb(orgId, slotId) {
   }
 }
 
+// 15. GET /api/erp/timetable - Overview for timetable module
+app.get("/api/erp/timetable", requireAuth, (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const slots = ERP_TIMETABLE_SLOTS.filter(s => s.organization_id === orgId);
+  res.json({
+    success: true,
+    message: "Timetable overview loaded",
+    bellSchedule: ERP_BELL_SCHEDULES,
+    totalSlots: slots.length,
+    slots
+  });
+});
+
 // 15a. GET /api/erp/timetable/bell-schedule - Daily Period Bell Timings & Live Active Period
 app.get("/api/erp/timetable/bell-schedule", requireAuth, (req, res) => {
   // Calculate current active period based on local time
@@ -33186,11 +33413,12 @@ function checkTimetableConflicts(slot, excludeId = null) {
     subjectName
   } = slot;
 
-  const numPeriod = parseInt(periodNumber, 10);
+  const slotOrgId = slot.organization_id;
 
   // 1. Class Conflict: Can't have two subjects in same class-section at same period
   const classClash = ERP_TIMETABLE_SLOTS.find(s =>
     s.id !== excludeId &&
+    (!slotOrgId || s.organization_id === slotOrgId) &&
     s.session === session &&
     (s.grade || "").toLowerCase() === (grade || "").toLowerCase() &&
     (s.section || "").toLowerCase() === (section || "").toLowerCase() &&
@@ -33210,6 +33438,7 @@ function checkTimetableConflicts(slot, excludeId = null) {
   if (teacherId) {
     const teacherClash = ERP_TIMETABLE_SLOTS.find(s =>
       s.id !== excludeId &&
+      (!slotOrgId || s.organization_id === slotOrgId) &&
       s.session === session &&
       s.teacherId === teacherId &&
       (s.dayOfWeek || "").toLowerCase() === (dayOfWeek || "").toLowerCase() &&
@@ -33227,6 +33456,7 @@ function checkTimetableConflicts(slot, excludeId = null) {
     // Workload check: max 5 periods a day
     const teacherDayPeriods = ERP_TIMETABLE_SLOTS.filter(s =>
       s.id !== excludeId &&
+      (!slotOrgId || s.organization_id === slotOrgId) &&
       s.session === session &&
       s.teacherId === teacherId &&
       (s.dayOfWeek || "").toLowerCase() === (dayOfWeek || "").toLowerCase()
@@ -33244,6 +33474,7 @@ function checkTimetableConflicts(slot, excludeId = null) {
   if (roomNumber && roomNumber !== "SPORTS-COMPLEX") {
     const roomClash = ERP_TIMETABLE_SLOTS.find(s =>
       s.id !== excludeId &&
+      (!slotOrgId || s.organization_id === slotOrgId) &&
       s.session === session &&
       (s.roomNumber || "").toLowerCase() === (roomNumber || "").toLowerCase() &&
       (s.dayOfWeek || "").toLowerCase() === (dayOfWeek || "").toLowerCase() &&
@@ -33483,6 +33714,103 @@ app.get("/api/erp/timetable/teachers/:teacherId", requireAuth, (req, res) => {
   });
 });
 
+// 15f2. GET /api/erp/timetable/workload & GET /api/erp/analytics/teacher-workload - School-wide Teacher Workload Analytics
+const getTeacherWorkloadAnalyticsHandler = (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { session = "2026-27" } = req.query;
+
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const teachers = ERP_STAFF.filter(s =>
+    (isDemo || s.organization_id === orgId || !s.organization_id) &&
+    (s.role === "teacher" || s.staffType === "Teacher" || (s.designation || "").toLowerCase().includes("teacher") || (s.designation || "").toLowerCase().includes("faculty"))
+  );
+
+  const slots = ERP_TIMETABLE_SLOTS.filter(s =>
+    (s.organization_id === orgId || (!s.organization_id && isDemo)) &&
+    s.session === session
+  );
+
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weeklyQuota = 28;
+
+  const teacherAnalytics = teachers.map(teacher => {
+    const teacherSlots = slots.filter(s =>
+      s.teacherId === teacher.id ||
+      s.teacherId === teacher.empId ||
+      s.teacherId === teacher.db_id ||
+      s.teacherName === teacher.name
+    );
+
+    const periodsByDay = {};
+    days.forEach(d => { periodsByDay[d] = 0; });
+    teacherSlots.forEach(s => {
+      if (periodsByDay[s.dayOfWeek] !== undefined) {
+        periodsByDay[s.dayOfWeek]++;
+      }
+    });
+
+    const weeklyPeriods = teacherSlots.length;
+    const utilization = Math.min(100, Math.round((weeklyPeriods / weeklyQuota) * 100));
+
+    const classesTaught = [...new Set(teacherSlots.map(s => `${s.grade}-${s.section}`).filter(Boolean))];
+    const subjectsTaught = [...new Set(teacherSlots.map(s => s.subjectName).filter(Boolean))];
+
+    const substituteCount = ERP_SUBSTITUTIONS.filter(sub =>
+      (sub.organization_id === orgId || (!sub.organization_id && isDemo)) &&
+      (sub.substituteTeacherId === teacher.id || sub.substituteTeacherId === teacher.empId || sub.substituteTeacherName === teacher.name)
+    ).length;
+
+    let status = "optimal";
+    if (weeklyPeriods > weeklyQuota) {
+      status = "overloaded";
+    } else if (weeklyPeriods < 15) {
+      status = "under_allocated";
+    }
+
+    return {
+      teacherId: teacher.id,
+      empId: teacher.empId || teacher.id,
+      name: teacher.name,
+      designation: teacher.designation || "Faculty",
+      department: teacher.department || "Academics",
+      weeklyPeriods,
+      weeklyQuota,
+      utilizationPercent: utilization,
+      status,
+      periodsByDay,
+      classesTaught,
+      subjectsTaught,
+      substitutePeriods: substituteCount,
+      photoUrl: teacher.photoUrl || null
+    };
+  });
+
+  const totalTeachers = teachers.length;
+  const totalScheduledPeriods = teacherAnalytics.reduce((sum, t) => sum + t.weeklyPeriods, 0);
+  const avgPeriodsPerTeacher = totalTeachers > 0 ? Math.round((totalScheduledPeriods / totalTeachers) * 10) / 10 : 0;
+  const overloadedCount = teacherAnalytics.filter(t => t.status === "overloaded").length;
+  const optimalCount = teacherAnalytics.filter(t => t.status === "optimal").length;
+  const underAllocatedCount = teacherAnalytics.filter(t => t.status === "under_allocated").length;
+
+  res.json({
+    success: true,
+    session,
+    summary: {
+      totalTeachers,
+      totalScheduledPeriods,
+      averagePeriodsPerTeacher: avgPeriodsPerTeacher,
+      standardWeeklyQuota: weeklyQuota,
+      overloadedCount,
+      optimalCount,
+      underAllocatedCount
+    },
+    workload: teacherAnalytics
+  });
+};
+
+app.get("/api/erp/timetable/workload", requireAuth, getTeacherWorkloadAnalyticsHandler);
+app.get("/api/erp/analytics/teacher-workload", requireAuth, getTeacherWorkloadAnalyticsHandler);
+
 // 15g. GET /api/erp/timetable/rooms - Facilities Catalogue & Occupancy Matrix
 app.get("/api/erp/timetable/rooms", requireAuth, (req, res) => {
   const { type, session = "2026-27" } = req.query;
@@ -33542,6 +33870,8 @@ app.get("/api/erp/timetable/substitutions", requireAuth, (req, res) => {
 
 // 15i. GET /api/erp/timetable/substitutions/recommendations - Intelligent Substitute Teacher Recommendation Engine
 app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const { date = new Date().toISOString().split("T")[0], teacherId, session = "2026-27" } = req.query;
 
   // Resolve day of week from date
@@ -33553,16 +33883,17 @@ app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, r
   // Find absent/on-leave teachers
   let absentTeachers = [];
   if (teacherId) {
-    const t = ERP_STAFF.find(s => s.id === teacherId || s.empId === teacherId || s.db_id === teacherId);
+    const t = ERP_STAFF.find(s => (isDemo || s.organization_id === orgId || !s.organization_id) && (s.id === teacherId || s.empId === teacherId || s.db_id === teacherId));
     if (t) absentTeachers.push(t);
   } else {
     // Check staff who are on_leave or absent in attendance
     absentTeachers = ERP_STAFF.filter(s =>
+      (isDemo || s.organization_id === orgId || !s.organization_id) &&
       (s.role === "teacher" || s.staffType === "Teacher" || (s.designation || "").toLowerCase().includes("teacher") || (s.designation || "").toLowerCase().includes("faculty")) &&
       (s.status === "on_leave" || s.status === "absent")
     );
-    // If no teachers found marked absent, provide demonstration with stf-02 (Rajeev Malhotra)
-    if (absentTeachers.length === 0) {
+    // If no teachers found marked absent, provide demonstration with stf-02 only for demo org
+    if (absentTeachers.length === 0 && isDemo) {
       const fallbackTeacher = ERP_STAFF.find(s => s.id === "stf-02");
       if (fallbackTeacher) absentTeachers.push(fallbackTeacher);
     }
@@ -33573,12 +33904,14 @@ app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, r
   for (const absentTeacher of absentTeachers) {
     // Find periods absent teacher is scheduled to take today
     let affectedSlots = ERP_TIMETABLE_SLOTS.filter(s =>
+      (s.organization_id === orgId || (!s.organization_id && isDemo)) &&
       s.session === session &&
       (s.teacherId === absentTeacher.id || s.teacherId === absentTeacher.empId || s.teacherId === absentTeacher.db_id) &&
       s.dayOfWeek === dayOfWeek
     );
     if (affectedSlots.length === 0) {
       affectedSlots = ERP_TIMETABLE_SLOTS.filter(s =>
+        (s.organization_id === orgId || (!s.organization_id && isDemo)) &&
         s.session === session &&
         (s.teacherId === absentTeacher.id || s.teacherId === absentTeacher.empId || s.teacherId === absentTeacher.db_id)
       );
@@ -33593,6 +33926,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, r
       const candidates = [];
 
       const eligibleTeachers = ERP_STAFF.filter(s =>
+        (isDemo || s.organization_id === orgId || !s.organization_id) &&
         (s.role === "teacher" || s.staffType === "Teacher" || (s.designation || "").toLowerCase().includes("teacher") || (s.designation || "").toLowerCase().includes("faculty")) &&
         s.id !== absentTeacher.id &&
         s.status !== "on_leave"
@@ -33601,6 +33935,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, r
       for (const candidate of eligibleTeachers) {
         // Is candidate free this period?
         const isOccupied = ERP_TIMETABLE_SLOTS.some(s =>
+          (s.organization_id === orgId || (!s.organization_id && isDemo)) &&
           s.session === session &&
           (s.teacherId === candidate.id || s.teacherId === candidate.empId || s.teacherId === candidate.db_id) &&
           s.dayOfWeek === dayOfWeek &&
@@ -33610,6 +33945,7 @@ app.get("/api/erp/timetable/substitutions/recommendations", requireAuth, (req, r
         if (!isOccupied) {
           // Calculate today's workload for candidate
           const todayLoad = ERP_TIMETABLE_SLOTS.filter(s =>
+            (s.organization_id === orgId || (!s.organization_id && isDemo)) &&
             s.session === session &&
             (s.teacherId === candidate.id || s.teacherId === candidate.empId || s.teacherId === candidate.db_id) &&
             s.dayOfWeek === dayOfWeek
@@ -33700,6 +34036,7 @@ app.post("/api/erp/timetable/substitutions", requireAuth, async (req, res) => {
 
   // Validate substitute has no clash
   const subClash = ERP_TIMETABLE_SLOTS.find(s =>
+    (s.organization_id === orgId) &&
     (s.teacherId === substituteTeacherId || s.teacherName === substituteTeacherName) &&
     (s.dayOfWeek || "").toLowerCase() === (dayOfWeek || "").toLowerCase() &&
     s.periodNumber === numPeriod
@@ -33729,7 +34066,7 @@ app.post("/api/erp/timetable/substitutions", requireAuth, async (req, res) => {
     roomNumber: roomNumber || "201",
     reason,
     status: "assigned",
-    assignedBy: req.user?.email || "admin@dpsheritage.edu.in",
+    assignedBy: req.user?.email || "admin",
     assignedAt: new Date().toISOString(),
     notes: notes || ""
   };
@@ -35149,6 +35486,44 @@ app.put("/api/erp/settings", async (req, res) => {
     };
   }
   res.json({ success: true, message: "School ERP settings updated successfully", settings });
+});
+
+// Dedicated Logo Upload / Update Endpoint (Base64 data URL, image URL, or raw link)
+app.post("/api/erp/school/logo", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({ success: false, message: "Organization required" });
+  }
+  const logoUrl = req.body?.logoUrl || req.body?.logo_url || req.body?.url;
+  if (!logoUrl) {
+    return res.status(400).json({ success: false, message: "logoUrl is required (base64 data URL or image link)" });
+  }
+
+  try {
+    const updated = await updateTenantSettings(orgId, { logoUrl });
+    
+    // Also sync to school_onboarding cms_trees if website exists
+    if (supabase) {
+      try {
+        const { data: web } = await supabase.from("websites").select("id").eq("organization_id", orgId).maybeSingle();
+        if (web) {
+          const tree = await loadPersistedCmsTree(web);
+          if (tree && tree.branding) {
+            tree.branding.logoUrl = logoUrl;
+            await persistCmsTree(web, tree);
+          }
+        }
+      } catch (_) {}
+    }
+
+    res.json({
+      success: true,
+      message: "School logo uploaded & updated successfully across ERP and Website! 🎨",
+      logoUrl: updated.logoUrl || logoUrl
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to update logo", error: err.message });
+  }
 });
 
 
@@ -39705,7 +40080,11 @@ async function syncFromDatabase() {
     // 7. Fee structures
     const { data: feeStructures } = await supabase.from("fee_structures").select("*");
     if (feeStructures && feeStructures.length) {
-      ERP_FEE_STRUCTURES = feeStructures;
+      ERP_FEE_STRUCTURES = feeStructures.map(f => ({
+        ...f,
+        amountINR: Number(f.amount !== undefined ? f.amount : (f.amountINR || 0)),
+        feeHead: f.name || f.feeHead || "Tuition Fee"
+      }));
       console.log(`[SyncDB] Loaded ${feeStructures.length} fee structures`);
     }
 
@@ -39811,6 +40190,34 @@ async function syncFromDatabase() {
         };
       });
       console.log(`[SyncDB] Loaded ${onbList.length} school onboarding progress records`);
+    }
+
+    // 14. Section-Subject Mappings for Onboarded Organizations
+    for (const org of IN_MEMORY_ORGANIZATIONS) {
+      const orgStaff = ERP_STAFF.filter(s => s.organization_id === org.id);
+      const orgSubs = ERP_SUBJECTS.filter(s => s.organization_id === org.id);
+      const orgSections = ERP_SECTIONS.filter(s => s.organization_id === org.id);
+      const existingMappings = ERP_SECTION_SUBJECTS.filter(m => m.organization_id === org.id);
+      if (existingMappings.length === 0 && orgStaff.length > 0 && orgSubs.length > 0) {
+        orgSections.forEach(sec => {
+          orgSubs.forEach((sub, subIdx) => {
+            const assignedTeacher = orgStaff[subIdx % orgStaff.length];
+            ERP_SECTION_SUBJECTS.push({
+              id: `ssm-${org.id.slice(0, 4)}-${sec.id.slice(0, 4)}-${(sub.code || sub.name).toLowerCase()}`,
+              grade: sec.grade || "Class 10",
+              section: sec.section || "A",
+              subjectId: sub.id,
+              subjectName: sub.name,
+              subjectCode: sub.code || "SUB",
+              assignedTeacherId: assignedTeacher.id || assignedTeacher.employee_code,
+              assignedTeacherName: assignedTeacher.name || `${assignedTeacher.firstName} ${assignedTeacher.lastName}`.trim(),
+              academicSession: "2026-27",
+              organization_id: org.id
+            });
+          });
+        });
+        console.log(`[SyncDB] Auto-mapped ${ERP_SECTION_SUBJECTS.filter(m => m.organization_id === org.id).length} section-subject allocations for ${org.schoolName || org.name}`);
+      }
     }
 
     console.log("[SyncDB] ✅ Startup database sync complete.");
