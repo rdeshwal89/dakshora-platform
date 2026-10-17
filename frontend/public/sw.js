@@ -1,6 +1,6 @@
 // DAKSHORA 2.0 Progressive Web App Service Worker
-// Version: 2.2.0-auto-reload
-const CACHE_NAME = 'dakshora-cache-v2.2.0';
+// Version: 2.3.0-ward-portal-sidebar
+const CACHE_NAME = 'dakshora-cache-v2.3.0';
 const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',
