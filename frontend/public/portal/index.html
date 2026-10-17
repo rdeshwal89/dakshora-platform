@@ -178,13 +178,64 @@
       })();
     </script>
     <script>
-      if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+      (function() {
+        if (!('serviceWorker' in navigator) || !window.location.protocol.startsWith('http')) return;
+
         window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/sw.js').catch(function(err) {
-            console.warn('PWA service worker registration note:', err);
+          navigator.serviceWorker.register('/sw.js').then(function(registration) {
+            console.log('[Dakshora PWA] Service Worker active.');
+
+            // 1. Check for updates periodically (every 45s)
+            setInterval(function() {
+              registration.update().catch(function() {});
+            }, 45 * 1000);
+
+            // 2. Check for updates whenever user returns to or focuses the tab
+            document.addEventListener('visibilitychange', function() {
+              if (document.visibilityState === 'visible') {
+                registration.update().catch(function() {});
+              }
+            });
+            window.addEventListener('focus', function() {
+              registration.update().catch(function() {});
+            });
+
+            // 3. When an update is detected (new service worker installing)
+            registration.addEventListener('updatefound', function() {
+              var newWorker = registration.installing;
+              if (!newWorker) return;
+
+              newWorker.addEventListener('statechange', function() {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  console.log('[Dakshora PWA] New version ready. Activating instantly...');
+                  newWorker.postMessage({ type: 'SKIP_WAITING' });
+                }
+              });
+            });
+          }).catch(function(err) {
+            console.warn('[Dakshora PWA] Service worker registration note:', err);
+          });
+
+          // 4. When the new service worker takes control, seamlessly auto-reload the page!
+          var refreshing = false;
+          navigator.serviceWorker.addEventListener('controllerchange', function() {
+            if (!refreshing) {
+              refreshing = true;
+              console.log('[Dakshora PWA] New version active! Reloading to apply updates seamlessly...');
+              try {
+                var toast = document.createElement('div');
+                toast.id = 'dakshora-update-pill';
+                toast.style.cssText = 'position:fixed; bottom:24px; right:24px; z-index:999999; background:#0f172a; color:#ffffff; padding:12px 20px; border-radius:12px; font-family:system-ui,sans-serif; font-size:13px; font-weight:600; box-shadow:0 10px 25px -5px rgba(0,0,0,0.5); border:1px solid #38bdf8; display:flex; align-items:center; gap:8px;';
+                toast.innerHTML = '<span style="font-size:16px;">🚀</span> <span>नया अपडेट मिला! सिस्टम स्वतः अपडेट हो रहा है...</span>';
+                document.body.appendChild(toast);
+              } catch(e) {}
+              setTimeout(function() {
+                window.location.reload();
+              }, 400);
+            }
           });
         });
-      }
+      })();
     </script>
   </body>
 </html>
