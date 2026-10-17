@@ -430,7 +430,7 @@ export default function SchoolPublicPage() {
     address: "Shankar Gali Dauli Pyau, Mathura, Uttar Pradesh - 281001",
     contactPhone: "+91 8529575588",
     contactEmail: "contact@newidealpublicschool.edu.in",
-    logoUrl: "/assets/schools/new-ideal-logo.svg",
+    logoUrl: null,
     affiliationNumber: "CBSE-AFF-2130894",
   });
 
@@ -762,18 +762,8 @@ export default function SchoolPublicPage() {
             onClick={() => scrollTo("home")}
             className="flex items-center gap-3.5 cursor-pointer group"
           >
-            <div className="w-12 h-12 rounded-2xl bg-white p-1 border border-slate-200 shadow-md flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform overflow-hidden">
-              <img
-                src={school.logoUrl || "/assets/schools/new-ideal-logo.svg"}
-                alt={school.name}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  const img = e.currentTarget as HTMLImageElement;
-                  if (!img.src.includes("new-ideal-logo.svg")) {
-                    img.src = "/assets/schools/new-ideal-logo.svg";
-                  }
-                }}
-              />
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-indigo-500/25 shrink-0 group-hover:scale-105 transition-transform">
+              {school.name.charAt(0)}
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-tight group-hover:text-indigo-600 transition-colors">
@@ -942,28 +932,16 @@ export default function SchoolPublicPage() {
       {/* 4. MOBILE APP DOWNLOAD SHOWCASE */}
       <section className="bg-gradient-to-r from-emerald-950 via-teal-900 to-slate-950 text-white py-12 px-4 sm:px-6 lg:px-8 border-y border-emerald-800/40">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-4 text-center md:text-left">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white p-2 border-2 border-emerald-400 shadow-2xl flex items-center justify-center shrink-0">
-              <img
-                src={school.logoUrl || "/assets/schools/new-ideal-logo.svg"}
-                alt={school.name}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = "/assets/schools/new-ideal-logo.svg";
-                }}
-              />
+          <div className="space-y-2 text-center md:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold uppercase font-mono">
+              <span>📱</span> {t.appSection.badge}
             </div>
-            <div className="space-y-1">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold uppercase font-mono">
-                <span>📱</span> {t.appSection.badge} • in.edu.newidealpublicschool.parentapp
-              </div>
-              <h3 className="text-xl sm:text-2xl font-black">
-                {t.appSection.title}
-              </h3>
-              <p className="text-xs text-emerald-200 max-w-xl leading-relaxed">
-                {t.appSection.desc}
-              </p>
-            </div>
+            <h3 className="text-2xl sm:text-3xl font-black">
+              {t.appSection.title}
+            </h3>
+            <p className="text-xs sm:text-sm text-emerald-200 max-w-xl leading-relaxed">
+              {t.appSection.desc}
+            </p>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
             <a
