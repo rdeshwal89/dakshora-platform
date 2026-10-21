@@ -13034,6 +13034,8 @@ const PUBLIC_ERP_ENDPOINTS = [
   "/api/erp/communication/webhooks/gupshup",
   "/api/erp/communication/webhooks/fast2sms",
   "/api/erp/ai/generate-question-paper",
+  "/api/erp/ai/generate-lesson-plan",
+  "/api/erp/ai/generate-presentation",
   "/api/erp/ai-teacher/generate"
 ];
 
@@ -32577,6 +32579,455 @@ Ensure all questions strictly pertain to the requested chapters: ${chapters.join
 });
 
 // =========================================================================
+
+// =========================================================================
+// POST /api/erp/ai/generate-lesson-plan - NEP 2020 Smart Syllabus-Aligned Lesson Planner
+// =========================================================================
+app.post("/api/erp/ai/generate-lesson-plan", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const tenantBrand = await getTenantSettings(orgId);
+
+  const {
+    board = "cbse",
+    grade = "Class 10",
+    subject = "Science (विज्ञान)",
+    chapter = "Chemical Reactions and Equations",
+    periodsCount = 6,
+    durationPerPeriod = "45 Mins",
+    languageMedium = "bilingual",
+    learningStyle = "nep2020",
+    schoolName: requestedSchoolName
+  } = req.body;
+
+  const schoolName = requestedSchoolName || tenantBrand?.schoolName || "DAKSHORA SENIOR SECONDARY SCHOOL";
+
+  let langDirective = "";
+  if (languageMedium === "english") {
+    langDirective = "STRICT LANGUAGE RULE: The lesson plan MUST be 100% in English only.";
+  } else if (languageMedium === "hindi") {
+    langDirective = "STRICT LANGUAGE RULE: The lesson plan MUST be 100% in Hindi (हिंदी / देवनागरी) only.";
+  } else {
+    langDirective = "Bilingual format: English headings with Hindi concept explanations.";
+  }
+
+  const prompt = `You are a National Award-Winning Senior Educator and CBSE/NCERT Curriculum Director.
+Create an authentic, practical, classroom-ready Lesson Plan aligned with NEP 2020, NCF-SE, and Bloom's Taxonomy.
+
+SPECIFICATIONS:
+- School: ${schoolName}
+- Education Board: ${board.toUpperCase()} (NCERT Rationalized Syllabus 2025-2026)
+- Class / Grade: ${grade}
+- Subject: ${subject}
+- Chapter / Unit: ${chapter}
+- Allocated Teaching Periods: ${periodsCount} Periods (${durationPerPeriod} each)
+- Language Medium: ${languageMedium}
+${langDirective}
+
+OUTPUT JSON SCHEMA:
+{
+  "schoolName": "${schoolName}",
+  "grade": "${grade}",
+  "subject": "${subject}",
+  "chapterTitle": "${chapter}",
+  "allocatedPeriods": ${periodsCount},
+  "durationPerPeriod": "${durationPerPeriod}",
+  "curriculumStandard": "NEP 2020 & NCERT Rationalized Syllabus 2025-2026",
+  "bloomsObjectives": {
+    "remember": "Recall definitions, terms, and core formulas.",
+    "understand": "Explain fundamental principles and underlying mechanisms.",
+    "apply": "Solve numericals and apply concepts to real-life situations.",
+    "analyze": "Compare contrasting phenomena and evaluate experimental data."
+  },
+  "periodBreakup": [
+    {
+      "periodNumber": 1,
+      "title": "Introduction & Concept Hook",
+      "learningOutcome": "Outcome statement for this period",
+      "hookActivity": "A quick 5-min demonstration, real-world riddle, or prior knowledge check",
+      "directInstruction": "Key blackboard concepts, formulas, and teacher modeling (15 mins)",
+      "guidedPractice": "Student pair-work, textbook problems, or worksheet exercise (15 mins)",
+      "exitTicket": "Quick 2-question spot diagnostic check to verify understanding (5 mins)",
+      "homework": "Targeted NCERT practice questions"
+    }
+  ],
+  "blackboardLayout": {
+    "leftColumn": "Formulas, Definitions & Key Terms",
+    "centerColumn": "Worked Examples & Chemical/Mathematical Equations",
+    "rightColumn": "Class Assignment & Homework Reminder"
+  },
+  "differentiatedSupport": {
+    "remedial": "Scaffolding templates and formula cue-cards for learners requiring reinforcement",
+    "advancedHots": "High-Order Thinking Skills extension problem for high-achievers"
+  },
+  "practicalLabActivity": "Experiential hands-on activity or laboratory experiment matching NCERT guidelines",
+  "lifeSkillsIntegration": "Critical thinking, environmental awareness, or scientific temper"
+}
+
+Provide realistic period breakdown for ${periodsCount} periods. Return ONLY the JSON object.`;
+
+  try {
+    const aiResult = await callGeminiForJson(prompt);
+    if (aiResult && aiResult.parsed && aiResult.parsed.periodBreakup) {
+      return res.json({
+        success: true,
+        aiPowered: true,
+        model: aiResult.model,
+        lessonPlan: aiResult.parsed
+      });
+    }
+  } catch (err) {
+    console.error("[AI Lesson Plan] Gemini generation error:", err.message);
+  }
+
+  // Guaranteed fallback lesson plan matching exact parameters
+  const isHindi = languageMedium === "hindi";
+  const fallbackLessonPlan = {
+    schoolName,
+    grade,
+    subject,
+    chapterTitle: chapter,
+    allocatedPeriods: periodsCount,
+    durationPerPeriod,
+    curriculumStandard: "NEP 2020 & NCERT Rationalized Syllabus 2025-2026",
+    bloomsObjectives: {
+      remember: isHindi ? "मूलभूत परिभाषाएँ, सूत्र एवं शब्दावली का स्मरण करना।" : "Recall key definitions, standard units, and foundational principles.",
+      understand: isHindi ? "सिद्धांतों के पीछे के कारणों एवं कार्यप्रणाली की व्याख्या करना।" : "Explain scientific and mathematical reasoning with diagrammatic models.",
+      apply: isHindi ? "दैनिक जीवन के उदाहरणों एवं अभ्यास प्रश्नों में सूत्रों को लागू करना।" : "Apply concepts to textbook numericals and real-life scenarios.",
+      analyze: isHindi ? "विभिन्न स्थितियों की तुलना करना एवं निष्कर्ष निकालना।" : "Analyze experimental observations and error margins."
+    },
+    periodBreakup: Array.from({ length: Math.min(periodsCount, 6) }, (_, i) => ({
+      periodNumber: i + 1,
+      title: isHindi ? `कालांश ${i + 1}: ${chapter} - भाग ${i + 1}` : `Period ${i + 1}: ${chapter} - Stage ${i + 1}`,
+      learningOutcome: isHindi ? `अध्याय के मुख्य भाग ${i + 1} का व्यावहारिक ज्ञान प्राप्त करना।` : `Master core sub-topic and solve fundamental practice problems.`,
+      hookActivity: isHindi ? "कक्षा में पूर्व ज्ञान की जाँच हेतु 5-मिनट की रोचक प्रश्नोत्तरी।" : "5-minute curiosity trigger / real-world mystery question.",
+      directInstruction: isHindi ? "श्यामपट्ट पर मुख्य सूत्रों, उदाहरणों एवं आरेखों की विस्तृत व्याख्या।" : "Blackboard modeling with 2 worked textbook examples.",
+      guidedPractice: isHindi ? "छात्रों द्वारा जोड़ियों में अभ्यास प्रश्नों का समाधान।" : "Guided student problem solving with teacher circulating.",
+      exitTicket: isHindi ? "अंतिम 5 मिनट में दो त्वरित नैदानिक प्रश्नों द्वारा समझ की पुष्टि।" : "2 diagnostic questions on exit slip.",
+      homework: isHindi ? "पाठ्यपुस्तक के अभ्यास प्रश्न 1 से 4 हल करना।" : "NCERT Exercise Practice Questions."
+    })),
+    blackboardLayout: {
+      leftColumn: isHindi ? "परिभाषाएं एवं महत्वपूर्ण सूत्र" : "Key Formulas & Definitions",
+      centerColumn: isHindi ? "हल किए गए उदाहरण 1 एवं 2" : "Worked Examples 1 & 2",
+      rightColumn: isHindi ? "कक्षा कार्य एवं गृहकार्य" : "Class Task & Homework"
+    },
+    differentiatedSupport: {
+      remedial: isHindi ? "कमजोर छात्रों के लिए चरणबद्ध सूत्र-कार्ड एवं अतिरिक्त सहायता।" : "Step-by-step formula cue cards and scaffolded practice sheets.",
+      advancedHots: isHindi ? "मेधावी छात्रों के लिए उच्च स्तरीय चिंतन (HOTS) प्रश्न।" : "Higher-Order Thinking Skills extension challenge problem."
+    },
+    practicalLabActivity: isHindi ? `${chapter} से संबंधित प्रायोगिक गतिविधि अथवा क्रियाकलाप।` : `Hands-on laboratory investigation illustrating ${chapter}.`,
+    lifeSkillsIntegration: isHindi ? "तार्किक चिंतन एवं वैज्ञानिक दृष्टिकोण का विकास।" : "Critical thinking, problem-solving, and scientific inquiry."
+  };
+
+  res.json({
+    success: true,
+    aiPowered: false,
+    message: "Lesson plan synthesized using NEP 2020 curriculum schema",
+    lessonPlan: fallbackLessonPlan
+  });
+});
+
+// =========================================================================
+// POST /api/erp/ai/generate-presentation - AI Smart Board PPT / Slides Generator
+// =========================================================================
+app.post("/api/erp/ai/generate-presentation", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const tenantBrand = await getTenantSettings(orgId);
+
+  const {
+    grade = "Class 10",
+    subject = "Science (विज्ञान)",
+    topic = "Chemical Reactions and Equations",
+    slideCount = 8,
+    languageMedium = "bilingual",
+    schoolName: requestedSchoolName
+  } = req.body;
+
+  const schoolName = requestedSchoolName || tenantBrand?.schoolName || "DAKSHORA SENIOR SECONDARY SCHOOL";
+
+  let langDirective = "";
+  if (languageMedium === "english") {
+    langDirective = "STRICT LANGUAGE RULE: All slide content, titles, bullets, and quiz MUST be 100% in English only.";
+  } else if (languageMedium === "hindi") {
+    langDirective = "STRICT LANGUAGE RULE: All slide content, titles, bullets, and quiz MUST be 100% in Hindi (हिंदी / देवनागरी) only.";
+  } else {
+    langDirective = "Bilingual format: English titles and bilingual bullets with clear Hindi explanations.";
+  }
+
+  const prompt = `You are an Expert Educational Technology Specialist and Senior Smart-Classroom Presentation Designer.
+Create a high-impact, visually structured 8-slide classroom teaching presentation for teachers to display on Interactive Smart Boards, Projectors, and IFPs.
+
+SPECIFICATIONS:
+- School: ${schoolName}
+- Class / Grade: ${grade}
+- Subject: ${subject}
+- Chapter / Topic: ${topic}
+- Target Slides: ${slideCount}
+- Language Medium: ${languageMedium}
+${langDirective}
+
+SLIDE STRUCTURE REQUIRED:
+- Slide 1: Title & Session Goals
+- Slide 2: The Hook / Real-world Curiosity Question
+- Slide 3: Core Concepts & Principles (bullet points)
+- Slide 4: Visual Diagram / Flowchart / Equation Box
+- Slide 5: Real-World Applications & Daily Life Examples
+- Slide 6: Common Board Exam Mistakes & Tips to Avoid
+- Slide 7: Interactive Classroom Spot Quiz (2-3 MCQs with answers)
+- Slide 8: Key Takeaway Summary & Homework Assignment
+
+OUTPUT JSON SCHEMA:
+{
+  "schoolName": "${schoolName}",
+  "presentationTitle": "${topic}",
+  "grade": "${grade}",
+  "subject": "${subject}",
+  "slideCount": ${slideCount},
+  "slides": [
+    {
+      "slideNumber": 1,
+      "slideType": "title",
+      "title": "${topic}",
+      "subtitle": "${grade} • ${subject}",
+      "bulletPoints": [
+        "Welcome to Smart Classroom Session",
+        "Key Concept Breakdown & Practical Understanding",
+        "Aligned with CBSE/State Board 2026 Curriculum"
+      ],
+      "visualDescription": "Illustration description for smart board graphic",
+      "speakerNotes": "Teacher introduction guidance"
+    },
+    {
+      "slideNumber": 2,
+      "slideType": "hook",
+      "title": "Curiosity Trigger Question",
+      "subtitle": "Connecting to Prior Knowledge",
+      "bulletPoints": [
+        "Real-life mystery or observation",
+        "Why does this phenomenon happen?",
+        "Today's topic holds the answer!"
+      ],
+      "keyTakeaway": "Single sentence core takeaway message",
+      "visualDescription": "Graphic description"
+    },
+    {
+      "slideNumber": 3,
+      "slideType": "concept",
+      "title": "Core Scientific Principles",
+      "subtitle": "Fundamental Laws & Definitions",
+      "bulletPoints": [
+        "Primary definition and standard scientific expression",
+        "Key mathematical relation or chemical equation",
+        "Crucial conditions required"
+      ],
+      "visualDescription": "Concept diagram description"
+    },
+    {
+      "slideNumber": 4,
+      "slideType": "diagram",
+      "title": "Step-by-Step Mechanism / Process",
+      "subtitle": "Visualizing the Concept",
+      "bulletPoints": [
+        "Stage 1: Initial state and reactants/inputs",
+        "Stage 2: Active transition and energy changes",
+        "Stage 3: Equilibrium and final output"
+      ],
+      "formulaBox": "Equation, formula or principle summary box",
+      "visualDescription": "Process flow diagram"
+    },
+    {
+      "slideNumber": 5,
+      "slideType": "real_world",
+      "title": "Everyday Life Applications",
+      "subtitle": "Where do we see this around us?",
+      "bulletPoints": [
+        "Industrial or commercial application",
+        "Daily household occurrence",
+        "Environmental or technological impact"
+      ],
+      "visualDescription": "Real-world photography illustration"
+    },
+    {
+      "slideNumber": 6,
+      "slideType": "mistakes",
+      "title": "Board Exam Alert: Common Mistakes!",
+      "subtitle": "What examiners look for",
+      "bulletPoints": [
+        "Common mistake made by 70% of students",
+        "Correct method to write in board papers",
+        "Pro tip to score full marks in numericals/derivations"
+      ],
+      "visualDescription": "Warning icon and checkmark"
+    },
+    {
+      "slideNumber": 7,
+      "slideType": "quiz",
+      "title": "Classroom Quick Quiz!",
+      "subtitle": "Spot-Check for Understanding",
+      "quizQuestions": [
+        {
+          "q": "Question 1 text",
+          "options": ["(A) Option 1", "(B) Option 2", "(C) Option 3", "(D) Option 4"],
+          "ans": "(B) Correct option with explanation"
+        },
+        {
+          "q": "Question 2 text",
+          "options": ["(A) Option 1", "(B) Option 2", "(C) Option 3", "(D) Option 4"],
+          "ans": "(A) Correct option with explanation"
+        }
+      ]
+    },
+    {
+      "slideNumber": 8,
+      "slideType": "summary",
+      "title": "Summary & Today's Assignment",
+      "subtitle": "Next Steps",
+      "bulletPoints": [
+        "Review today's 3 big takeaways",
+        "Homework: Solve textbook exercises",
+        "Preview of tomorrow's topic"
+      ],
+      "visualDescription": "Notebook and graduation cap graphic"
+    }
+  ]
+}
+
+Ensure high visual presentation quality, crisp bullet points, and accurate pedagogical explanations. Return ONLY the JSON object.`;
+
+  try {
+    const aiResult = await callGeminiForJson(prompt);
+    if (aiResult && aiResult.parsed && aiResult.parsed.slides && aiResult.parsed.slides.length > 0) {
+      return res.json({
+        success: true,
+        aiPowered: true,
+        model: aiResult.model,
+        presentation: aiResult.parsed
+      });
+    }
+  } catch (err) {
+    console.error("[AI Presentation] Gemini generation error:", err.message);
+  }
+
+  // Fallback presentation
+  const isHindi = languageMedium === "hindi";
+  const fallbackPresentation = {
+    schoolName,
+    presentationTitle: topic,
+    grade,
+    subject,
+    slideCount: 8,
+    slides: [
+      {
+        slideNumber: 1,
+        slideType: "title",
+        title: topic,
+        subtitle: `${grade} • ${subject}`,
+        bulletPoints: [
+          isHindi ? "स्मार्ट क्लासरूम सत्र में आपका स्वागत है" : "Welcome to Smart Classroom Session",
+          isHindi ? "मुख्य अवधारणाओं का सरल एवं व्यावहारिक अध्ययन" : "Concept Breakdown & Board Curriculum Mapping",
+          isHindi ? "बोर्ड परीक्षा 2026 पाठ्यक्रम के अनुसार तैयार" : "CBSE / State Board 2026 Aligned"
+        ],
+        visualDescription: "Classroom teaching banner graphic",
+        speakerNotes: "Welcome students and introduce the day's objective."
+      },
+      {
+        slideNumber: 2,
+        slideType: "hook",
+        title: isHindi ? "जिज्ञासा का प्रश्न (The Hook)" : "The Hook: Everyday Mystery",
+        subtitle: isHindi ? "पूर्व ज्ञान से जुड़ाव" : "Connecting to Prior Knowledge",
+        bulletPoints: [
+          isHindi ? `क्या आपने कभी सोचा है कि ${topic} हमारे दैनिक जीवन में कहाँ दिखाई देता है?` : `Have you ever observed how ${topic} operates in daily life?`,
+          isHindi ? "आज हम इस रहस्य और इसके वैज्ञानिक नियमों को समझेंगे!" : "Today we uncover the fundamental laws governing this phenomenon!",
+          isHindi ? "पूरे ध्यान से हर स्लाइड को देखें और समझें।" : "Pay close attention to key formulas and step-by-step observations."
+        ],
+        keyTakeaway: isHindi ? "विज्ञान हमारे दैनिक जीवन की घटनाओं को समझने की कुंजी है।" : "Science explains everyday observations through predictable natural laws."
+      },
+      {
+        slideNumber: 3,
+        slideType: "concept",
+        title: isHindi ? "मूलभूत सिद्धांत एवं परिभाषाएँ" : "Core Principles & Definitions",
+        subtitle: isHindi ? "मुख्य वैज्ञानिक नियम" : "Fundamental Governing Laws",
+        bulletPoints: [
+          isHindi ? `1. ${topic} की मानक परिभाषा एवं वैज्ञानिक शब्दावली।` : `1. Standard scientific definition and governing equations for ${topic}.`,
+          isHindi ? "2. आवश्यक शर्तें एवं भौतिक/रासायनिक कारक।" : "2. Necessary conditions and baseline parameters.",
+          isHindi ? "3. आनुपातिक संबंध एवं मात्रक (SI Units)।" : "3. Proportional relationships and standard SI units."
+        ]
+      },
+      {
+        slideNumber: 4,
+        slideType: "diagram",
+        title: isHindi ? "प्रक्रिया आरेख एवं सूत्र" : "Process Diagram & Formula Matrix",
+        subtitle: isHindi ? "चरणबद्ध कार्यप्रणाली" : "Visualizing the Mechanism",
+        bulletPoints: [
+          isHindi ? "चरण 1: प्रारंभिक अवस्था एवं आवश्यक इनपुट" : "Stage 1: Baseline inputs and boundary conditions",
+          isHindi ? "चरण 2: प्रक्रिया एवं ऊर्जा का स्थानांतरण" : "Stage 2: Reaction/Mechanism transition and energy dynamics",
+          isHindi ? "चरण 3: अंतिम परिणाम एवं संतुलित अवस्था" : "Stage 3: Equilibrium state and final outputs"
+        ],
+        formulaBox: `${topic} ➔ Core Formula & Governing Law`,
+        visualDescription: "Process flow diagram"
+      },
+      {
+        slideNumber: 5,
+        slideType: "real_world",
+        title: isHindi ? "दैनिक जीवन में अनुप्रयोग" : "Real-World Applications",
+        subtitle: isHindi ? "हम इसे कहाँ उपयोग करते हैं?" : "Where is this used in industries & life?",
+        bulletPoints: [
+          isHindi ? "1. औद्योगिक एवं तकनीकी क्षेत्र में व्यापक उपयोग।" : "1. Key industrial manufacturing & technological applications.",
+          isHindi ? "2. घरेलू एवं पर्यावरणीय प्रक्रियाओं में भूमिका।" : "2. Everyday household and biological phenomena.",
+          isHindi ? "3. भविष्य की तकनीकों और नवाचारों में महत्व।" : "3. Future innovations and environmental implications."
+        ]
+      },
+      {
+        slideNumber: 6,
+        slideType: "mistakes",
+        title: isHindi ? "परीक्षा चेतावनी: सामान्य गलतियाँ!" : "Board Exam Warning: Common Pitfalls!",
+        subtitle: isHindi ? "पूरे अंक कैसे प्राप्त करें?" : "How to secure 100% marks",
+        bulletPoints: [
+          isHindi ? "❌ गलती: मात्रक (SI Units) अथवा संतुलित समीकरण भूल जाना।" : "❌ Common Pitfall: Omitting standard SI units or physical states.",
+          isHindi ? "✔️ सही तरीका: हमेशा सूत्र लिखकर मान प्रतिस्थापित करें।" : "✔️ Full-Mark Technique: State the governing formula before numerical substitution.",
+          isHindi ? "💡 टिप्स: आरेख को हमेशा पेंसिल से स्पष्ट नामांकित करें।" : "💡 Top Scorer Tip: Draw neat, labeled diagrams with clean arrows."
+        ]
+      },
+      {
+        slideNumber: 7,
+        slideType: "quiz",
+        title: isHindi ? "कक्षा प्रश्नोत्तरी (Classroom Quiz)!" : "Classroom Quick Quiz!",
+        subtitle: isHindi ? "अपनी समझ की जाँच करें" : "Check for Understanding",
+        quizQuestions: [
+          {
+            q: isHindi ? `1. ${topic} का मुख्य सिद्धांत क्या है?` : `1. Which core principle governs ${topic}?`,
+            options: ["(A) Conservation Law", "(B) Proportional Balance", "(C) Random Decay", "(D) Zero Energy"],
+            ans: "(A) Conservation Law — Standard scientific conservation principle"
+          },
+          {
+            q: isHindi ? "2. बोर्ड परीक्षा में किस बात का विशेष ध्यान रखना चाहिए?" : "2. Which factor is vital when solving exam problems?",
+            options: ["(A) Step-by-step working", "(B) Guessing", "(C) Skipping units", "(D) Leaving blank"],
+            ans: "(A) Step-by-step working with formula representation"
+          }
+        ]
+      },
+      {
+        slideNumber: 8,
+        slideType: "summary",
+        title: isHindi ? "पाठ सारांश एवं गृहकार्य" : "Summary & Homework",
+        subtitle: isHindi ? "आज का मुख्य निष्कर्ष" : "Key Takeaways",
+        bulletPoints: [
+          isHindi ? "आज सीखे गए 3 मुख्य सिद्धांतों का पुनरावलोकन करें।" : "Review today's 3 core learning objectives.",
+          isHindi ? "गृहकार्य: पाठ्यपुस्तक के अभ्यास प्रश्नों को हल करें।" : "Homework: Solve NCERT exercise numericals and theory questions.",
+          isHindi ? "अगली कक्षा: अगले अध्याय के महत्वपूर्ण विषयों पर चर्चा।" : "Next Session: Moving forward to next curriculum unit."
+        ]
+      }
+    ]
+  };
+
+  res.json({
+    success: true,
+    aiPowered: false,
+    message: "Presentation synthesized using standard classroom schema",
+    presentation: fallbackPresentation
+  });
+});
+
+
 // 14. ENTERPRISE SETTINGS, MULTI-CAMPUS, GLOBAL SEARCH & PRODUCTION HARDENING
 // =========================================================================
 
