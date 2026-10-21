@@ -32299,7 +32299,8 @@ SPECIFICATIONS:
 - Selected Chapters to Test: ${chapters.length > 0 ? chapters.join(", ") : "Entire Prescribed Syllabus"}
 - Exam Type: ${examTitle}
 - Difficulty Level: ${difficulty} (Foundation, Standard CBSE, or Advanced HOTS)
-- Language Medium: ${languageMedium} (If "bilingual", provide English text followed by accurate Hindi translation for every question and option; if "english", use English; if "hindi", use Hindi)
+- Language Medium: ${languageMedium}
+- STRICT LANGUAGE MANDATE: If languageMedium is "english", generate the 100% ENTIRE paper in ENGLISH ONLY (no Hindi/Devanagari text). If languageMedium is "hindi", generate the 100% ENTIRE paper in HINDI ONLY (no English questions). If "bilingual", provide English text followed by accurate Hindi translation for each question.
 - Total Maximum Marks: ${totalMarks}
 - Time Allowed: ${timeAllowed}
 
