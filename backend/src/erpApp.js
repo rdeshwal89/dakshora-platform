@@ -13032,7 +13032,9 @@ const PUBLIC_ERP_ENDPOINTS = [
   "/api/erp/portal/auth/login",
   "/api/erp/communication/webhooks/twilio",
   "/api/erp/communication/webhooks/gupshup",
-  "/api/erp/communication/webhooks/fast2sms"
+  "/api/erp/communication/webhooks/fast2sms",
+  "/api/erp/ai/generate-question-paper",
+  "/api/erp/ai-teacher/generate"
 ];
 
 const ERP_MODULE_PREFIXES = [
@@ -31985,12 +31987,135 @@ app.delete("/api/erp/teaching-journal/:id", (req, res) => {
   res.json({ success: true, message: "Teaching journal entry deleted." });
 });
 
+// Helper for Gemini AI Question Paper & Teacher Assistant
+async function callGeminiForJson(prompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const candidateModels = [
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
+    "gemini-flash-latest"
+  ];
+
+  for (const model of candidateModels) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            return { parsed, model };
+          } catch (jsonErr) {
+            console.error(`[AI Gemini] JSON parse error from ${model}:`, jsonErr.message);
+          }
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.warn(`[AI Gemini] Model ${model} returned HTTP ${res.status}:`, errData?.error?.message || res.statusText);
+      }
+    } catch (err) {
+      console.warn(`[AI Gemini] Exception calling ${model}:`, err.message);
+    }
+  }
+  return null;
+}
+
+async function callGeminiForText(prompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const candidateModels = [
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
+    "gemini-flash-latest"
+  ];
+
+  for (const model of candidateModels) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 0) {
+          return { text: text.trim(), model };
+        }
+      }
+    } catch (err) {
+      console.warn(`[AI Gemini Text] Error with ${model}:`, err.message);
+    }
+  }
+  return null;
+}
+
 // POST /api/erp/ai-teacher/generate
-app.post("/api/erp/ai-teacher/generate", (req, res) => {
+app.post("/api/erp/ai-teacher/generate", async (req, res) => {
   const { mode, grade = "Class 10", subject = "Mathematics", topic = "Quadratic Equations" } = req.body;
 
   let title = "";
   let content = "";
+
+  // Live Google Gemini Generation if API key is configured
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const modeDescriptions = {
+        lesson_plan: "A 45-minute CBSE curriculum lesson plan with learning objectives, 5-stage time flow, blackboard layout, and differentiated support",
+        mcqs: "15 authentic CBSE/NCERT multiple choice questions with 4 options, correct answer keys, and pedagogical step explanations",
+        worksheet: "A printable student classroom worksheet with Section A (Foundation), Section B (Application), Section C (HOTS)",
+        bilingual_hindi: "A simple conversational Hindi/Hinglish concept explanation with everyday analogies, formulas, and common mistakes to avoid",
+        differentiated: "A 3-tiered differentiated assignment: Tier 1 (Reinforcement), Tier 2 (Board Standard), Tier 3 (Advanced HOTS)"
+      };
+
+      const prompt = `You are a Senior Master Teacher and Curriculum Expert for Indian Schools.
+Generate comprehensive, classroom-ready educational content in clean Markdown:
+- Topic: ${topic}
+- Grade: ${grade}
+- Subject: ${subject}
+- Mode: ${mode} (${modeDescriptions[mode] || mode})
+
+Provide high educational quality, accurate formulas, step-by-step reasoning, and clear headings.`;
+
+      const aiTextResult = await callGeminiForText(prompt);
+      if (aiTextResult && aiTextResult.text) {
+        content = aiTextResult.text;
+        title = `${grade} ${subject} — ${topic} (${mode.replace(/_/g, " ").toUpperCase()})`;
+        return res.json({
+          success: true,
+          mode,
+          grade,
+          subject,
+          topic,
+          title,
+          content,
+          aiPowered: true,
+          model: aiTextResult.model
+        });
+      }
+    } catch (aiErr) {
+      console.warn("[AI Teacher] Gemini generation failed, falling back to curriculum template:", aiErr.message);
+    }
+  }
 
   switch (mode) {
     case "lesson_plan":
@@ -32130,6 +32255,323 @@ app.post("/api/erp/ai-teacher/generate", (req, res) => {
     topic,
     title,
     content
+  });
+});
+
+// =========================================================================
+// POST /api/erp/ai/generate-question-paper - Real Google Gemini Question Paper Synthesis
+// =========================================================================
+app.post("/api/erp/ai/generate-question-paper", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const tenantBrand = await getTenantSettings(orgId);
+
+  const {
+    board = "cbse",
+    grade = "Class 10",
+    subject = "Science (विज्ञान)",
+    chapters = [],
+    examType = "term_exam",
+    difficulty = "standard",
+    languageMedium = "bilingual",
+    totalMarks = 80,
+    timeAllowed = "3 Hours (3 घंटे)",
+    schoolName: requestedSchoolName
+  } = req.body;
+
+  const schoolName = requestedSchoolName || tenantBrand?.schoolName || "DAKSHORA SENIOR SECONDARY SCHOOL";
+  const boardLabel = board.toUpperCase();
+  const examTitleMap = {
+    term_exam: "TERM - 1 EXAMINATION (प्रथम सत्रांत परीक्षा)",
+    unit_test: "PERIODIC ASSESSMENT / UNIT TEST (इकाई परीक्षा)",
+    pre_board: "PRE-BOARD ANNUAL EXAMINATION (प्री-बोर्ड वार्षिक परीक्षा)"
+  };
+  const examTitle = examTitleMap[examType] || "SUMMATIVE EXAMINATION";
+
+  // Prompt Construction for Gemini
+  const prompt = `You are a Senior Chief Examination Paper Setter for Indian School Boards (${boardLabel}, CBSE, RBSE, NCERT).
+Generate an official board-standard examination question paper, marking scheme, and blueprint in strict JSON format.
+
+SPECIFICATIONS:
+- School Name: ${schoolName}
+- Education Board: ${boardLabel} (2025-2026 Examination Scheme)
+- Class / Grade: ${grade}
+- Subject: ${subject}
+- Selected Chapters to Test: ${chapters.length > 0 ? chapters.join(", ") : "Entire Prescribed Syllabus"}
+- Exam Type: ${examTitle}
+- Difficulty Level: ${difficulty} (Foundation, Standard CBSE, or Advanced HOTS)
+- Language Medium: ${languageMedium} (If "bilingual", provide English text followed by accurate Hindi translation for every question and option; if "english", use English; if "hindi", use Hindi)
+- Total Maximum Marks: ${totalMarks}
+- Time Allowed: ${timeAllowed}
+
+STRUCTURE REQUIREMENTS:
+${totalMarks <= 30 ? `
+For Unit / Periodic Test (${totalMarks} Marks):
+- Section A: 5 MCQs (1 Mark each)
+- Section B: 3 Very Short Answer Questions (2 Marks each)
+- Section C: 3 Short Answer Questions (3 Marks each)
+- Section D: 1 Long Answer Question with internal choice (5 Marks)
+` : `
+For Full Term / Annual Exam (${totalMarks} Marks):
+- Section A: 16 Multiple Choice Questions including Assertion-Reason (1 Mark each)
+- Section B: 5 Very Short Answer Questions (2 Marks each)
+- Section C: 6 Short Answer Questions (3 Marks each)
+- Section D: 4 Long Answer Questions with internal "OR / अथवा" choice (5 Marks each)
+- Section E: 3 Case Study / Competency Based Questions with sub-parts i, ii, iii (4 Marks each)
+`}
+
+OUTPUT JSON SCHEMA:
+{
+  "schoolName": "${schoolName}",
+  "examTitle": "${examTitle}",
+  "grade": "${grade}",
+  "subject": "${subject}",
+  "board": "${boardLabel}",
+  "timeAllowed": "${timeAllowed}",
+  "maxMarks": ${totalMarks},
+  "generalInstructions": [
+    "All questions are compulsory. (सभी प्रश्न अनिवार्य हैं।)",
+    "The question paper consists of designated sections from Section A to Section E.",
+    "Section A comprises Objective / Multiple Choice Questions (1 Mark each).",
+    "Internal choices have been provided in Section D and Section E questions.",
+    "Use of calculators or unauthorized electronic devices is strictly prohibited."
+  ],
+  "sections": [
+    {
+      "sectionName": "SECTION A",
+      "description": "Objective & Multiple Choice Questions (वस्तुनिष्ठ एवं बहुविकल्पीय प्रश्न)",
+      "marksPerQuestion": 1,
+      "questions": [
+        {
+          "questionNumber": 1,
+          "question": "Question text in English and Hindi",
+          "marks": 1,
+          "options": ["(A) Option 1", "(B) Option 2", "(C) Option 3", "(D) Option 4"]
+        }
+      ]
+    },
+    {
+      "sectionName": "SECTION B",
+      "description": "Very Short Answer Questions (अति लघु उत्तरीय प्रश्न)",
+      "marksPerQuestion": 2,
+      "questions": [
+        {
+          "questionNumber": 17,
+          "question": "Question text in English and Hindi",
+          "marks": 2
+        }
+      ]
+    },
+    {
+      "sectionName": "SECTION C",
+      "description": "Short Answer Questions (लघु उत्तरीय प्रश्न)",
+      "marksPerQuestion": 3,
+      "questions": [
+        {
+          "questionNumber": 22,
+          "question": "Question text in English and Hindi",
+          "marks": 3
+        }
+      ]
+    },
+    {
+      "sectionName": "SECTION D",
+      "description": "Long Answer Questions (दीर्घ उत्तरीय प्रश्न)",
+      "marksPerQuestion": 5,
+      "questions": [
+        {
+          "questionNumber": 27,
+          "question": "Primary question text in English and Hindi",
+          "marks": 5,
+          "hasInternalChoice": true,
+          "orQuestion": "Alternative question text in English and Hindi (अथवा प्रश्न)"
+        }
+      ]
+    },
+    {
+      "sectionName": "SECTION E",
+      "description": "Case Study & Competency Based Questions (केस स्टडी एवं योग्यता आधारित प्रश्न)",
+      "marksPerQuestion": 4,
+      "questions": [
+        {
+          "questionNumber": 31,
+          "question": "Case Study Context & Passage",
+          "caseStudyText": "A real-world practical application scenario or experimental observation...",
+          "marks": 4,
+          "subQuestions": [
+            { "number": "(i)", "question": "Sub-question 1 text", "marks": 1 },
+            { "number": "(ii)", "question": "Sub-question 2 text", "marks": 1 },
+            { "number": "(iii)", "question": "Sub-question 3 text", "marks": 2 }
+          ]
+        }
+      ]
+    }
+  ],
+  "markingScheme": [
+    {
+      "questionNumber": 1,
+      "answer": "(B) Correct option description and concise pedagogical justification",
+      "stepMarks": ["1 Mark for correct identification and formula representation"]
+    }
+  ],
+  "blueprint": [
+    {
+      "chapter": "Chapter Name",
+      "mcq": 4,
+      "vsa": 1,
+      "sa": 1,
+      "la": 1,
+      "caseBased": 1,
+      "totalMarks": 18
+    }
+  ]
+}
+
+Ensure all questions strictly pertain to the requested chapters: ${chapters.join(", ")}. Return ONLY the JSON object.`;
+
+  try {
+    const aiResult = await callGeminiForJson(prompt);
+    if (aiResult && aiResult.parsed && aiResult.parsed.sections && aiResult.parsed.sections.length > 0) {
+      return res.json({
+        success: true,
+        aiPowered: true,
+        model: aiResult.model,
+        paper: {
+          ...aiResult.parsed,
+          schoolName: aiResult.parsed.schoolName || schoolName,
+          grade: aiResult.parsed.grade || grade,
+          subject: aiResult.parsed.subject || subject,
+          maxMarks: aiResult.parsed.maxMarks || totalMarks,
+          timeAllowed: aiResult.parsed.timeAllowed || timeAllowed
+        }
+      });
+    }
+  } catch (err) {
+    console.error("[AI Paper] Generation error:", err.message);
+  }
+
+  // Graceful fallback question paper if Gemini is temporarily unavailable
+  const fallbackPaper = {
+    schoolName,
+    examTitle,
+    grade,
+    subject,
+    board: boardLabel,
+    timeAllowed,
+    maxMarks: totalMarks,
+    generalInstructions: [
+      "All questions are compulsory. (सभी प्रश्न अनिवार्य हैं।)",
+      "The question paper consists of designated sections: A, B, C, D and E.",
+      "Section A comprises Multiple Choice Questions (1 Mark each).",
+      "Section B comprises Very Short Answer Questions (2 Marks each).",
+      "Section C comprises Short Answer Questions (3 Marks each).",
+      "Section D comprises Long Answer Questions (5 Marks each, with internal choices).",
+      "Section E comprises Case-based questions (4 Marks each)."
+    ],
+    sections: [
+      {
+        sectionName: "SECTION A",
+        description: "Multiple Choice Questions (वस्तुनिष्ठ एवं बहुविकल्पीय प्रश्न)",
+        marksPerQuestion: 1,
+        questions: [
+          {
+            questionNumber: 1,
+            question: `Which fundamental principle governs the study of ${chapters[0] || subject}? / निम्नलिखित में से कौन सा मूलभूत सिद्धांत लागू होता है?`,
+            marks: 1,
+            options: ["(A) Conservation Principle", "(B) Proportional Equilibrium", "(C) Thermodynamic Law", "(D) Dynamic Symmetry"]
+          },
+          {
+            questionNumber: 2,
+            question: `In standard conditions, what is the observable effect in ${chapters[1] || chapters[0] || subject}? / मानक स्थितियों में क्या प्रेक्षण प्राप्त होता है?`,
+            marks: 1,
+            options: ["(A) Exothermic emission", "(B) Endothermic absorption", "(C) Neutral stability", "(D) Phase transition"]
+          }
+        ]
+      },
+      {
+        sectionName: "SECTION B",
+        description: "Very Short Answer Questions (अति लघु उत्तरीय प्रश्न)",
+        marksPerQuestion: 2,
+        questions: [
+          {
+            questionNumber: 17,
+            question: `State two critical applications or formulas related to ${chapters[0] || subject}. / दो प्रमुख अनुप्रयोग अथवा सूत्र स्पष्ट कीजिए।`,
+            marks: 2
+          }
+        ]
+      },
+      {
+        sectionName: "SECTION C",
+        description: "Short Answer Questions (लघु उत्तरीय प्रश्न)",
+        marksPerQuestion: 3,
+        questions: [
+          {
+            questionNumber: 22,
+            question: `Explain with a suitable diagram and step-by-step derivation: ${chapters[0] || subject}. / उपयुक्त आरेख एवं गणना द्वारा स्पष्ट कीजिए।`,
+            marks: 3
+          }
+        ]
+      },
+      {
+        sectionName: "SECTION D",
+        description: "Long Answer Questions (दीर्घ उत्तरीय प्रश्न)",
+        marksPerQuestion: 5,
+        questions: [
+          {
+            questionNumber: 27,
+            question: `Detailed analytical evaluation of ${chapters[1] || chapters[0] || subject}. / विस्तृत विश्लेषण एवं गणितीय समाधान प्रस्तुत कीजिए।`,
+            marks: 5,
+            hasInternalChoice: true,
+            orQuestion: `Alternative question: Discuss the core properties and experimental verification for ${chapters[0] || subject}. / अथवा: मूल गुणधर्म एवं प्रायोगिक सत्यापन समझाइए।`
+          }
+        ]
+      },
+      {
+        sectionName: "SECTION E",
+        description: "Case Study & Competency Questions (केस स्टडी एवं दक्षता प्रश्न)",
+        marksPerQuestion: 4,
+        questions: [
+          {
+            questionNumber: 31,
+            question: `Practical Investigation: ${chapters[0] || subject}`,
+            caseStudyText: `A group of students conducted a laboratory investigation to measure the parameters under controlled laboratory conditions...`,
+            marks: 4,
+            subQuestions: [
+              { number: "(i)", question: "Identify the independent and dependent variables in this setup. [1]", marks: 1 },
+              { number: "(ii)", question: "State one safety precaution required during the execution. [1]", marks: 1 },
+              { number: "(iii)", question: "Calculate the expected outcome based on standard formulas. [2]", marks: 2 }
+            ]
+          }
+        ]
+      }
+    ],
+    markingScheme: [
+      {
+        questionNumber: 1,
+        answer: "(A) Conservation Principle - Standard governing law",
+        stepMarks: ["1 Mark for correct option selection"]
+      },
+      {
+        questionNumber: 17,
+        answer: "Two core principles with proper justification",
+        stepMarks: ["1 Mark for each valid point with formula"]
+      }
+    ],
+    blueprint: (chapters.length > 0 ? chapters : [subject]).map((ch, idx) => ({
+      chapter: ch,
+      mcq: 4,
+      vsa: 1,
+      sa: 1,
+      la: 1,
+      caseBased: idx === 0 ? 1 : 0,
+      totalMarks: Math.round(totalMarks / Math.max(1, chapters.length))
+    }))
+  };
+
+  res.json({
+    success: true,
+    aiPowered: false,
+    message: "Question paper synthesized using standard curriculum schema",
+    paper: fallbackPaper
   });
 });
 

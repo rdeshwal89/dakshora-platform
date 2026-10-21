@@ -44,7 +44,10 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default("Dakshora ERP <no-reply@dakshora.co.in>"),
-  SMTP_SECURE: z.preprocess((val) => val === "true" || val === true, z.boolean()).default(false)
+  SMTP_SECURE: z.preprocess((val) => val === "true" || val === true, z.boolean()).default(false),
+
+  // Google Gemini AI
+  GEMINI_API_KEY: z.string().optional()
 }).superRefine((data, ctx) => {
   if (data.NODE_ENV === "production") {
     if (!data.RAZORPAY_KEY_ID) {
