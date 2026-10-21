@@ -389,7 +389,8 @@ function verifyDakshoraToken(token, secret = (process.env.SUPABASE_SERVICE_ROLE_
 
 // requireAuth middleware validates incoming Bearer JWT from Supabase Auth cryptographically
 async function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization || req.headers.Authorization;
+  const rawAuth = req.headers.authorization || req.headers.Authorization || req.headers["x-access-token"] || req.headers["x-authorization"] || (req.query?.token ? `Bearer ${req.query.token}` : null);
+  const authHeader = rawAuth && !rawAuth.startsWith("Bearer ") ? `Bearer ${rawAuth}` : rawAuth;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
@@ -401,6 +402,8 @@ async function requireAuth(req, res, next) {
   }
 
   const token = authHeader.split(" ")[1];
+  req.token = token;
+
 
   try {
     // Cryptographically verify token strictly with Supabase Auth
@@ -1949,8 +1952,9 @@ app.post("/api/auth/register", async (req, res) => {
 // 1. Enroll TOTP factor: POST /api/auth/mfa/enroll (Protected)
 app.post("/api/auth/mfa/enroll", requireAuth, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader.split(" ")[1];
+    const token = req.token || (req.headers.authorization?.split(" ")[1]);
+
+
     const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } }
@@ -2040,7 +2044,7 @@ app.post("/api/auth/mfa/verify", async (req, res) => {
 // 3. Get MFA Status: GET /api/auth/mfa/status (Protected)
 app.get("/api/auth/mfa/status", requireAuth, async (req, res) => {
   try {
-    const token = req.headers.authorization.split(" ")[1];
+    const token = req.token || (req.headers.authorization?.split(" ")[1]);
     const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } }
@@ -2065,7 +2069,7 @@ app.get("/api/auth/mfa/status", requireAuth, async (req, res) => {
 // 4. Disable / Unenroll TOTP: POST /api/auth/mfa/unenroll (Protected)
 app.post("/api/auth/mfa/unenroll", requireAuth, async (req, res) => {
   try {
-    const token = req.headers.authorization.split(" ")[1];
+    const token = req.token || (req.headers.authorization?.split(" ")[1]);
     const { factorId } = req.body;
 
     const userClient = createClient(supabaseUrl, process.env.SUPABASE_ANON_KEY || supabaseKey, {
