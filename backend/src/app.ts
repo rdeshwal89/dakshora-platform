@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import fastifyExpress from "@fastify/express";
+import compress from "@fastify/compress";
 import { requirePermission } from "./middleware/permission.js";
 import { organizationRoutes } from "./modules/organizations/routes.js";
 import { supabase } from "./lib/supabase.js";
@@ -17,6 +18,8 @@ export async function buildApp() {
   const app = Fastify({
     logger: true
   });
+
+  await app.register(compress, { global: true, encodings: ['gzip', 'deflate'] });
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
@@ -57,7 +60,7 @@ export async function buildApp() {
         cb(null, true);
         return;
       }
-      // Unknown origin — reject CORS. Custom school domains must be allowlisted
+      // Unknown origin â€” reject CORS. Custom school domains must be allowlisted
       // via the school's verified domain configuration in the platform.
       cb(new Error(`CORS: Origin '${origin}' is not permitted`), false);
     },
