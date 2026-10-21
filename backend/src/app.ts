@@ -70,6 +70,7 @@ export async function buildApp() {
       "Authorization",
       "x-organization-id",
       "x-org-id",
+      "x-tenant-id",
       "x-school-slug"
     ],
     methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]

@@ -5497,15 +5497,39 @@ app.get("/api/public/schools/:slug/mobile-app/download", async (req, res) => {
   });
 });
 
-// Helper to locate physical APK file on server
-function resolvePhysicalApkPath() {
-  const candidates = [
+// Helper to locate physical APK file on server with priority for school-specific signed APKs
+function resolvePhysicalApkPath(filename, slug) {
+  const candidates = [];
+  if (filename) {
+    candidates.push(
+      path.resolve(process.cwd(), "public/assets/mobile", filename),
+      path.resolve(process.cwd(), "../frontend/public/assets/mobile", filename),
+      path.resolve(__dirname, "../public/assets/mobile", filename),
+      path.resolve(__dirname, "../../frontend/public/assets/mobile", filename)
+    );
+  }
+  if (slug) {
+    const slugApk = `${slug}-parentapp-v2.0.0.apk`;
+    candidates.push(
+      path.resolve(process.cwd(), "public/assets/mobile", slugApk),
+      path.resolve(process.cwd(), "../frontend/public/assets/mobile", slugApk),
+      path.resolve(__dirname, "../public/assets/mobile", slugApk),
+      path.resolve(__dirname, "../../frontend/public/assets/mobile", slugApk)
+    );
+  }
+  // Fallbacks prioritized by signed status
+  candidates.push(
+    path.resolve(process.cwd(), "public/assets/mobile/nirmalhappyschool-parentapp-v2.0.0.apk"),
+    path.resolve(process.cwd(), "public/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk"),
+    path.resolve(process.cwd(), "../frontend/public/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk"),
+    path.resolve(process.cwd(), "public/assets/mobile/dakshora-erp-v2.0.0.apk"),
+    path.resolve(process.cwd(), "../frontend/public/assets/mobile/dakshora-erp-v2.0.0.apk"),
+    path.resolve(process.cwd(), "android-build/Dakshora ERP.apk"),
     path.resolve(process.cwd(), "android-build/Dakshora ERP-unsigned.apk"),
     path.resolve(process.cwd(), "../android-build/Dakshora ERP-unsigned.apk"),
-    path.resolve(process.cwd(), "android-build/Dakshora ERP.apk"),
     path.resolve(__dirname, "../../android-build/Dakshora ERP-unsigned.apk"),
     path.resolve(__dirname, "../android-build/Dakshora ERP-unsigned.apk")
-  ];
+  );
   return candidates.find(c => fs.existsSync(c)) || null;
 }
 
@@ -5515,7 +5539,8 @@ app.get([
   "/api/public/schools/:slug/mobile-app/apk",
   "/api/public/mobile-app/:id/download"
 ], (req, res) => {
-  const apkPath = resolvePhysicalApkPath();
+  const requestedFilename = req.params.filename || (req.params.slug ? `${req.params.slug}-parentapp-v2.0.0.apk` : "newidealpublicschool-parentapp-v2.0.0.apk");
+  const apkPath = resolvePhysicalApkPath(req.params.filename, req.params.slug);
   if (!apkPath) {
     return res.status(404).json({
       success: false,
@@ -5523,7 +5548,6 @@ app.get([
     });
   }
 
-  const requestedFilename = req.params.filename || (req.params.slug ? `${req.params.slug}-parentapp-v2.0.0.apk` : "newidealpublicschool-parentapp-v2.0.0.apk");
   res.setHeader("Content-Type", "application/vnd.android.package-archive");
   res.setHeader("Content-Disposition", `attachment; filename="${requestedFilename}"`);
   return res.sendFile(apkPath);
@@ -13063,7 +13087,7 @@ app.use("/api/erp", (req, res, next) => {
 
 // Helper to resolve tenant organization ID (Hardened against IDOR)
 function resolveTenantOrgId(req) {
-  const reqOrgId = req.headers["x-organization-id"] || req.headers["x-org-id"] || req.headers["x-support-organization-id"] || req.query?.organization_id || req.body?.organization_id;
+  const reqOrgId = req.headers["x-organization-id"] || req.headers["x-org-id"] || req.headers["x-tenant-id"] || req.headers["x-support-organization-id"] || req.query?.organization_id || req.body?.organization_id;
 
   // If authenticated as SuperAdmin, they may scope to a specific tenant
   if (req.user?.isSuperAdmin || req.user?.role === "superadmin") {
@@ -21531,6 +21555,9 @@ app.get("/api/erp/fees/students/:studentId/account", (req, res) => {
 app.post("/api/erp/fees/collect", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   let { demandId, studentId, amountPaid, paymentMode, referenceNumber, collectedBy, remarks } = req.body || {};
+  if (amountPaid === undefined && req.body?.amount !== undefined) {
+    amountPaid = req.body.amount;
+  }
 
   if (!demandId && studentId) {
     const foundDemand = ERP_FEE_DEMANDS.find(d => (d.organization_id === orgId) && (d.studentId === studentId || d.admissionNo === studentId));
