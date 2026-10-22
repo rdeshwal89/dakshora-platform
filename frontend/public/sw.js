@@ -1,6 +1,6 @@
 // DAKSHORA 2.0 Progressive Web App Service Worker
-// Version: 2.4.0-ward-portal-logout
-const CACHE_NAME = 'dakshora-cache-v2.4.0';
+// Version: 2.5.0-streamlined-pulse
+const CACHE_NAME = 'dakshora-cache-v2.5.0-pulse';
 const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',
