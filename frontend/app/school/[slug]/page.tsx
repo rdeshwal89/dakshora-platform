@@ -443,15 +443,15 @@ export default function SchoolPublicPage() {
   const [cmsTree, setCmsTree] = useState<any>(null);
 
   const [school, setSchool] = useState<SchoolInfo>({
-    id: "87be8580-89af-4d9c-952b-73a02a9eae82",
-    name: "New Ideal Public School",
-    slug: "new-ideal-public-school",
+    id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    name: "Dakshora Academy, New Delhi",
+    slug: "dakshora-academy",
     board: "CBSE",
-    city: "Mathura",
-    address: "Shankar Gali Dauli Pyau, Mathura, Uttar Pradesh - 281001",
-    contactPhone: "+91 8529575588",
-    contactEmail: "contact@newidealpublicschool.edu.in",
-    logoUrl: null,
+    city: "New Delhi",
+    address: "Institutional Area, Vasant Kunj, New Delhi - 110070",
+    contactPhone: "+91 11 2612 3456",
+    contactEmail: "principal@dakshoraacademy.edu.in",
+    logoUrl: "/assets/dakshora-logo.png",
     affiliationNumber: "CBSE-AFF-2130894",
   });
 
@@ -796,12 +796,20 @@ export default function SchoolPublicPage() {
             onClick={() => scrollTo("home")}
             className="flex items-center gap-3.5 cursor-pointer group"
           >
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-indigo-500/25 shrink-0 group-hover:scale-105 transition-transform">
-              {school.name.charAt(0)}
-            </div>
+            {school.logoUrl || cmsTree?.content?.schoolLogoUrl ? (
+              <img
+                src={school.logoUrl || cmsTree?.content?.schoolLogoUrl}
+                alt={school.name}
+                className="w-12 h-12 rounded-2xl object-contain bg-white p-1 border-2 border-slate-200 shadow-md shrink-0 group-hover:scale-105 transition-transform"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-indigo-500/25 shrink-0 group-hover:scale-105 transition-transform">
+                {school.name.charAt(0)}
+              </div>
+            )}
             <div>
               <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-tight group-hover:text-indigo-600 transition-colors">
-                {isHi ? "न्यू आइडियल पब्लिक स्कूल" : school.name}
+                {school.name}
               </h1>
               <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">
                 {isHi ? `सीबीएसई मान्यता प्राप्त • ${school.city} • आधिकारिक परिसर` : `${school.board} Affiliated • ${school.city} • Official Campus`}
