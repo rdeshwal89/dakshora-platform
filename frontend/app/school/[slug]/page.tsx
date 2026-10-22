@@ -1,3 +1,23 @@
+async function parseJsonRes(res: Response) {
+  try {
+    return await res.clone().json();
+  } catch {
+    if (typeof DecompressionStream !== "undefined") {
+      for (const enc of ["gzip", "deflate"]) {
+        try {
+          const ds = new DecompressionStream(enc as any);
+          const stream = res.clone().body?.pipeThrough(ds);
+          if (stream) {
+            const txt = await new Response(stream).text();
+            return JSON.parse(txt);
+          }
+        } catch {}
+      }
+    }
+    return null;
+  }
+}
+
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -571,7 +591,7 @@ export default function SchoolPublicPage() {
         }),
       });
 
-      const data = await res.json().catch(() => null);
+      const data = await parseJsonRes(res);
       if (res.ok && data?.success && (data?.token || data?.access_token) && data?.user) {
         const token = data.access_token || data.token;
         localStorage.setItem("dakshora_auth_token", token);
@@ -628,7 +648,7 @@ export default function SchoolPublicPage() {
         }),
       });
 
-      const data = await res.json().catch(() => null);
+      const data = await parseJsonRes(res);
       if (res.ok && data?.success && (data?.token || data?.access_token) && data?.user) {
         const token = data.access_token || data.token;
         localStorage.setItem("dakshora_auth_token", token);
@@ -674,7 +694,7 @@ export default function SchoolPublicPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: cleanPhone, channel }),
       });
-      const data = await res.json().catch(() => null);
+      const data = await parseJsonRes(res);
       if (res.ok && data?.success) {
         setOtpSent(true);
         const code = data.demoOtp || "784920";
@@ -710,7 +730,7 @@ export default function SchoolPublicPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: cleanPhone, otp: loginOtp.trim() }),
       });
-      const data = await res.json().catch(() => null);
+      const data = await parseJsonRes(res);
       if (res.ok && data?.success && data?.user) {
         const token = data.access_token || data.token;
         localStorage.setItem("dakshora_auth_token", token);

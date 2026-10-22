@@ -19,7 +19,7 @@ export async function buildApp() {
     logger: true
   });
 
-  await app.register(compress, { global: true, encodings: ['gzip', 'deflate'] });
+  // await app.register(compress, { global: true, encodings: ['gzip', 'deflate'] }); // Disabled to avoid double-compression with Cloudflare/Vercel
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
