@@ -3211,6 +3211,15 @@ export interface ErpPortalWardStudent {
   duesINR: number;
   parentName?: string;
   parentPhone?: string;
+  parentEmail?: string;
+  penNo?: string;
+  admissionDate?: string;
+  academicSession?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pinCode?: string;
+  classTeacher?: string;
 }
 
 export interface ErpPortalStudentProfile extends ErpStudentRecord {

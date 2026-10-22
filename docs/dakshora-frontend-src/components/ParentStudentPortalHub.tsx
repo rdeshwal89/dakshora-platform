@@ -228,6 +228,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
   const [selectedReportCard, setSelectedReportCard] = useState<ErpPortalReportCard | null>(null);
 
   const [showIdCardModal, setShowIdCardModal] = useState(false);
+  const [showStudentDetailModal, setShowStudentDetailModal] = useState(false);
 
   // AI Doubt Solver State
   const [doubtSubject, setDoubtSubject] = useState('Mathematics');
@@ -574,6 +575,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
           busStatus: transport?.currentStatus === 'on_route' ? 'En Route' : 'Scheduled'
         }}
         onOpenGatePass={() => setShowIdCardModal(true)}
+        onOpenStudentDetail={() => setShowStudentDetailModal(true)}
         onOpenSOS={() => {
           window.location.href = 'tel:+911126138999';
         }}
@@ -1931,19 +1933,46 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-5 mt-6">
-                <img
-                  src={profile?.avatarUrl || activeWard?.avatarUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200'}
-                  alt={profile?.name || activeWard?.name}
-                  className="w-24 h-28 rounded-2xl object-cover ring-2 ring-cyan-400 shadow-xl"
-                />
-                <div className="space-y-1 text-xs font-mono">
-                  <div className="text-base font-extrabold text-white">{profile?.name || activeWard?.name}</div>
-                  <div className="text-cyan-300 font-bold">Class: {profile?.grade || activeWard?.grade} - {profile?.section || activeWard?.section}</div>
-                  <div className="text-slate-300">Roll No: {profile?.rollNo || activeWard?.rollNo}</div>
-                  <div className="text-slate-300">Adm No: {profile?.admissionNo || activeWard?.admissionNo}</div>
-                  <div className="text-slate-300">Blood Group: <span className="font-bold text-rose-400">{profile?.bloodGroup || 'B+'}</span></div>
-                  <div className="text-slate-400 text-[10px]">DOB: {profile?.dob || '2011-04-12'}</div>
+              <div className="flex items-start sm:items-center gap-5 mt-6">
+                <div
+                  onClick={() => setShowStudentDetailModal(true)}
+                  className="relative group cursor-pointer shrink-0"
+                  title="Click student picture to view Full Student Details"
+                >
+                  <img
+                    src={profile?.avatarUrl || activeWard?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                    alt={profile?.name || activeWard?.name}
+                    className="w-24 h-32 rounded-2xl object-cover ring-2 ring-cyan-400 group-hover:ring-cyan-300 shadow-xl transition-all group-hover:scale-105"
+                  />
+                  <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-950/80 text-cyan-300 border border-cyan-500/40 flex items-center gap-1 group-hover:bg-cyan-500 group-hover:text-slate-950 transition-colors">
+                    <Eye className="w-2.5 h-2.5" />
+                    <span>View</span>
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-xs font-mono min-w-0">
+                  <div className="text-base font-black text-white">{profile?.name || activeWard?.name || 'Mira Pandey'}</div>
+                  <div className="text-cyan-300 font-bold">
+                    Class & Sec: {profile?.grade || activeWard?.grade || 'Class 10'} - {profile?.section || activeWard?.section || 'A'}
+                  </div>
+                  <div className="text-amber-300 font-bold">
+                    PEN No: <span className="font-mono text-white">{profile?.penNo || activeWard?.penNo || (profile as any)?.pen_no || '20260711080'}</span>
+                  </div>
+                  <div className="text-slate-200">
+                    Admission No: <span className="font-bold text-white">{profile?.admissionNo || activeWard?.admissionNo || (profile as any)?.admission_no || 'DKS-2026-080'}</span>
+                  </div>
+                  <div className="text-slate-300">
+                    Roll No: <span className="font-bold text-white">#{profile?.rollNo || activeWard?.rollNo || 'R-02'}</span>
+                  </div>
+                  <div className="text-slate-300">
+                    Blood Group: <span className="px-1.5 py-0.2 rounded font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">{profile?.bloodGroup || activeWard?.bloodGroup || (profile as any)?.blood_group || 'O+'}</span>
+                  </div>
+                  <div className="text-slate-300 text-[11px]">
+                    DOB: <span className="font-bold text-slate-200">{profile?.dob || activeWard?.dob || (profile as any)?.date_of_birth || '2010-09-15'}</span>
+                  </div>
+                  <div className="text-emerald-400 text-[10px] pt-0.5">
+                    Class Teacher: {profile?.classTeacher || activeWard?.classTeacher || 'Vikramaditya Singh (Class Teacher)'}
+                  </div>
                 </div>
               </div>
 
@@ -2635,7 +2664,285 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
       {/* ========================================================================= */}
       {/* 🪪 MODAL: DIGITAL ID CARD POPUP */}
-      {showIdCardModal && (
+      {/* ========================================================================= */}
+      {/* 👤 MODAL: FULL STUDENT RECORD & MASTER PROFILE */}
+      {/* ========================================================================= */}
+      {showStudentDetailModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/80 border-2 border-cyan-500/40 rounded-3xl max-w-4xl w-full p-5 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto font-mono scrollbar-thin">
+            {/* Top Close Button */}
+            <button
+              onClick={() => setShowStudentDetailModal(false)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-900/80 border border-slate-700/80 transition-all hover:scale-105 cursor-pointer z-10"
+              aria-label="Close Profile Modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* School Header */}
+            <div className="flex items-center gap-3.5 pb-5 border-b border-white/10">
+              <div className="w-12 h-12 rounded-2xl bg-white p-1 border border-slate-700 shadow-md flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src={schoolLogo}
+                  alt={activeSchoolName}
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    if (!target.src.includes('new-ideal-logo.svg')) {
+                      target.src = '/assets/schools/new-ideal-logo.svg';
+                    }
+                  }}
+                />
+              </div>
+              <div>
+                <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest block font-bold">
+                  CBSE INSTITUTIONAL RECORD • SESSION {profile?.academicSession || '2026–27'}
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-white">{activeSchoolName}</h3>
+                <p className="text-[11px] text-slate-400 font-mono">
+                  Affiliation No: <strong className="text-slate-200">{profile?.schoolAffiliation?.affiliationNo || activeAffiliationNo}</strong> • School Code: <strong className="text-slate-200">{profile?.schoolAffiliation?.schoolCode || activeSchoolCode}</strong> • Board: <strong className="text-cyan-300">CBSE</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Student Top Identity Banner */}
+            <div className="mt-6 p-4 sm:p-5 rounded-2xl bg-slate-950/80 border border-cyan-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="relative shrink-0">
+                  <img
+                    src={profile?.avatarUrl || activeWard?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                    alt={profile?.name || activeWard?.name}
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover ring-2 ring-cyan-400 shadow-lg"
+                  />
+                  <span className="absolute -bottom-1 -right-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500 text-slate-950 ring-2 ring-slate-950">
+                    Active ✓
+                  </span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg sm:text-2xl font-black text-white">
+                      {profile?.name || activeWard?.name || 'Mira Pandey'}
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      CBSE Verified
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono mt-1">
+                    Class: <strong className="text-cyan-300">{profile?.grade || activeWard?.grade || 'Class 10'}-{profile?.section || activeWard?.section || 'A'}</strong> • Roll Number: <strong className="text-purple-300">#{profile?.rollNo || activeWard?.rollNo || 'R-02'}</strong>
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Assigned Class Teacher: <strong className="text-amber-300">{profile?.classTeacher || activeWard?.classTeacher || 'Vikramaditya Singh (Class Teacher)'}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Dossier</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Multi-Column Information Cards */}
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+              {/* CARD 1: Official Academic & Enrollment Credentials */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-2.5">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <Award className="w-4 h-4 text-cyan-400" />
+                  <h4 className="font-bold text-white uppercase text-[11px] tracking-wide">
+                    1. Academic & Enrollment Credentials
+                  </h4>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Permanent Education No (PEN):</span>
+                  <span className="font-bold text-cyan-300 text-sm bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">
+                    {profile?.penNo || activeWard?.penNo || (profile as any)?.pen_no || '20260711080'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Admission Number:</span>
+                  <span className="font-bold text-white bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                    {profile?.admissionNo || activeWard?.admissionNo || (profile as any)?.admission_no || 'DKS-2026-080'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Admission Date:</span>
+                  <span className="text-slate-200">{profile?.admissionDate || activeWard?.admissionDate || '2026-04-01'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Current Academic Session:</span>
+                  <span className="text-slate-200">{profile?.academicSession || activeWard?.academicSession || '2026-27'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Curriculum / Board:</span>
+                  <span className="text-emerald-400 font-bold">CBSE New Delhi (NCERT NEP-2020)</span>
+                </div>
+              </div>
+
+              {/* CARD 2: Personal & Biometric Details */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-2.5">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <h4 className="font-bold text-white uppercase text-[11px] tracking-wide">
+                    2. Personal & Biometric Profile
+                  </h4>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Date of Birth (DOB):</span>
+                  <span className="font-bold text-white">
+                    {profile?.dob || activeWard?.dob || (profile as any)?.date_of_birth || '2010-09-15'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Blood Group:</span>
+                  <span className="font-bold text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/30">
+                    {profile?.bloodGroup || activeWard?.bloodGroup || (profile as any)?.blood_group || 'O+'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Gender:</span>
+                  <span className="text-slate-200 capitalize">{profile?.gender || activeWard?.gender || 'Female'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Nationality & Medium:</span>
+                  <span className="text-slate-200">Indian • English Medium</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Aadhaar Verification:</span>
+                  <span className="text-emerald-400 font-bold">Verified ✓ (UIDAI Vault Linked)</span>
+                </div>
+              </div>
+
+              {/* CARD 3: Parent & Family Contact Information */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-2.5">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <Phone className="w-4 h-4 text-amber-400" />
+                  <h4 className="font-bold text-white uppercase text-[11px] tracking-wide">
+                    3. Parent & Emergency Contact
+                  </h4>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Father / Primary Guardian:</span>
+                  <span className="font-bold text-white">{profile?.parentName || activeWard?.parentName || 'Pandey Parent'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Relationship:</span>
+                  <span className="text-slate-200">{profile?.parentRelation || 'Parent / Guardian'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Contact Number:</span>
+                  <a href={`tel:${profile?.parentPhone || activeWard?.parentPhone || '981000080'}`} className="font-bold text-cyan-400 hover:underline">
+                    {profile?.parentPhone || activeWard?.parentPhone || '+91 98100 00080'}
+                  </a>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Registered Email:</span>
+                  <a href={`mailto:${profile?.parentEmail || activeWard?.parentEmail || 'student.dks-2026-080@dakshoraacademy.edu.in'}`} className="text-slate-300 hover:text-white truncate max-w-[200px]">
+                    {profile?.parentEmail || activeWard?.parentEmail || 'student.dks-2026-080@dakshoraacademy.edu.in'}
+                  </a>
+                </div>
+
+                <div className="pt-1 text-[11px] text-slate-300">
+                  <span className="text-slate-400 block">Residential Address:</span>
+                  <span>{profile?.address || activeWard?.address || 'B-4 Vasant Kunj, New Delhi - 110070'}</span>
+                </div>
+              </div>
+
+              {/* CARD 4: Institutional Logistics, Transport & Dues */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-2.5">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <h4 className="font-bold text-white uppercase text-[11px] tracking-wide">
+                    4. Institutional Services & Dues
+                  </h4>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Attendance Percentage:</span>
+                  <span className="font-bold text-emerald-400">{profile?.attendancePercent || activeWard?.attendancePercent || 94.5}% (Optimal)</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">School Fee Status:</span>
+                  <span className="font-bold text-emerald-400">
+                    {((profile?.duesINR ?? activeWard?.duesINR ?? 0) > 0) ? `₹${(profile?.duesINR ?? activeWard?.duesINR ?? 0).toLocaleString('en-IN')} Outstanding` : 'All Dues Cleared ✓'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Assigned Bus Route:</span>
+                  <span className="text-cyan-300 font-bold">{profile?.transportRouteNumber || 'BUS-04'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Route Description:</span>
+                  <span className="text-slate-200 truncate max-w-[180px]">{profile?.transportRouteName || 'Golf Course Road to Campus Super Express'}</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Campus Emergency SOS:</span>
+                  <span className="text-rose-400 font-bold">+91 11 2613 8999</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Modal Actions */}
+            <div className="mt-6 pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-white p-1 rounded-xl flex items-center justify-center shrink-0">
+                  <QrCode className="w-10 h-10 text-slate-950" />
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  <div>Turnstile Gate QR Verified</div>
+                  <div className="text-slate-500 truncate max-w-xs">{profile?.qrPayload || `DAKSHORA:STUDENT:${activeWard?.id || '2026-080'}`}</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowStudentDetailModal(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition-colors"
+                >
+                  {isHindi ? 'वापस जाएँ / बंद करें' : 'Close / Back'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowStudentDetailModal(false);
+                    setShowIdCardModal(true);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-cyan-500/25 cursor-pointer transition-all hover:scale-105"
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>Open ID Badge</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {showIdCardModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-gradient-to-tr from-slate-950 via-indigo-950 to-slate-900 border-2 border-cyan-500/40 rounded-3xl max-w-md w-full p-6 shadow-2xl relative">
             <button
@@ -2654,19 +2961,49 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-5 mt-6">
-              <img
-                src={profile?.avatarUrl || activeWard?.avatarUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200'}
-                alt={profile?.name || activeWard?.name}
-                className="w-24 h-28 rounded-2xl object-cover ring-2 ring-cyan-400 shadow-xl"
-              />
-              <div className="space-y-1 text-xs font-mono">
-                <div className="text-base font-extrabold text-white">{profile?.name || activeWard?.name}</div>
-                <div className="text-cyan-300 font-bold">{isHindi ? 'कक्षा:' : 'Class:'} {profile?.grade || activeWard?.grade} - {profile?.section || activeWard?.section}</div>
-                <div className="text-slate-300">{isHindi ? 'रोल नंबर:' : 'Roll No:'} {profile?.rollNo || activeWard?.rollNo}</div>
-                <div className="text-slate-300">{isHindi ? 'प्रवेश सं.:' : 'Adm No:'} {profile?.admissionNo || activeWard?.admissionNo}</div>
-                <div className="text-slate-300">{isHindi ? 'रक्त समूह:' : 'Blood Group:'} <span className="font-bold text-rose-400">{profile?.bloodGroup || 'B+'}</span></div>
-                <div className="text-slate-400 text-[10px]">{isHindi ? 'जन्म तिथि:' : 'DOB:'} {profile?.dob || '2011-04-12'}</div>
+            <div className="flex items-start sm:items-center gap-5 mt-6">
+              <div
+                onClick={() => {
+                  setShowIdCardModal(false);
+                  setShowStudentDetailModal(true);
+                }}
+                className="relative group cursor-pointer shrink-0"
+                title="Click student picture to view Full Student Details"
+              >
+                <img
+                  src={profile?.avatarUrl || activeWard?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                  alt={profile?.name || activeWard?.name}
+                  className="w-24 h-32 rounded-2xl object-cover ring-2 ring-cyan-400 group-hover:ring-cyan-300 shadow-xl transition-all group-hover:scale-105"
+                />
+                <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-950/80 text-cyan-300 border border-cyan-500/40 flex items-center gap-1 group-hover:bg-cyan-500 group-hover:text-slate-950 transition-colors">
+                  <Eye className="w-2.5 h-2.5" />
+                  <span>View</span>
+                </span>
+              </div>
+
+              <div className="space-y-1 text-xs font-mono min-w-0">
+                <div className="text-base font-black text-white">{profile?.name || activeWard?.name || 'Mira Pandey'}</div>
+                <div className="text-cyan-300 font-bold">
+                  {isHindi ? 'कक्षा:' : 'Class:'} {profile?.grade || activeWard?.grade || 'Class 10'} - {profile?.section || activeWard?.section || 'A'}
+                </div>
+                <div className="text-amber-300 font-bold">
+                  PEN No: <span className="font-mono text-white">{profile?.penNo || activeWard?.penNo || (profile as any)?.pen_no || '20260711080'}</span>
+                </div>
+                <div className="text-slate-200">
+                  {isHindi ? 'प्रवेश सं.:' : 'Adm No:'} <span className="font-bold text-white">{profile?.admissionNo || activeWard?.admissionNo || (profile as any)?.admission_no || 'DKS-2026-080'}</span>
+                </div>
+                <div className="text-slate-300">
+                  {isHindi ? 'रोल नंबर:' : 'Roll No:'} <span className="font-bold text-white">#{profile?.rollNo || activeWard?.rollNo || 'R-02'}</span>
+                </div>
+                <div className="text-slate-300">
+                  {isHindi ? 'रक्त समूह:' : 'Blood Group:'} <span className="px-1.5 py-0.2 rounded font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">{profile?.bloodGroup || activeWard?.bloodGroup || (profile as any)?.blood_group || 'O+'}</span>
+                </div>
+                <div className="text-slate-300 text-[11px]">
+                  {isHindi ? 'जन्म तिथि:' : 'DOB:'} <span className="font-bold text-slate-200">{profile?.dob || activeWard?.dob || (profile as any)?.date_of_birth || '2010-09-15'}</span>
+                </div>
+                <div className="text-emerald-400 text-[10px] pt-0.5">
+                  Class Teacher: {profile?.classTeacher || activeWard?.classTeacher || 'Vikramaditya Singh (Class Teacher)'}
+                </div>
               </div>
             </div>
 

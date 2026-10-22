@@ -86,6 +86,7 @@ interface WardPortalSidebarProps {
   onOpenSOS?: () => void;
   onNavigateSurface?: (surface: string) => void;
   onLogout?: () => void;
+  onOpenStudentDetail?: () => void;
 }
 
 export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
@@ -109,7 +110,8 @@ export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
   onOpenGatePass,
   onOpenSOS,
   onNavigateSurface,
-  onLogout
+  onLogout,
+  onOpenStudentDetail
 }) => {
   const { t, isHindi, isBilingual } = useTranslation();
   const [showWardDropdown, setShowWardDropdown] = useState(false);
@@ -376,7 +378,7 @@ export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
 
           {/* Ward Avatar button */}
           <button
-            onClick={() => handleItemClick('id_badge')}
+            onClick={onOpenStudentDetail || (() => handleItemClick('id_badge'))}
             className="relative p-0.5 rounded-full ring-2 ring-cyan-500/40 cursor-pointer"
             title="Digital Student ID Card"
           >
@@ -448,16 +450,26 @@ export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center gap-3">
-                <img
-                  src={activeWard.avatarUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100'}
-                  alt={activeWard.name}
-                  className="w-12 h-12 rounded-2xl object-cover ring-2 ring-cyan-500/40 shadow-md"
-                />
+              <div 
+                onClick={onOpenStudentDetail || onOpenGatePass}
+                className="flex items-center gap-3 cursor-pointer group"
+                title="Click to view Full Student Details"
+              >
+                <div className="relative shrink-0">
+                  <img
+                    src={activeWard.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                    alt={activeWard.name}
+                    className="w-12 h-12 rounded-2xl object-cover ring-2 ring-cyan-500/40 group-hover:ring-cyan-300 shadow-md transition-all group-hover:scale-105"
+                  />
+                  <span className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-slate-950" />
+                </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-sm font-extrabold text-white truncate">{activeWard.name}</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-extrabold text-white group-hover:text-cyan-300 transition-colors truncate">{activeWard.name}</h4>
+                    <span className="text-[9px] font-mono text-cyan-400">View ↗</span>
+                  </div>
                   <p className="text-xs text-slate-300 font-mono mt-0.5">
-                    {activeWard.grade || 'Class 10'}-{activeWard.section || 'A'}
+                    {activeWard.grade || 'Class 10'}-{activeWard.section || 'A'} • Roll #{activeWard.rollNo || 'R-02'}
                   </p>
                 </div>
               </div>
@@ -656,18 +668,34 @@ export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
         {!isDesktopCollapsed ? (
           <div className="p-3 mx-3 mt-3 rounded-2xl bg-gradient-to-r from-blue-950/40 via-indigo-950/30 to-slate-950 border border-slate-800/90 shadow-inner">
             <div className="flex items-center gap-3">
-              <img
-                src={activeWard.avatarUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100'}
-                alt={activeWard.name}
-                className="w-10 h-10 rounded-xl object-cover ring-2 ring-cyan-500/40 shadow-sm shrink-0"
-              />
-              <div className="flex-1 min-w-0">
+              <button
+                type="button"
+                onClick={onOpenStudentDetail || onOpenGatePass}
+                className="relative rounded-xl ring-2 ring-cyan-500/40 hover:ring-cyan-300 hover:scale-105 transition-all cursor-pointer group shrink-0"
+                title="Click student picture to view Full Student Details"
+              >
+                <img
+                  src={activeWard.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                  alt={activeWard.name}
+                  className="w-10 h-10 rounded-xl object-cover"
+                />
+                <span className="absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-950" />
+              </button>
+              <div 
+                onClick={onOpenStudentDetail || onOpenGatePass}
+                className="flex-1 min-w-0 cursor-pointer group select-none"
+                title="Click to view Full Student Master Record & Details"
+              >
                 <div className="flex items-center justify-between gap-1">
-                  <h4 className="text-xs font-black text-white truncate">{activeWard.name}</h4>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" title="Active Ward Session" />
+                  <h4 className="text-xs font-black text-white group-hover:text-cyan-300 transition-colors truncate">
+                    {activeWard.name}
+                  </h4>
+                  <span className="text-[9px] font-mono font-bold text-cyan-400 opacity-80 group-hover:opacity-100 transition-opacity">
+                    View ↗
+                  </span>
                 </div>
                 <div className="text-[10px] text-slate-300 font-mono mt-0.5">
-                  {activeWard.grade || 'Class 10'}-{activeWard.section || 'A'} • Roll #{activeWard.rollNo || 14}
+                  {activeWard.grade || 'Class 10'}-{activeWard.section || 'A'} • Roll #{activeWard.rollNo || 'R-02'}
                 </div>
               </div>
             </div>
@@ -697,7 +725,7 @@ export const WardPortalSidebar: React.FC<WardPortalSidebarProps> = ({
         ) : (
           <div className="p-2 mx-auto mt-3">
             <button
-              onClick={() => setIsDesktopCollapsed(false)}
+              onClick={onOpenStudentDetail || (() => setIsDesktopCollapsed(false))}
               className="relative p-0.5 rounded-xl ring-2 ring-cyan-500/40 cursor-pointer block"
               title={`${activeWard.name} (${activeWard.grade}-${activeWard.section})`}
             >
