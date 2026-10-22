@@ -40899,7 +40899,7 @@ app.delete("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
 // 9. GET /api/erp/me/responsibilities - Current Teacher's Active & Historical Incharges
 app.get("/api/erp/me/responsibilities", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "No staff identity found for active user." });
   }
@@ -40921,7 +40921,7 @@ app.get("/api/erp/me/responsibilities", (req, res) => {
 // 10. GET /api/erp/me/effective-permissions - Computed Effective Scoped Permissions
 app.get("/api/erp/me/effective-permissions", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "No staff identity found for active user." });
   }
@@ -40942,7 +40942,7 @@ app.get("/api/erp/me/effective-permissions", (req, res) => {
 // 11. GET /api/erp/me/access-scopes - Fast Scope Lookup for Navigation & UI
 app.get("/api/erp/me/access-scopes", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "No staff identity found for active user." });
   }
@@ -40958,7 +40958,7 @@ app.get("/api/erp/me/access-scopes", (req, res) => {
 // GET /api/erp/teacher/students - Returns ONLY students in authorized classes/sections
 app.get("/api/erp/teacher/students", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
@@ -40999,7 +40999,7 @@ app.get("/api/erp/teacher/students", (req, res) => {
 // GET /api/erp/teacher/attendance - Scoped Attendance View
 app.get("/api/erp/teacher/attendance", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
@@ -41032,7 +41032,7 @@ app.get("/api/erp/teacher/attendance", (req, res) => {
 // GET /api/erp/teacher/exams - Scoped Exams View
 app.get("/api/erp/teacher/exams", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
@@ -41062,7 +41062,7 @@ app.get("/api/erp/teacher/exams", (req, res) => {
 // GET /api/erp/teacher/workload - Dynamic Teacher Workload Summary
 app.get("/api/erp/teacher/workload", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
@@ -41164,7 +41164,7 @@ app.get("/api/erp/teacher/workload", (req, res) => {
 // Alias route: /api/erp/teacher/workload-summary
 app.get("/api/erp/teacher/workload-summary", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => s.id === "stf-ajay");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
