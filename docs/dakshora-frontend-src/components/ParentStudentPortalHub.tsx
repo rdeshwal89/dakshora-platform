@@ -41,7 +41,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Menu,
-  LogOut
+  LogOut,
+  ArrowLeft
 } from 'lucide-react';
 import {
   ErpPortalWardStudent,
@@ -618,8 +619,8 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 className="w-6 h-6 rounded-full object-cover ring-1 ring-cyan-400"
               />
               <div className="text-left font-mono">
-                <span className="text-xs font-bold text-white block leading-tight">{activeWard?.name || 'Aarav Sharma'}</span>
-                <span className="text-[10px] text-slate-400">{activeWard?.grade || 'Class 10'}-{activeWard?.section || 'A'} • {t('portal.roll_no', 'Roll #')}{activeWard?.rollNo || 14}</span>
+                <span className="text-xs font-bold text-white block leading-tight">{activeWard?.name || wards[0]?.name || 'Advik Chaudhary'}</span>
+                <span className="text-[10px] text-slate-400">{activeWard?.grade || wards[0]?.grade || 'Class 10'}-{activeWard?.section || wards[0]?.section || 'A'} • {t('portal.roll_no', 'Roll #')}{activeWard?.rollNo || wards[0]?.rollNo || 1}</span>
               </div>
             </div>
 
@@ -1097,6 +1098,26 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
               </div>
             </div>
           )}
+
+      {/* 🔙 UNIVERSAL STICKY SUB-NAV: BACK TO DAILY PULSE BUTTON */}
+      {activeTab !== 'pulse' && (
+        <div className="bg-slate-900/90 border border-slate-800 p-3 sm:p-4 rounded-2xl flex items-center justify-between gap-3 shadow-lg">
+          <button
+            type="button"
+            onClick={() => setActiveTab('pulse')}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-black text-xs font-mono transition-all flex items-center gap-2 cursor-pointer shadow-md shadow-cyan-500/20 shrink-0"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>{isHindi ? '← वापस डेली पल्स डैशबोर्ड' : '← Back to Daily Pulse'}</span>
+          </button>
+
+          <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+            <span className="hidden sm:inline font-bold text-slate-300">{activeWard?.name}</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="text-cyan-400 font-bold uppercase">{activeTab.replace('_', ' ')}</span>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 📅 TAB 2: ATTENDANCE & LEAVES */}
@@ -2337,14 +2358,23 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 </div>
               </div>
 
-              <button
-                onClick={handlePayFee}
-                disabled={payingFee}
-                className="w-full mt-2 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-extrabold text-sm transition-all shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {payingFee ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
-                <span>{t('portal.modal_pay_submit', 'Authorize Simulated Settlement')}</span>
-              </button>
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPayModal(false)}
+                  className="w-1/3 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer text-center"
+                >
+                  {isHindi ? 'रद्द करें / वापस जाएँ' : 'Cancel / Back'}
+                </button>
+                <button
+                  onClick={handlePayFee}
+                  disabled={payingFee}
+                  className="w-2/3 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-extrabold text-sm transition-all shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {payingFee ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
+                  <span>{t('portal.modal_pay_submit', 'Authorize Simulated Settlement')}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2393,7 +2423,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   onClick={() => setShowHomeworkModal(false)}
                   className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
                 >
-                  {isHindi ? 'रद्द करें' : 'Cancel'}
+                  {isHindi ? 'रद्द करें / वापस जाएँ' : 'Cancel / Back'}
                 </button>
                 <button
                   type="submit"
@@ -2405,6 +2435,90 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 📜 MODAL: CBSE MARKSHEET & REPORT CARD POPUP */}
+      {/* ========================================================================= */}
+      {showReportCardModal && selectedReportCard && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-3xl max-w-2xl w-full p-6 sm:p-7 shadow-2xl relative font-mono text-xs">
+            <button
+              onClick={() => setShowReportCardModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center pb-4 border-b border-purple-500/30">
+              <span className="text-[10px] font-mono text-purple-400 uppercase tracking-wider font-bold">
+                CENTRAL BOARD OF SECONDARY EDUCATION
+              </span>
+              <h3 className="text-lg font-black text-white mt-1">
+                {selectedReportCard.title || 'CBSE Term Assessment Report Card'}
+              </h3>
+              <p className="text-slate-400 text-xs mt-0.5">
+                Session 2026–27 • {activeWard?.name} • Class {activeWard?.grade}-{activeWard?.section} (Roll #{activeWard?.rollNo})
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 my-4">
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                <div className="text-slate-400 text-[10px]">CGPA</div>
+                <div className="text-xl font-black text-white mt-0.5">{selectedReportCard.summary?.cumulativeGpa || 9.6} / 10</div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                <div className="text-slate-400 text-[10px]">AGGREGATE</div>
+                <div className="text-xl font-black text-emerald-400 mt-0.5">{selectedReportCard.summary?.aggregatePercentage || 92.2}%</div>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                <div className="text-slate-400 text-[10px]">CLASS RANK</div>
+                <div className="text-xl font-black text-cyan-400 mt-0.5">#{selectedReportCard.summary?.classRank || 1}</div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto my-4 max-h-60 overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase text-[10px]">
+                  <tr>
+                    <th className="p-2.5">Subject</th>
+                    <th className="p-2.5 text-center">Max</th>
+                    <th className="p-2.5 text-center">Marks</th>
+                    <th className="p-2.5 text-center">Grade</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {(selectedReportCard.subjects || []).map((sb: any, idx: number) => (
+                    <tr key={idx}>
+                      <td className="p-2.5 font-bold text-white">{sb.subject}</td>
+                      <td className="p-2.5 text-center text-slate-400">{sb.maxMarks}</td>
+                      <td className="p-2.5 text-center font-bold text-emerald-400">{sb.obtainedMarks}</td>
+                      <td className="p-2.5 text-center text-cyan-300 font-bold">{sb.cbseGrade || sb.grade}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-purple-500/20">
+              <button
+                type="button"
+                onClick={() => setShowReportCardModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer"
+              >
+                {isHindi ? 'वापस जाएँ' : 'Close / Back'}
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Official Marksheet</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2423,10 +2537,10 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
             <div className="text-center pb-4 border-b border-white/10">
               <h4 className="text-base font-black text-white uppercase tracking-wider">
-                {profile?.schoolAffiliation?.schoolName || dynamicSchoolBrand.schoolName || 'New Ideal Public School'}
+                {profile?.schoolAffiliation?.schoolName || dynamicSchoolBrand.schoolName || 'Dakshora Academy, New Delhi'}
               </h4>
               <p className="text-[10px] font-mono text-cyan-300 mt-0.5">
-                Affiliation #{profile?.schoolAffiliation?.affiliationNo || dynamicSchoolBrand.affiliationNo || 'CBSE-AFF-2130894'} • Code: {profile?.schoolAffiliation?.schoolCode || dynamicSchoolBrand.schoolCode || '2026100001'}
+                Affiliation #{profile?.schoolAffiliation?.affiliationNo || dynamicSchoolBrand.affiliationNo || 'CBSE-AFF-202601'} • Code: {profile?.schoolAffiliation?.schoolCode || dynamicSchoolBrand.schoolCode || 'DKS-DEL-01'}
               </p>
             </div>
 
@@ -2448,8 +2562,8 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
             <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between">
               <div className="space-y-0.5 text-[10px] font-mono text-slate-400">
-                <div>{isHindi ? 'अभिभावक:' : 'Parent:'} {profile?.parentName || 'Vikram Sharma'}</div>
-                <div>{isHindi ? 'आपातकालीन:' : 'Emergency:'} {profile?.parentPhone || dynamicSchoolBrand.contactPhone || '+91 98765 43210'}</div>
+                <div>{isHindi ? 'अभिभावक:' : 'Parent:'} {profile?.parentName || 'Pandey Parent'}</div>
+                <div>{isHindi ? 'आपातकालीन:' : 'Emergency:'} {profile?.parentPhone || dynamicSchoolBrand.contactPhone || '+91 98100 00080'}</div>
                 <div>{isHindi ? 'सत्र:' : 'Session:'} 2026–27</div>
               </div>
 
@@ -2458,7 +2572,14 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowIdCardModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer"
+              >
+                {isHindi ? 'बंद करें / वापस जाएँ' : 'Close / Back'}
+              </button>
               <button
                 onClick={() => window.print()}
                 className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-cyan-500/25 cursor-pointer"

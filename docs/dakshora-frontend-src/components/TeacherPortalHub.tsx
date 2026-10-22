@@ -195,16 +195,51 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         });
         const data = await res.json();
         if (data.students && Array.isArray(data.students) && data.students.length > 0) {
+          // Dynamic calculation of unmarked classes from real database students
+          const wingForGrade = (grade: string) => {
+            const g = grade.toLowerCase();
+            if (g.includes('nursery') || g.includes('lkg') || g.includes('ukg')) return 'Pre-Primary';
+            if (g.includes('class 1') || g.includes('class 2') || g.includes('class 3') || g.includes('class 4') || g.includes('class 5')) return 'Primary';
+            if (g.includes('class 6') || g.includes('class 7') || g.includes('class 8')) return 'Middle';
+            if (g.includes('class 9') || g.includes('class 10')) return 'Secondary';
+            return 'Sr. Secondary';
+          };
+
+          const classCountMap: Record<string, { count: number; wing: string }> = {};
+          data.students.forEach((s: any) => {
+            const gradeName = s.grade || s.currentGrade || 'Class 10';
+            const sec = s.section || s.currentSection || 'A';
+            const key = gradeName.includes(sec) ? gradeName : `${gradeName}-${sec}`;
+            if (!classCountMap[key]) {
+              classCountMap[key] = { count: 0, wing: wingForGrade(gradeName) };
+            }
+            classCountMap[key].count += 1;
+          });
+
+          const dynamicClasses = Object.entries(classCountMap).map(([grade, val]) => ({
+            grade,
+            count: val.count,
+            total: val.count,
+            wing: val.wing
+          }));
+
+          if (dynamicClasses.length > 0) {
+            setUnmarkedClasses(dynamicClasses);
+          }
+
+          // Filter for selectedClassForMarking
           const rawClass = selectedClassForMarking.toLowerCase().replace(/[^a-z0-9]/g, '');
           const filtered = data.students.filter((s: any) => {
-            const combined = `${s.grade || s.currentGrade || ''} ${s.section || s.currentSection || ''}`.toLowerCase().replace(/[^a-z0-9]/g, '');
-            return combined.includes(rawClass) || rawClass.includes(combined) || combined.includes('class10a');
+            const combined = `${s.grade || s.currentGrade || ''}${s.section || s.currentSection || ''}`.toLowerCase().replace(/[^a-z0-9]/g, '');
+            return combined.includes(rawClass) || rawClass.includes(combined) || (rawClass.includes('10') && combined.includes('10'));
           });
+
           if (filtered.length > 0) {
             setClassRoster(filtered.map((s: any, idx: number) => ({
               id: s.id || `std-${idx + 1}`,
               rollNo: s.rollNo ? parseInt(s.rollNo.replace(/\D/g, ''), 10) || (idx + 1) : (idx + 1),
               name: s.name || `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim() || 'Student',
+              admissionNo: s.admissionNo || s.admission_number || `DKS-2026-${String(idx + 1).padStart(3, '0')}`,
               status: idx === 4 ? 'absent' : idx === 3 ? 'late' : 'present'
             })));
           }
@@ -412,6 +447,39 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
             </button>
           </div>
         </header>
+
+        {/* ========================================================================= */}
+        {/* 🔙 UNIVERSAL STICKY SUB-NAV BANNER (WHEN IN ANY SUB-VIEW BESIDES DAILY PULSE) */}
+        {/* ========================================================================= */}
+        {activeTab !== 'pulse' && (
+          <div className="sticky top-14 z-20 bg-slate-950/95 backdrop-blur-md border-b border-purple-500/30 px-4 sm:px-6 py-2.5 flex items-center justify-between shadow-lg">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveTab('pulse')}
+                className="px-3.5 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 hover:text-white border border-purple-500/40 text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                title="Return to Daily Pulse Overview"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>← Back to Daily Pulse</span>
+              </button>
+              <span className="hidden sm:inline-block text-xs font-mono text-slate-400">
+                Workspace: <strong className="text-purple-300 uppercase">{activeTab.replace('_', ' ')}</strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('pulse')}
+                className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-mono flex items-center gap-1 cursor-pointer transition-colors"
+                title="Close and return to overview"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Close</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ========================================================================= */}
         {/* TAB 1: DAILY PULSE (OVERVIEW & RESPONSIVE GRID CARDS) */}
@@ -915,6 +983,14 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
                   onClick={handleMarkAllPresent}
                   className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer"
                 >
@@ -954,7 +1030,7 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
 
             {/* Student Roster List */}
             <div className="bg-slate-900/80 rounded-3xl border border-slate-800 overflow-hidden divide-y divide-slate-800/80 font-mono">
-              {classRoster.map((st) => (
+              {classRoster.map((st: any) => (
                 <div
                   key={st.id}
                   onClick={() => handleToggleAttendance(st.id)}
@@ -966,7 +1042,7 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                     </span>
                     <div>
                       <div className="text-sm font-bold text-white">{st.name}</div>
-                      <div className="text-[11px] text-slate-400">Adm: NIPS-2026-0{st.rollNo}</div>
+                      <div className="text-[11px] text-slate-400">Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}</div>
                     </div>
                   </div>
 
@@ -1001,13 +1077,23 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Daily Classes & Monthly Attendance Register
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('info', 'Exporting PDF', 'Generating monthly attendance register for Academic Office')}
-                className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
-              >
-                Export PDF Summary
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('info', 'Exporting PDF', 'Generating monthly attendance register for Academic Office')}
+                  className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+                >
+                  Export PDF Summary
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1057,13 +1143,23 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Select any section to mark roll call or delegate proxy attendance.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('info', 'Broadcast Ping Sent', 'SMS & WhatsApp reminder sent to all class teachers')}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all cursor-pointer"
-              >
-                Send Staff Reminder Ping
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 font-mono font-bold text-xs border border-amber-500/40 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('info', 'Broadcast Ping Sent', 'SMS & WhatsApp reminder sent to all class teachers')}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all cursor-pointer"
+                >
+                  Send Staff Reminder Ping
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
@@ -1106,9 +1202,19 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Faculty Time Table: {profile.name}
                 </h2>
               </div>
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                24 Periods / Week
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  24 Periods / Week
+                </span>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -1176,13 +1282,23 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Substitution Duties Assigned
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('info', 'Apply Leave / Proxy', 'Submit proxy request to Academic In-charge')}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 cursor-pointer"
-              >
-                Request Proxy Coverage
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('info', 'Apply Leave / Proxy', 'Submit proxy request to Academic In-charge')}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 cursor-pointer"
+                >
+                  Request Proxy Coverage
+                </button>
+              </div>
             </div>
 
             <div className="p-5 rounded-3xl bg-slate-900 border border-rose-500/30 space-y-3">
@@ -1236,13 +1352,23 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Daily Lesson Log: {journalEntry.grade} — {journalEntry.subject}
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('success', 'Journal Saved', 'Teaching log synchronized with CBSE Academic Roster')}
-                className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
-              >
-                Save Daily Log
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('success', 'Journal Saved', 'Teaching log synchronized with CBSE Academic Roster')}
+                  className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+                >
+                  Save Daily Log
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 space-y-4 text-xs">
@@ -1294,6 +1420,17 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         {/* ========================================================================= */}
         {activeTab === 'ai_copilot' && (
           <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300 font-mono">
+            <div className="flex items-center justify-between mb-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('pulse')}
+                className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-fuchsia-300 font-bold text-xs border border-fuchsia-500/40 flex items-center gap-1.5 cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Dashboard</span>
+              </button>
+            </div>
+
             <div className="bg-gradient-to-r from-fuchsia-950/80 via-purple-950 to-slate-900 p-6 rounded-3xl border border-fuchsia-400/40">
               <div className="flex items-center gap-2 mb-2">
                 <Bot className="w-5 h-5 text-fuchsia-400" />
@@ -1389,13 +1526,23 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Daily Assignments for {profile.assignedClass}
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('success', 'Homework Dispatched', 'Pushed to all 35 student & parent portals via WhatsApp/App')}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
-              >
-                + Dispatch Homework
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('success', 'Homework Dispatched', 'Pushed to all 35 student & parent portals via WhatsApp/App')}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
+                >
+                  + Dispatch Homework
+                </button>
+              </div>
             </div>
 
             <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-2">
@@ -1427,28 +1574,41 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   Mid-Term Assessment Entry: {profile.assignedClass}
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onShowToast('success', 'Marks Uploaded', 'Transcripts submitted to School Examination Cell')}
-                className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs"
-              >
-                Submit Score Ledger
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowToast('success', 'Marks Uploaded', 'Transcripts submitted to School Examination Cell')}
+                  className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs"
+                >
+                  Submit Score Ledger
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden divide-y divide-slate-800">
-              {classRoster.slice(0, 8).map((st, i) => (
+              {classRoster.map((st: any, i) => (
                 <div key={st.id} className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <span className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 font-bold flex items-center justify-center text-xs">
                       #{st.rollNo}
                     </span>
-                    <span className="text-sm font-bold text-white">{st.name}</span>
+                    <div>
+                      <span className="text-sm font-bold text-white block">{st.name}</span>
+                      <span className="text-[11px] font-mono text-slate-400">Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
-                      defaultValue={85 + i}
+                      defaultValue={85 + (i % 10)}
                       max={100}
                       min={0}
                       className="w-16 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-center font-bold"
@@ -1608,14 +1768,18 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
 
             {/* Bottom Actions */}
             <div className="mt-6 pt-4 border-t border-slate-200 flex items-center justify-between">
-              <span className="text-xs font-mono text-emerald-600 font-bold flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Verified Service Record</span>
-              </span>
+              <button
+                type="button"
+                onClick={() => setShowProfileModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back / Close</span>
+              </button>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="px-4 py-2 rounded-xl bg-slate-950 text-white font-bold text-xs flex items-center gap-1.5 shadow-md cursor-pointer hover:bg-slate-800"
+                className="px-4 py-2 rounded-xl bg-slate-950 text-white font-bold text-xs flex items-center gap-1.5 shadow-md cursor-pointer hover:bg-slate-800 transition-colors"
               >
                 <Printer className="w-4 h-4" />
                 <span>Print Profile</span>
@@ -1695,9 +1859,10 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               <button
                 type="button"
                 onClick={() => setShowWorkloadModal(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold cursor-pointer flex items-center gap-1.5 transition-colors"
               >
-                Close Audit Sheet
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Dashboard / Close</span>
               </button>
             </div>
           </div>
@@ -1734,9 +1899,10 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               <button
                 type="button"
                 onClick={() => setShowArrangementModal(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
               >
-                Close
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Close / Back</span>
               </button>
               {!arrangementAccepted && (
                 <button

@@ -84,19 +84,19 @@ interface TeacherPortalSidebarProps {
 export const TeacherPortalSidebar: React.FC<TeacherPortalSidebarProps> = ({
   activeTab,
   onSelectTab,
-  teacherName = 'Ranjeet Singh Deshwal',
-  empId = '20181525',
-  designation = 'Lecturer Computer Science',
-  assignedClass = 'XII Science A',
-  schoolName = 'New Ideal Public School',
-  schoolLogo = '/assets/schools/new-ideal-logo.svg',
+  teacherName = 'Vikramaditya Singh',
+  empId = 'DKS-FAC-03',
+  designation = 'PGT Mathematics',
+  assignedClass = 'Class 10-A',
+  schoolName = 'Dakshora Academy, New Delhi',
+  schoolLogo = '/assets/dakshora-logo.png',
   onOpenProfile,
   onSignOut,
   isDesktopCollapsed,
   setIsDesktopCollapsed,
   isMobileDrawerOpen,
   setIsMobileDrawerOpen,
-  pendingAttendanceCount = 57,
+  pendingAttendanceCount = 17,
   arrangementCount = 1
 }) => {
   const { t, isHindi, isBilingual } = useTranslation();
