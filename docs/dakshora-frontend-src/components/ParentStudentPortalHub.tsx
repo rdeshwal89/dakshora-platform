@@ -42,8 +42,11 @@ import {
   PanelLeftOpen,
   Menu,
   LogOut,
-  ArrowLeft
+  ArrowLeft,
+  Smartphone
 } from 'lucide-react';
+import { LiveBusMap } from './LiveBusMap';
+import { DriverGpsBroadcastModal } from './DriverGpsBroadcastModal';
 import {
   ErpPortalWardStudent,
   ErpPortalStudentProfile,
@@ -199,6 +202,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
     weeklyRoutine: Record<string, any[]>;
   } | null>(null);
   const [transport, setTransport] = useState<ErpPortalTransport | null>(null);
+  const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [notices, setNotices] = useState<any[]>([]);
   const [emergencyHelpline, setEmergencyHelpline] = useState<ErpPortalEmergencyHelpline[]>([]);
   const [leaveApplications, setLeaveApplications] = useState<ErpPortalLeaveApplication[]>([]);
@@ -399,7 +403,13 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
         setReceipts(((feesRes.data as any).receipts as any) || []);
       }
       if (ttRes.data) setTimetable((ttRes.data as any) || null);
-      if (transRes.data?.transport) setTransport(transRes.data.transport);
+      if (transRes.data) {
+        if (transRes.data.hasTransport && transRes.data.transport) {
+          setTransport(transRes.data.transport);
+        } else {
+          setTransport(null);
+        }
+      }
       if (noticesRes.data) {
         setNotices((noticesRes.data as any).notices || []);
         setEmergencyHelpline((noticesRes.data as any).emergencyHelpline || []);
@@ -1106,73 +1116,121 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 5. LIVE BUS GPS TRACKER CARD (Desktop Span 2, Vibrant Teal/Emerald Gradient) */}
-                <div className="md:col-span-2 lg:col-span-2 bg-gradient-to-r from-teal-950 via-emerald-900 to-slate-950 rounded-3xl p-6 border border-teal-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+                {/* 5. LIVE BUS GPS TRACKER / ZERO-STATE CARD */}
+                {transport && transport.routeNumber ? (
+                  <div className="md:col-span-2 lg:col-span-2 bg-gradient-to-r from-teal-950 via-emerald-900 to-slate-950 rounded-3xl p-6 border border-teal-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
 
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30">
-                          <Bus className="w-4 h-4" />
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                            <Bus className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-400 block">
+                              {t('portal.card_bus_title', 'BUS TRACKER')}
+                            </span>
+                            <h4 className="text-sm font-bold text-white">{t('portal.card_bus_sub', 'Live Transport GPS')}</h4>
+                          </div>
                         </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>{t('portal.card_bus_active', 'GPS Active')}</span>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-slate-950/70 border border-teal-500/30 font-mono">
                         <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-400 block">
-                            {t('portal.card_bus_title', 'BUS TRACKER')}
-                          </span>
-                          <h4 className="text-sm font-bold text-white">{t('portal.card_bus_sub', 'Live Transport GPS')}</h4>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-black text-white">{transport.routeNumber}</span>
+                            <span className="text-xs font-bold text-emerald-400">{transport.liveGps?.speedKmH ? `${transport.liveGps.speedKmH} km/h` : '0 km/h'}</span>
+                          </div>
+                          <div className="text-xs text-slate-300 mt-1 truncate">
+                            {transport.routeName || 'Campus Express Route'}
+                          </div>
+                          <div className="text-xs text-slate-300 mt-1">
+                            {t('portal.card_bus_status', 'Status:')} <span className="text-emerald-300 font-bold">{transport.liveGps?.statusText || 'Scheduled / Active on Route'}</span>
+                          </div>
                         </div>
-                      </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>{t('portal.card_bus_active', 'GPS Active')}</span>
-                      </span>
-                    </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-slate-950/70 border border-teal-500/30 font-mono">
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-black text-white">{transport?.routeNumber || 'BUS-04'}</span>
-                          <span className="text-xs font-bold text-emerald-400">{transport?.liveGps?.speedKmH ? `${transport.liveGps.speedKmH} km/h` : '38 km/h'}</span>
-                        </div>
-                        <div className="text-xs text-slate-300 mt-1 truncate">
-                          {transport?.routeName || 'Golf Course Road to Campus Super Express'}
-                        </div>
-                        <div className="text-xs text-slate-300 mt-1">
-                          {t('portal.card_bus_status', 'Status:')} <span className="text-emerald-300 font-bold">{transport?.liveGps?.statusText || 'En Route — Approaching DLF Phase 5 Hub'}</span>
-                        </div>
-                      </div>
-
-                      <div className="border-t sm:border-t-0 sm:border-l border-slate-800 sm:pl-3 pt-2 sm:pt-0 flex flex-col justify-between">
-                        <div className="text-[11px] text-slate-400">
-                          {transport?.pickupStop ? `Pickup: ${transport.pickupStop} (${transport.pickupTime || '07:20 AM'})` : 'ETA: ~8 mins to DLF Phase 5 Hub'}
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-slate-300 flex items-center justify-between">
-                          <span>{t('portal.card_bus_driver', 'Driver:')} {transport?.driverName || 'Ramesh Yadav'}</span>
-                          <a href={`tel:${transport?.driverPhone || '+919810000555'}`} className="text-cyan-400 hover:underline">
-                            {transport?.driverPhone || '+91 98100 00555'}
-                          </a>
+                        <div className="border-t sm:border-t-0 sm:border-l border-slate-800 sm:pl-3 pt-2 sm:pt-0 flex flex-col justify-between">
+                          <div className="text-[11px] text-slate-400">
+                            {transport.pickupStop ? `Pickup: ${transport.pickupStop} (${transport.pickupTime || '07:15 AM'})` : 'Designated Route Stop'}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-slate-300 flex items-center justify-between">
+                            <span>{t('portal.card_bus_driver', 'Driver:')} {transport.driverName || 'Bus Captain'}</span>
+                            <a href={`tel:${transport.driverPhone || '+919811055443'}`} className="text-cyan-400 hover:underline">
+                              {transport.driverPhone || '+91 98110 55443'}
+                            </a>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="mt-5 pt-4 border-t border-teal-500/20 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => setActiveTab('bus_tracker')}
-                      className="px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-teal-500/20 cursor-pointer"
-                    >
-                      {t('portal.live_map_btn', 'Live Map View')}
-                    </button>
-                    <a
-                      href={`tel:${dynamicSchoolBrand.contactPhone || transport?.driverPhone || '+919811234567'}`}
-                      className="text-xs text-teal-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
-                    >
-                      <Phone className="w-3.5 h-3.5" />
-                      <span>{t('portal.call_driver_btn', 'Call Driver')}</span>
-                    </a>
+                    <div className="mt-5 pt-4 border-t border-teal-500/20 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setActiveTab('bus_tracker')}
+                        className="px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-teal-500/20 cursor-pointer"
+                      >
+                        {t('portal.live_map_btn', 'Live Map View')}
+                      </button>
+                      <a
+                        href={`tel:${transport.driverPhone || dynamicSchoolBrand.contactPhone || '+911126138900'}`}
+                        className="text-xs text-teal-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{t('portal.call_driver_btn', 'Call Driver')}</span>
+                      </a>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="md:col-span-2 lg:col-span-2 bg-slate-900/80 rounded-3xl p-6 border border-slate-800 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700">
+                            <Bus className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 block">
+                              SCHOOL TRANSPORT
+                            </span>
+                            <h4 className="text-sm font-bold text-white">No Transport Assigned (Self Commuter)</h4>
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                          Self / Private Drop
+                        </span>
+                      </div>
+
+                      <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 font-mono text-xs space-y-1">
+                        <div className="text-slate-300 font-bold">
+                          परिवहन सुविधा आवंटित नहीं (No Bus Facility Enrolled)
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-sans">
+                          This student commutes via private/parent arrangement. To enroll in school bus routes with live phone GPS tracking, submit a request.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setActiveTab('bus_tracker')}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
+                      >
+                        View Transport Details
+                      </button>
+                      <a
+                        href={`tel:${dynamicSchoolBrand.contactPhone || '+911126138900'}`}
+                        className="text-xs text-teal-400 hover:text-teal-300 font-mono font-bold flex items-center gap-1 transition-colors"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>Transport Incharge</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1720,102 +1778,157 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 🚌 TAB 7: LIVE BUS TRACKER */}
+      {/* 🚌 TAB 7: LIVE BUS TRACKER & INTERACTIVE MAP */}
       {/* ========================================================================= */}
       {activeTab === 'bus_tracker' && (
         <div className="space-y-6">
-          <div className="bg-slate-900/80 p-6 rounded-3xl border border-slate-800 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-black text-white">Live School Bus Tracker & GPS Route</h3>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">
-                Assigned Bus: {transport?.routeNumber || 'BUS-04'} • Vehicle: {transport?.vehicleNumber || 'HR 26 DQ 8890'}
-              </p>
-            </div>
-            <a
-              href={`tel:${transport?.driverPhone || '+919810000555'}`}
-              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all shadow-md shadow-emerald-600/25 flex items-center gap-2"
-            >
-              <Phone className="w-4 h-4" />
-              <span>Call Bus Captain ({transport?.driverName || 'Ramesh Yadav'})</span>
-            </a>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left 2 Cols: Live Route Card */}
-            <div className="lg:col-span-2 bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-sm space-y-6">
-              <div className="p-4 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-start gap-3">
-                <Radio className="w-5 h-5 text-cyan-400 animate-pulse shrink-0 mt-0.5" />
+          {transport && transport.routeNumber ? (
+            <>
+              {/* Header with Route info & Driver Console Button */}
+              <div className="bg-slate-900/80 p-6 rounded-3xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h4 className="text-sm font-bold text-white">Live GPS Telemetry</h4>
-                  <p className="text-xs text-cyan-200 mt-0.5 font-mono">
-                    {transport?.liveGps?.statusText || 'En Route — Passing Sector 54 Rapid Metro (Estimated 12 mins to school)'}
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                      LIVE ROUTE ACTIVE
+                    </span>
+                    <span className="text-xs text-slate-400">•</span>
+                    <span className="text-xs font-mono text-cyan-400 font-bold">{transport.vehicleNumber || 'DL 1P C 4521'}</span>
+                  </div>
+                  <h3 className="text-lg font-black text-white mt-1">
+                    {transport.routeNumber}: {transport.routeName}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    Live OpenStreetMap Driver Telemetry • Updates Every 4 Seconds
                   </p>
-                  <div className="flex items-center gap-4 text-[11px] font-mono text-slate-400 mt-2">
-                    <span>Speed: {transport?.liveGps?.speedKmH || 38} km/h</span>
-                    <span>•</span>
-                    <span>Last GPS Ping: {transport?.liveGps?.lastPingSecAgo || 8}s ago</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setIsDriverModalOpen(true)}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-emerald-500/20 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    <span>📱 Driver Phone Console</span>
+                  </button>
+
+                  <a
+                    href={`tel:${transport.driverPhone || '+919811055443'}`}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-all border border-slate-700 flex items-center gap-2"
+                  >
+                    <Phone className="w-4 h-4 text-emerald-400" />
+                    <span>Call Driver ({transport.driverName || 'Jagdish Chandra'})</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Interactive OpenStreetMap Leaflet Canvas Component */}
+              <LiveBusMap 
+                transport={transport} 
+                studentPickupStop={transport.pickupStop} 
+                onOpenDriverModal={() => setIsDriverModalOpen(true)}
+              />
+
+              {/* Route Stops Timeline & Crew Info */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-sm space-y-4">
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
+                    Route Stops & Timetable (मार्ग स्टॉप एवं समय सारिणी)
+                  </h4>
+                  <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-800">
+                    {transport.stops?.map((stop, idx) => (
+                      <div key={idx} className="relative flex items-center gap-4 pl-8">
+                        <div className="absolute left-2 w-3.5 h-3.5 rounded-full bg-cyan-400 ring-4 ring-slate-900"></div>
+                        <div className="flex-1 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+                          <div>
+                            <h5 className="text-xs font-bold text-white">{stop.stopName}</h5>
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              Pickup: {stop.pickupTime} • Drop: {stop.dropTime}
+                            </div>
+                          </div>
+                          {idx === 0 && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              Your Designated Stop
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-sm space-y-4">
+                  <h4 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
+                    Transport Crew & Safety
+                  </h4>
+                  <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3 text-xs font-mono">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Route Number:</span>
+                      <span className="font-bold text-cyan-400">{transport.routeNumber}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Vehicle Reg:</span>
+                      <span className="font-bold text-white">{transport.vehicleNumber}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Bus Captain:</span>
+                      <span className="font-bold text-white">{transport.driverName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Driver Phone:</span>
+                      <span className="font-bold text-emerald-400">{transport.driverPhone}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Emergency SOS:</span>
+                      <span className="font-bold text-rose-400">{transport.emergencySosContact || '+91 11 2613 8900'}</span>
+                    </div>
                   </div>
                 </div>
               </div>
+            </>
+          ) : (
+            /* ZERO STATE: Clean & Authentic No Transport Assigned */
+            <div className="space-y-6">
+              <div className="bg-slate-900/80 p-6 rounded-3xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-white">School Bus & Transport Facility</h3>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    Status: No Institutional Transport Assigned (निजी आवागमन / Self Commuter)
+                  </p>
+                </div>
+              </div>
 
-              {/* Route Stops Timeline */}
-              <div>
-                <h4 className="text-sm font-bold text-white uppercase tracking-wider font-mono mb-4">
-                  Route Stops & Timetable
-                </h4>
-                <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-800">
-                  {transport?.stops?.map((stop, idx) => (
-                    <div key={idx} className="relative flex items-center gap-4 pl-8">
-                      <div className="absolute left-2 w-3.5 h-3.5 rounded-full bg-cyan-400 ring-4 ring-slate-900"></div>
-                      <div className="flex-1 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
-                        <div>
-                          <h5 className="text-xs font-bold text-white">{stop.stopName}</h5>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                            Pickup: {stop.pickupTime} • Drop: {stop.dropTime}
-                          </div>
-                        </div>
-                        {idx === 0 && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            Your Pickup Stop
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+              <div className="p-10 rounded-3xl bg-slate-900/60 border border-slate-800 text-center max-w-xl mx-auto space-y-5">
+                <div className="w-16 h-16 rounded-3xl bg-slate-800 text-teal-400 flex items-center justify-center mx-auto border border-slate-700 shadow-xl">
+                  <Bus className="w-8 h-8" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">
+                    No Institutional School Bus Assigned for {profile?.name || activeWard?.name || 'this Student'}
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-2 leading-relaxed font-sans">
+                    छात्र वर्तमान में स्व-परिवहन (Private / Parent Commute) मोड पर पंजीकृत है। यदि आप स्कूल बस रूट आवंटित कराना चाहते हैं या बस रूट की जानकारी चाहते हैं, तो स्कूल ट्रांसपोर्ट हेल्पडेस्क से संपर्क करें।
+                  </p>
+                </div>
+
+                <div className="pt-2 flex flex-wrap justify-center gap-3">
+                  <a
+                    href={`tel:${dynamicSchoolBrand.contactPhone || '+911126138900'}`}
+                    className="px-5 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-teal-500/20 flex items-center gap-2"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>Contact Bus Helpdesk</span>
+                  </a>
+                  <button
+                    onClick={() => setIsDriverModalOpen(true)}
+                    className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs border border-cyan-500/30 transition-all flex items-center gap-2 cursor-pointer"
+                  >
+                    <Smartphone className="w-4 h-4 text-cyan-400" />
+                    <span>Driver Phone Simulator</span>
+                  </button>
                 </div>
               </div>
             </div>
-
-            {/* Right Col: Driver Details */}
-            <div className="bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-sm space-y-4">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-                Transport Crew & Safety
-              </h4>
-
-              <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3 text-xs font-mono">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Route Name:</span>
-                  <span className="font-bold text-white">{transport?.routeName || 'Golf Course Super Express'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Vehicle Reg:</span>
-                  <span className="font-bold text-white">{transport?.vehicleNumber || 'HR 26 DQ 8890'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Bus Captain:</span>
-                  <span className="font-bold text-white">{transport?.driverName || 'Ramesh Yadav'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Driver Mobile:</span>
-                  <span className="font-bold text-emerald-400">{transport?.driverPhone || '+91 98100 00555'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Emergency SOS:</span>
-                  <span className="font-bold text-rose-400">{transport?.emergencySosContact || '+91 11 2613 8900'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -2890,12 +3003,12 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Assigned Bus Route:</span>
-                  <span className="text-cyan-300 font-bold">{profile?.transportRouteNumber || 'BUS-04'}</span>
+                  <span className="text-cyan-300 font-bold">{profile?.transportRouteNumber || 'Self / Private Drop'}</span>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Route Description:</span>
-                  <span className="text-slate-200 truncate max-w-[180px]">{profile?.transportRouteName || 'Golf Course Road to Campus Super Express'}</span>
+                  <span className="text-slate-200 truncate max-w-[180px]">{profile?.transportRouteName || 'Self / Parent Commute'}</span>
                 </div>
 
                 <div className="flex items-center justify-between">

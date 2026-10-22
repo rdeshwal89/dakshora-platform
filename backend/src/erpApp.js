@@ -9247,57 +9247,56 @@ let ERP_SUBSTITUTIONS = [
 // =========================================================================
 // 🚌 ERP TRANSPORT FLEET & BUS ROUTES CACHE
 // =========================================================================
+let ERP_LIVE_BUS_TELEMETRY = {
+  "tr-01": {
+    routeId: "tr-01",
+    routeNumber: "BUS-01",
+    routeName: "Vasant Kunj & Saket Campus Express",
+    vehicleNumber: "DL 1P C 4521",
+    driverName: "Jagdish Chandra",
+    driverPhone: "+91 98110 55443",
+    status: "idle",
+    isLive: false,
+    latitude: 28.5355,
+    longitude: 77.1557,
+    speedKmH: 0,
+    heading: 85,
+    accuracyM: 4,
+    lastPingSecAgo: 0,
+    lastPingTime: new Date().toISOString(),
+    totalPings: 0,
+    recentBreadcrumbs: [
+      { lat: 28.5355, lng: 77.1557, timestamp: new Date().toISOString() }
+    ]
+  }
+};
+
 let ERP_TRANSPORT = [
   {
     id: "tr-01",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    routeNumber: "BUS-04",
-    routeName: "Golf Course Road to Campus Super Express",
-    vehicleNumber: "HR 26 DQ 8890",
-    driverName: "Ramesh Yadav",
-    driverPhone: "+91 98100 00555",
-    capacity: 45,
-    assignedStudentsCount: 41,
-    currentStatus: "on_route",
-    assignedStudentIds: ["std-101", "std-102", "std-106"],
+    routeNumber: "BUS-01",
+    routeName: "Vasant Kunj & Saket Campus Express",
+    vehicleNumber: "DL 1P C 4521",
+    driverName: "Jagdish Chandra",
+    driverPhone: "+91 98110 55443",
+    capacity: 42,
+    assignedStudentsCount: 38,
+    currentStatus: "idle",
+    assignedStudentIds: ["b797408c-7080-412d-be24-e101cb3a2e2b", "std-advik"],
     stops: [
-      { stopName: "The Camellias, DLF 5", pickupTime: "07:20 AM", dropTime: "02:40 PM" },
-      { stopName: "Magnolias Gate 2", pickupTime: "07:30 AM", dropTime: "02:50 PM" },
-      { stopName: "Sector 54 Rapid Metro Station", pickupTime: "07:42 AM", dropTime: "03:05 PM" },
-      { stopName: "School Main Campus Hub", pickupTime: "08:05 AM", dropTime: "02:15 PM" }
+      { stopName: "Sector B Pocket 10, Vasant Kunj", pickupTime: "07:15 AM", dropTime: "03:15 PM", lat: 28.5355, lng: 77.1557 },
+      { stopName: "Sultanpur Metro Station, MG Road", pickupTime: "07:28 AM", dropTime: "03:02 PM", lat: 28.4988, lng: 77.1615 },
+      { stopName: "Qutab Minar Crossing, Mehrauli", pickupTime: "07:40 AM", dropTime: "02:50 PM", lat: 28.5244, lng: 77.1855 },
+      { stopName: "Saket District Centre / Select Citywalk", pickupTime: "07:55 AM", dropTime: "02:35 PM", lat: 28.5284, lng: 77.2185 },
+      { stopName: "Dakshora Academy Campus Gate 1", pickupTime: "08:10 AM", dropTime: "02:20 PM", lat: 28.5385, lng: 77.1575 }
     ],
     liveGps: {
-      latitude: 28.4595,
-      longitude: 77.0266,
-      speedKmH: 38,
-      lastPingSecAgo: 8,
-      statusText: "En Route — Passing Sector 54 Rapid Metro (Estimated 12 mins to school)"
-    }
-  },
-  {
-    id: "tr-02",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    routeNumber: "BUS-08",
-    routeName: "Sohna Road - Subhash Chowk Connector",
-    vehicleNumber: "HR 26 EK 4412",
-    driverName: "Balwan Singh",
-    driverPhone: "+91 98111 88991",
-    capacity: 40,
-    assignedStudentsCount: 36,
-    currentStatus: "delayed",
-    assignedStudentIds: ["std-103", "std-104"],
-    stops: [
-      { stopName: "Vipul Greens, Sohna Road", pickupTime: "07:15 AM", dropTime: "02:45 PM" },
-      { stopName: "Subhash Chowk Junction", pickupTime: "07:30 AM", dropTime: "03:00 PM" },
-      { stopName: "Rajiv Chowk Flyover", pickupTime: "07:45 AM", dropTime: "03:15 PM" },
-      { stopName: "School Main Campus Hub", pickupTime: "08:10 AM", dropTime: "02:20 PM" }
-    ],
-    liveGps: {
-      latitude: 28.4231,
-      longitude: 77.0425,
-      speedKmH: 15,
-      lastPingSecAgo: 14,
-      statusText: "Traffic delay on Sohna Road — moving at 15 km/h"
+      latitude: 28.5355,
+      longitude: 77.1557,
+      speedKmH: 0,
+      lastPingSecAgo: 0,
+      statusText: "Scheduled / Idle at Vasant Kunj Depot"
     }
   }
 ];
@@ -9333,13 +9332,13 @@ let ERP_STUDENT_TRANSPORT = [
   {
     id: "str-01",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
-    rollNo: "R-02",
-    admissionNo: "DKS-2026-080",
+    studentId: "b797408c-7080-412d-be24-e101cb3a2e2b",
+    rollNo: "R-01",
+    admissionNo: "DKS-2026-079",
     routeId: "tr-01",
     vehicleId: "veh-01",
-    pickupPoint: "The Camellias, DLF 5",
-    dropPoint: "The Camellias, DLF 5",
+    pickupPoint: "Sector B Pocket 10, Vasant Kunj",
+    dropPoint: "Sector B Pocket 10, Vasant Kunj",
     fee: 2500,
     status: "active",
     allocatedAt: "2026-04-01T00:00:00.000Z"
@@ -9347,11 +9346,11 @@ let ERP_STUDENT_TRANSPORT = [
   {
     id: "str-02",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    studentId: "std-102",
+    studentId: "std-advik",
     routeId: "tr-01",
     vehicleId: "veh-01",
-    pickupPoint: "Magnolias Gate 2",
-    dropPoint: "Magnolias Gate 2",
+    pickupPoint: "Sultanpur Metro Station, MG Road",
+    dropPoint: "Sultanpur Metro Station, MG Road",
     fee: 2500,
     status: "active",
     allocatedAt: "2026-04-01T00:00:00.000Z"
@@ -13383,6 +13382,8 @@ app.use("/api/erp", (req, res, next) => {
     req.originalUrl?.includes("/api/erp/portal") ||
     req.path.startsWith("/teacher") ||
     req.originalUrl?.includes("/api/erp/teacher") ||
+    req.originalUrl?.includes("/api/erp/transport/driver-gps") ||
+    req.originalUrl?.includes("/api/erp/transport/live-telemetry") ||
     (req.method === "GET" && (req.path === "/students" || req.originalUrl?.includes("/api/erp/students")));
 
   if (isPortalOrTeacherOrPublic) {
@@ -35843,8 +35844,8 @@ app.get("/api/erp/portal/profile/:studentId", (req, res) => {
   // Class teacher resolution
   const classTeacher = student.grade?.includes("10") ? "Vikramaditya Singh (Class Teacher)" : "Dr. Sunita Rao (Senior PGT)";
 
-  // Transport resolution
-  const transportRoute = ERP_TRANSPORT.find(t => (t.assignedStudentIds || []).includes(student.id)) || ERP_TRANSPORT[0];
+  // Transport resolution (Zero-state clean: only return route if student is actually assigned)
+  const transportRoute = ERP_TRANSPORT.find(t => (t.assignedStudentIds || []).includes(student.id));
 
   // Digital ID QR Payload string
   const qrPayload = `DAKSHORA:STUDENT:${student.id}:ROLL:${student.rollNo}:BLOOD:${student.bloodGroup || 'B+'}:CLASS:${student.grade}-${student.section}:SESSION:${student.academicSession || '2026-27'}`;
@@ -35865,8 +35866,8 @@ app.get("/api/erp/portal/profile/:studentId", (req, res) => {
         name: student.parentName,
         phone: student.parentPhone || "+91 98765 43210"
       },
-      transportRouteNumber: transportRoute ? (transportRoute.routeNumber || "Route 4") : "Route 4",
-      transportRouteName: transportRoute ? transportRoute.routeName : "Campus Main",
+      transportRouteNumber: transportRoute ? transportRoute.routeNumber : null,
+      transportRouteName: transportRoute ? transportRoute.routeName : "Self / Private Commute",
       qrPayload,
       schoolAffiliation: {
         schoolName: (ERP_SCHOOLS.find(s => s.organization_id === orgId)?.name) || "Dakshora Academy, New Delhi",
@@ -36880,25 +36881,202 @@ app.get("/api/erp/portal/transport/:studentId", (req, res) => {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
 
-  const route = ERP_TRANSPORT.find(t => 
+  // Check if student has institutional transport assigned (Zero-state clean)
+  let route = ERP_TRANSPORT.find(t => 
     (t.organization_id === orgId) && 
     ((t.assignedStudentIds || []).includes(student.id) || (t.assignedStudentIds || []).includes(studentId))
-  ) || ERP_TRANSPORT.find(t => t.organization_id === orgId) || ERP_TRANSPORT[0];
+  );
+
+  if (!route && typeof ERP_STUDENT_TRANSPORT !== "undefined") {
+    const stRecord = ERP_STUDENT_TRANSPORT.find(st => (st.studentId === student.id || st.studentId === studentId) && st.routeId);
+    if (stRecord) {
+      route = ERP_TRANSPORT.find(t => t.id === stRecord.routeId);
+    }
+  }
+
+  // If student does NOT have transport assigned:
+  if (!route) {
+    return res.json({
+      success: true,
+      hasTransport: false,
+      hasAssignedTransport: false,
+      studentId: student.id,
+      studentName: student.name,
+      transport: null,
+      message: "No institutional school bus assigned for this student. Commute mode: Self / Parent Pick & Drop."
+    });
+  }
+
+  // Merge with live driver GPS telemetry
+  const liveTelemetry = ERP_LIVE_BUS_TELEMETRY[route.id] || {
+    isLive: route.currentStatus === "on_route",
+    status: route.currentStatus || "idle",
+    latitude: route.liveGps?.latitude || 28.5355,
+    longitude: route.liveGps?.longitude || 77.1557,
+    speedKmH: route.liveGps?.speedKmH || 0,
+    heading: 85,
+    accuracyM: 4,
+    lastPingSecAgo: 4,
+    lastPingTime: new Date().toISOString(),
+    recentBreadcrumbs: []
+  };
 
   res.json({
     success: true,
+    hasTransport: true,
+    hasAssignedTransport: true,
     studentId: student.id,
     studentName: student.name,
-    hasAssignedTransport: true,
     transport: {
       ...route,
-      routeNumber: route?.routeNumber || "Route 4",
-      busCode: route?.routeNumber || "BUS-04",
-      pickupStop: route?.stops?.[0]?.stopName || "Main Depot Stop",
-      pickupTime: route?.stops?.[0]?.time || route?.stops?.[0]?.pickupTime || "07:00 AM",
-      dropTime: route?.stops?.[route?.stops?.length - 1]?.time || "02:30 PM",
-      emergencySosContact: ERP_MASTER_SETTINGS.school_profile.phone
+      currentStatus: liveTelemetry.status,
+      isLive: liveTelemetry.isLive,
+      driverName: liveTelemetry.driverName || route.driverName,
+      driverPhone: liveTelemetry.driverPhone || route.driverPhone,
+      vehicleNumber: liveTelemetry.vehicleNumber || route.vehicleNumber,
+      liveGps: {
+        latitude: liveTelemetry.latitude,
+        longitude: liveTelemetry.longitude,
+        speedKmH: liveTelemetry.speedKmH,
+        heading: liveTelemetry.heading,
+        accuracyM: liveTelemetry.accuracyM,
+        lastPingSecAgo: liveTelemetry.lastPingSecAgo,
+        lastPingTime: liveTelemetry.lastPingTime,
+        statusText: liveTelemetry.isLive 
+          ? `Live on Route — Current Speed: ${liveTelemetry.speedKmH} km/h (Driver Phone GPS Connected)`
+          : "Scheduled / Idle at Vasant Kunj Depot"
+      },
+      recentBreadcrumbs: liveTelemetry.recentBreadcrumbs || [],
+      emergencySosContact: ERP_MASTER_SETTINGS.school_profile.phone || "+91 11 2613 8999"
     }
+  });
+});
+
+// =========================================================================
+// 📱 DRIVER MOBILE GPS BROADCASTING REST API (Zero-Cost Phone GPS Tracking)
+// =========================================================================
+
+// Driver starts or stops route
+app.post("/api/erp/transport/driver-gps/status", (req, res) => {
+  const { routeId = "tr-01", status = "on_route", driverName, vehicleNumber } = req.body;
+  if (!ERP_LIVE_BUS_TELEMETRY[routeId]) {
+    ERP_LIVE_BUS_TELEMETRY[routeId] = {
+      routeId,
+      latitude: 28.5355,
+      longitude: 77.1557,
+      speedKmH: 0,
+      heading: 85,
+      accuracyM: 4,
+      totalPings: 0,
+      recentBreadcrumbs: []
+    };
+  }
+  const t = ERP_LIVE_BUS_TELEMETRY[routeId];
+  t.status = status;
+  t.isLive = (status === "on_route");
+  if (driverName) t.driverName = driverName;
+  if (vehicleNumber) t.vehicleNumber = vehicleNumber;
+  t.lastUpdated = new Date().toISOString();
+
+  // Also update route in ERP_TRANSPORT
+  const r = ERP_TRANSPORT.find(x => x.id === routeId);
+  if (r) {
+    r.currentStatus = status;
+    if (r.liveGps) {
+      r.liveGps.statusText = status === "on_route" 
+        ? "Driver started route — Live GPS broadcasting"
+        : "Route completed / parked at depot";
+    }
+  }
+
+  res.json({
+    success: true,
+    isLive: t.isLive,
+    status: t.status,
+    message: `Driver route status updated to '${status}'.`,
+    telemetry: t
+  });
+});
+
+// Driver phone sends periodic GPS broadcast ping (every 5 seconds)
+app.post("/api/erp/transport/driver-gps/broadcast", (req, res) => {
+  const { routeId = "tr-01", lat, lng, speed = 0, heading = 0, accuracy = 4 } = req.body;
+  if (lat === undefined || lng === undefined) {
+    return res.status(400).json({ success: false, message: "lat and lng are required." });
+  }
+
+  if (!ERP_LIVE_BUS_TELEMETRY[routeId]) {
+    ERP_LIVE_BUS_TELEMETRY[routeId] = {
+      routeId,
+      status: "on_route",
+      isLive: true,
+      totalPings: 0,
+      recentBreadcrumbs: []
+    };
+  }
+
+  const t = ERP_LIVE_BUS_TELEMETRY[routeId];
+  t.latitude = Number(lat);
+  t.longitude = Number(lng);
+  t.speedKmH = Math.round(Number(speed) || 0);
+  t.heading = Number(heading) || 0;
+  t.accuracyM = Math.round(Number(accuracy) || 4);
+  t.isLive = true;
+  t.status = "on_route";
+  t.lastPingSecAgo = 0;
+  t.lastPingTime = new Date().toISOString();
+  t.totalPings = (t.totalPings || 0) + 1;
+
+  if (!t.recentBreadcrumbs) t.recentBreadcrumbs = [];
+  t.recentBreadcrumbs.push({ lat: Number(lat), lng: Number(lng), timestamp: new Date().toISOString() });
+  if (t.recentBreadcrumbs.length > 50) t.recentBreadcrumbs.shift();
+
+  // Also sync ERP_TRANSPORT liveGps
+  const r = ERP_TRANSPORT.find(x => x.id === routeId);
+  if (r) {
+    r.currentStatus = "on_route";
+    r.liveGps = {
+      latitude: Number(lat),
+      longitude: Number(lng),
+      speedKmH: t.speedKmH,
+      lastPingSecAgo: 0,
+      statusText: `Live on Route — Current Speed: ${t.speedKmH} km/h (Driver Phone GPS Connected)`
+    };
+  }
+
+  res.json({
+    success: true,
+    isLive: true,
+    routeId,
+    latitude: t.latitude,
+    longitude: t.longitude,
+    speedKmH: t.speedKmH,
+    totalPings: t.totalPings,
+    message: "GPS ping received and live map updated for parents."
+  });
+});
+
+// GET /api/erp/transport/live-telemetry/:routeId - Live telemetry poll
+app.get("/api/erp/transport/live-telemetry/:routeId", (req, res) => {
+  const { routeId } = req.params;
+  const t = ERP_LIVE_BUS_TELEMETRY[routeId] || {
+    routeId,
+    isLive: false,
+    status: "idle",
+    latitude: 28.5355,
+    longitude: 77.1557,
+    speedKmH: 0,
+    heading: 85,
+    accuracyM: 4,
+    lastPingSecAgo: 0,
+    lastPingTime: new Date().toISOString(),
+    totalPings: 0,
+    recentBreadcrumbs: []
+  };
+
+  res.json({
+    success: true,
+    telemetry: t
   });
 });
 
