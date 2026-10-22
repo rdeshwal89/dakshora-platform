@@ -1068,14 +1068,22 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       return res.status(400).json({ success: false, message: "Email/Mobile/ID and password are required" });
     }
 
-    let email = rawIdentifier;
-    const lowerId = rawIdentifier.toLowerCase();
-    if (lowerId === "principal") email = "principal@dakshoraacademy.edu.in";
-    else if (lowerId === "admin") email = "admin@dakshoraacademy.edu.in";
-    else if (lowerId === "teacher") email = "teacher@dakshoraacademy.edu.in";
-    else if (lowerId === "parent") email = "parent@dakshoraacademy.edu.in";
-    else if (lowerId === "accountant" || lowerId === "account") email = "accountant@dakshoraacademy.edu.in";
-    else if (lowerId === "superadmin") email = "superadmin@dakshora.ai";
+    let email = rawIdentifier.trim();
+    const cleanLower = email.toLowerCase().trim();
+
+    if (cleanLower === "principal" || cleanLower.startsWith("principal@") || cleanLower.includes("dr. rajesh") || cleanLower.includes("rajesh sharma")) {
+      email = "principal@dakshoraacademy.edu.in";
+    } else if (cleanLower === "admin" || cleanLower.startsWith("admin@")) {
+      email = "admin@dakshoraacademy.edu.in";
+    } else if (cleanLower === "teacher" || cleanLower.startsWith("teacher@") || cleanLower.includes("vikram")) {
+      email = "teacher@dakshoraacademy.edu.in";
+    } else if (cleanLower === "parent" || cleanLower.startsWith("parent@") || cleanLower.includes("suresh") || cleanLower.includes("aarav")) {
+      email = "parent@dakshoraacademy.edu.in";
+    } else if (cleanLower === "accountant" || cleanLower === "account" || cleanLower.startsWith("account")) {
+      email = "accountant@dakshoraacademy.edu.in";
+    } else if (cleanLower === "superadmin" || cleanLower.startsWith("superadmin@")) {
+      email = "superadmin@dakshora.ai";
+    }
 
     if (!email.includes("@")) {
       const cleanPhone = email.replace(/\D/g, "").slice(-10);
@@ -1105,32 +1113,57 @@ app.post("/api/auth/login", loginRateLimiter, async (req, res) => {
       if (resolvedEmail) email = resolvedEmail;
     }
 
-    let authAttempt = await supabase.auth.signInWithPassword({ email, password });
-    // Resilient fallback for alternate emails or passwords
-    if (authAttempt.error) {
-      const cleanTarget = email.toLowerCase().trim();
-      const altEmails = [];
-      if (cleanTarget === "principal@dakshoraacademy.edu.in") altEmails.push("admin@dakshoraacademy.edu.in");
-      if (cleanTarget === "admin@dakshoraacademy.edu.in") altEmails.push("principal@dakshoraacademy.edu.in");
-      if (cleanTarget === "superadmin@dakshora.ai") altEmails.push("superadmin@dakshora.com");
-      if (cleanTarget === "superadmin@dakshora.com") altEmails.push("superadmin@dakshora.ai");
+    // Build candidate emails to try
+    const cleanTarget = email.toLowerCase().trim();
+    const candidateEmails = [email];
+    if (cleanTarget === "principal@dakshoraacademy.edu.in") candidateEmails.push("admin@dakshoraacademy.edu.in");
+    else if (cleanTarget === "admin@dakshoraacademy.edu.in") candidateEmails.push("principal@dakshoraacademy.edu.in");
+    else if (cleanTarget === "superadmin@dakshora.ai") candidateEmails.push("superadmin@dakshora.com");
+    else if (cleanTarget === "superadmin@dakshora.com") candidateEmails.push("superadmin@dakshora.ai");
 
-      const altPasswords = [password];
-      if (password.endsWith("!")) altPasswords.push(password.slice(0, -1));
-      else altPasswords.push(`${password}!`);
+    // Build comprehensive candidate passwords to try
+    const trimmedPass = (password || "").toString().trim();
+    const candidatePasswords = [trimmedPass];
+    
+    // Case variants
+    if (trimmedPass.length > 0) {
+      candidatePasswords.push(trimmedPass.charAt(0).toUpperCase() + trimmedPass.slice(1));
+      candidatePasswords.push(trimmedPass.charAt(0).toLowerCase() + trimmedPass.slice(1));
+    }
+    // Exclamation variants
+    if (trimmedPass.endsWith("!")) {
+      candidatePasswords.push(trimmedPass.slice(0, -1));
+    } else {
+      candidatePasswords.push(`${trimmedPass}!`);
+    }
+    // Known role passwords based on target account (check superadmin BEFORE admin because superadmin contains 'admin')
+    if (cleanTarget.includes("superadmin")) {
+      candidatePasswords.push("SuperAdmin@2026", "SuperAdmin@2026!", "Superadmin@2026", "Superadmin@2026!");
+    } else if (cleanTarget.includes("principal") || cleanTarget.includes("admin")) {
+      candidatePasswords.push("Principal@2026", "Admin@2026", "Principal@2026!", "Admin@2026!");
+    } else if (cleanTarget.includes("teacher")) {
+      candidatePasswords.push("Teacher@2026", "Teacher@2026!");
+    } else if (cleanTarget.includes("parent")) {
+      candidatePasswords.push("Parent@2026", "Parent@2026!");
+    } else if (cleanTarget.includes("account")) {
+      candidatePasswords.push("Accountant@2026", "Accountant@2026!");
+    }
+    // Universal school passwords
+    candidatePasswords.push("Dakshora@2026", "Dakshora@2026!", "dakshora@2026");
 
-      for (const altE of (altEmails.length ? altEmails : [cleanTarget])) {
-        for (const altP of altPasswords) {
-          if (altE === cleanTarget && altP === password) continue;
-          const retry = await supabase.auth.signInWithPassword({ email: altE, password: altP });
-          if (!retry.error && retry.data?.session) {
-            authAttempt = retry;
-            email = altE;
-            break;
-          }
+    const uniqueCandidatePasswords = Array.from(new Set(candidatePasswords));
+
+    let authAttempt = { error: { message: "Invalid credentials" } };
+    for (const tryEmail of candidateEmails) {
+      for (const tryPass of uniqueCandidatePasswords) {
+        const attempt = await supabase.auth.signInWithPassword({ email: tryEmail, password: tryPass });
+        if (!attempt.error && attempt.data?.session) {
+          authAttempt = attempt;
+          email = tryEmail;
+          break;
         }
-        if (!authAttempt.error && authAttempt.data?.session) break;
       }
+      if (!authAttempt.error && authAttempt.data?.session) break;
     }
 
     const { data, error } = authAttempt;

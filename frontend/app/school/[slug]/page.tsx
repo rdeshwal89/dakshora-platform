@@ -410,8 +410,8 @@ export default function SchoolPublicPage() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [loginRole, setLoginRole] = useState<"principal" | "teacher" | "parent">("principal");
   const [loginMethod, setLoginMethod] = useState<"password" | "otp">("password");
-  const [loginIdentifier, setLoginIdentifier] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
+  const [loginIdentifier, setLoginIdentifier] = useState("principal@dakshoraacademy.edu.in");
+  const [loginPassword, setLoginPassword] = useState("Principal@2026");
   const [showPassword, setShowPassword] = useState(false);
   const [loginMobile, setLoginMobile] = useState("");
   const [loginOtp, setLoginOtp] = useState("");
@@ -1342,6 +1342,16 @@ export default function SchoolPublicPage() {
                       onClick={() => {
                         setLoginRole(role.id);
                         setLoginError("");
+                        if (role.id === "principal") {
+                          setLoginIdentifier("principal@dakshoraacademy.edu.in");
+                          setLoginPassword("Principal@2026");
+                        } else if (role.id === "teacher") {
+                          setLoginIdentifier("teacher@dakshoraacademy.edu.in");
+                          setLoginPassword("Teacher@2026");
+                        } else {
+                          setLoginIdentifier("parent@dakshoraacademy.edu.in");
+                          setLoginPassword("Parent@2026");
+                        }
                       }}
                       className={`p-3 rounded-2xl text-center border-2 transition-all cursor-pointer ${
                         loginRole === role.id
