@@ -117,22 +117,74 @@ export async function authRoutes(app: FastifyInstance) {
         resolvedOrgId = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
       }
 
+      // Fetch dynamic school details if organizationId is known
+      let schoolProfile = {
+        name: "Dakshora Academy, New Delhi",
+        schoolName: "Dakshora Academy, New Delhi",
+        shortName: "DAKSHORA",
+        board: "CBSE",
+        affiliationNo: "CBSE-AFF-202601",
+        schoolCode: "DKS-DEL-01",
+        logoUrl: "/assets/dakshora-logo.png",
+        phone: "+91 11 2612 3456",
+        email: "principal@dakshoraacademy.edu.in",
+        address: "Institutional Area, Vasant Kunj, New Delhi - 110070"
+      };
+
+      if (resolvedOrgId) {
+        try {
+          const { data: sch } = await supabase
+            .from("schools")
+            .select("*")
+            .eq("organization_id", resolvedOrgId)
+            .maybeSingle();
+          if (sch) {
+            schoolProfile = {
+              name: sch.name || schoolProfile.name,
+              schoolName: sch.name || schoolProfile.schoolName,
+              shortName: sch.short_name || schoolProfile.shortName,
+              board: sch.board || schoolProfile.board,
+              affiliationNo: sch.affiliation_no || schoolProfile.affiliationNo,
+              schoolCode: sch.school_code || schoolProfile.schoolCode,
+              logoUrl: sch.logo_url || schoolProfile.logoUrl,
+              phone: sch.phone || schoolProfile.phone,
+              email: sch.email || schoolProfile.email,
+              address: sch.address || schoolProfile.address
+            };
+          }
+        } catch (_) {}
+      }
+
+      const meta = data.user.user_metadata || {};
+      const appMeta = data.user.app_metadata || {};
+      const resolvedRole = isSuperAdmin ? "superadmin" : (appMeta.role || meta.role || "school-admin");
+
       return {
         success: true,
-        message: `Welcome back, ${data.user.user_metadata?.name || data.user.email}! 🚀`,
+        message: `Welcome back, ${meta.name || data.user.email}! 🚀`,
         token: data.session.access_token,
         access_token: data.session.access_token,
         token_type: "Bearer",
         expires_in: data.session.expires_in,
         user: {
           ...data.user,
+          ...meta,
           id: data.user.id,
           email: data.user.email,
-          name: data.user.user_metadata?.name || "User",
-          role: isSuperAdmin ? "superadmin" : (data.user.app_metadata?.role || "school-admin"),
+          name: meta.name || data.user.email?.split("@")[0] || "User",
+          phone: meta.phone || "",
+          parentPhone: meta.phone || "",
+          parentEmail: data.user.email,
+          role: resolvedRole,
           isSuperAdmin,
-          organizationId: resolvedOrgId
+          organizationId: resolvedOrgId,
+          org_id: resolvedOrgId,
+          schoolName: schoolProfile.name,
+          board: schoolProfile.board,
+          schoolCode: schoolProfile.schoolCode,
+          school: schoolProfile
         },
+        school: schoolProfile,
         session: data.session
       };
     }
