@@ -541,60 +541,70 @@ export default function SchoolPublicPage() {
     }
   };
 
-  // Instant Persona Sandbox Login
-  const handlePersonaLogin = (role: "principal" | "teacher" | "parent") => {
-    const roleMapping = {
-      principal: {
-        role: "admin",
-        name: "Dr. Meenakshi Sundaram (Principal)",
-        email: "principal@newidealpublicschool.edu.in",
-        surface: "school_erp",
-      },
-      teacher: {
-        role: "teacher",
-        name: "Rajeev Malhotra (PGT Math)",
-        email: "teacher@newidealpublicschool.edu.in",
-        surface: "school_erp",
-      },
-      parent: {
-        role: "parent",
-        name: "Vikram Sharma (Parent of Aarav - 10A)",
-        email: "parent@newidealpublicschool.edu.in",
-        surface: "parent_portal",
-      },
-    };
+  // Instant Persona Login (Direct Live Supabase Authentication)
+  const handlePersonaLogin = async (role: "principal" | "teacher" | "parent") => {
+    setAuthenticating(true);
+    setLoginError("");
+    setLoginSuccessMsg("");
 
-    const target = roleMapping[role];
-    const userObj = {
-      id: `usr-${role}-${Date.now()}`,
-      name: target.name,
-      email: target.email,
-      role: target.role,
-      isDemo: true,
-      organizationId: school.id,
-      organization_id: school.id,
-      schoolName: school.name,
-    };
-    const token = `dakshora-jwt-${role}-${Date.now()}`;
+    const isDakshora = slugParam.includes("dakshora") || !slugParam.includes("new-ideal");
+    const creds: Record<string, { id: string; pass: string }> = isDakshora
+      ? {
+          principal: { id: "principal@dakshoraacademy.edu.in", pass: "Principal@2026" },
+          teacher: { id: "teacher@dakshoraacademy.edu.in", pass: "Teacher@2026" },
+          parent: { id: "parent@dakshoraacademy.edu.in", pass: "Parent@2026" }
+        }
+      : {
+          principal: { id: "principal@newidealpublicschool.edu.in", pass: "Admin@2026" },
+          teacher: { id: "teacher@newidealpublicschool.edu.in", pass: "Teacher@2026" },
+          parent: { id: "parent@newidealpublicschool.edu.in", pass: "Parent@2026" }
+        };
 
+    const targetCred = creds[role];
     try {
-      localStorage.setItem("dakshora_auth_token", token);
-      localStorage.setItem("dakshora_superadmin_user", JSON.stringify(userObj));
-      localStorage.setItem(
-        "dakshora_school_brand",
-        JSON.stringify({
-          name: school.name,
-          board: school.board,
-          city: school.city,
-          code: "2026100001",
-        })
-      );
-    } catch {}
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: targetCred.id,
+          password: targetCred.pass,
+        }),
+      });
 
-    setLoginSuccessMsg(isHi ? `${target.name} के कार्यक्षेत्र में प्रवेश हो रहा है...` : `Entering ${target.name}'s workspace...`);
-    setTimeout(() => {
-      window.location.href = `/portal?surface=${target.surface}&school=${slugParam}`;
-    }, 600);
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && (data?.token || data?.access_token) && data?.user) {
+        const token = data.access_token || data.token;
+        localStorage.setItem("dakshora_auth_token", token);
+        localStorage.setItem("dakshora_superadmin_user", JSON.stringify(data.user));
+        if (data.school) {
+          localStorage.setItem("dakshora_school_brand", JSON.stringify(data.school));
+        }
+
+        const userRole = (data.user.role || "").toLowerCase();
+        const surface =
+          userRole === "parent" || userRole === "student"
+            ? "parent_portal"
+            : userRole === "superadmin"
+            ? "admin_panel"
+            : "school_erp";
+
+        setLoginSuccessMsg(
+          isHi
+            ? "प्रमाणीकरण सफल! " + (data.user.name || role) + " के कार्यक्षेत्र में प्रवेश हो रहा है..."
+            : "Authentication Successful! Entering " + (data.user.name || role) + "'s workspace..."
+        );
+        setTimeout(() => {
+          window.location.href = "/portal?surface=" + surface + "&school=" + slugParam;
+        }, 500);
+        return;
+      } else {
+        setLoginError(data?.message || (isHi ? "लॉगिन असफल रहा।" : "Login failed."));
+      }
+    } catch {
+      setLoginError(isHi ? "सर्वर से संपर्क नहीं हो पाया।" : "Server communication error.");
+    } finally {
+      setAuthenticating(false);
+    }
   };
 
   // Real Credential Login Submission
@@ -728,7 +738,7 @@ export default function SchoolPublicPage() {
     }
   };
 
-  const apkUrl = "/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk";
+  const apkUrl = slugParam.includes("dakshora") ? "/assets/mobile/dakshora-academy-parentapp-v2.0.0.apk" : "/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk";
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">
