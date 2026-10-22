@@ -729,136 +729,45 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 </div>
               )}
 
-              {/* Responsive Grid: Desktop span 2 for featured cards, mobile single-column auto-fit */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {/* 1. SCHOOL & STUDENT NAME CARD (Desktop Span 2, Colorful Indigo/Blue Gradient) */}
-                <div className="md:col-span-2 xl:col-span-2 bg-gradient-to-r from-blue-950 via-indigo-900 to-slate-900 rounded-3xl p-6 sm:p-7 border border-indigo-400/40 shadow-2xl relative overflow-hidden flex flex-col justify-between gap-6">
-                  <div className="absolute top-0 right-0 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                  {/* School Identity Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-indigo-500/20 pb-5 relative z-10">
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-14 h-14 rounded-2xl bg-white p-1.5 border border-indigo-300/40 shadow-xl flex items-center justify-center shrink-0 overflow-hidden">
-                        <img
-                          src={schoolLogo}
-                          alt={activeSchoolName}
-                          className="w-full h-full object-contain"
-                          onError={(e) => {
-                            const target = e.currentTarget as HTMLImageElement;
-                            if (!target.src.includes('new-ideal-logo.svg')) {
-                              target.src = '/assets/schools/new-ideal-logo.svg';
-                            }
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide">
-                            {activeSchoolName}
-                          </h2>
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 uppercase">
-                            {t('portal.verified_tenant', 'Verified School')}
-                          </span>
-                        </div>
-                        <p className="text-xs text-indigo-200/80 font-mono mt-1 flex flex-wrap items-center gap-2">
-                          <span>{activeBoard} Affiliation: {activeAffiliationNo}</span>
-                          <span>•</span>
-                          <span>Code: {activeSchoolCode}</span>
-                          <span>•</span>
-                          <span className="text-emerald-300 font-semibold">{t('portal.active_session', 'Session 2026–27')}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setShowIdCardModal(true)}
-                        className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <QrCode className="w-4 h-4" />
-                        <span>{t('portal.gate_pass_qr', 'Gate Pass QR')}</span>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('id_badge')}
-                        className="px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-indigo-200 border border-indigo-400/30 text-xs font-bold transition-all cursor-pointer"
-                      >
-                        {t('portal.full_id_card', 'Full ID Card')}
-                      </button>
-                    </div>
+              {/* Enrolled Multi-Child Sibling Switcher (if parent has multiple wards) */}
+              {wards.length > 1 && (
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-900/90 border border-indigo-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-cyan-400" />
+                    <span className="text-xs font-bold text-white font-mono uppercase tracking-wider">
+                      {t('portal.switch_ward', 'Switch Enrolled Child:')}
+                    </span>
+                    <span className="text-xs text-indigo-300 font-medium">
+                      Active: <strong className="text-white">{activeWard?.name}</strong> ({activeWard?.grade}-{activeWard?.section})
+                    </span>
                   </div>
-
-                  {/* Enrolled Ward Profile & Sibling Selector */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
-                    <div className="flex items-center gap-4">
-                      <div className="relative">
-                        <img
-                          src={activeWard?.avatarUrl || profile?.avatarUrl || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150'}
-                          alt={activeWard?.name || 'Student'}
-                          className="w-16 h-16 rounded-2xl object-cover ring-2 ring-cyan-400 shadow-xl"
-                        />
-                        <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 ring-2 ring-slate-950 flex items-center justify-center text-[8px] text-slate-950 font-black">
-                          ✓
-                        </span>
-                      </div>
-
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-lg sm:text-xl font-extrabold text-white">
-                            {activeWard?.name || 'Aarav Sharma'}
-                          </h3>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            {t('portal.active_learner', 'Active Learner')}
-                          </span>
-                        </div>
-                        <div className="text-xs text-indigo-200/90 font-mono mt-0.5 flex flex-wrap items-center gap-2">
-                          <span className="font-bold text-white">{activeWard?.grade || 'Class 10'}-{activeWard?.section || 'A'}</span>
-                          <span>•</span>
-                          <span>{t('portal.roll_no', 'Roll #')}{activeWard?.rollNo || 14}</span>
-                          <span>•</span>
-                          <span>{t('portal.adm_no', 'Adm #')}{activeWard?.admissionNo || profile?.admissionNo || 'DPS-2026-1014'}</span>
-                          <span>•</span>
-                          <span className="text-rose-300 font-bold">{t('portal.blood_group', 'Blood')}: {profile?.bloodGroup || 'B+'}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-400 font-mono mt-1">
-                          {t('portal.class_teacher', 'Class Teacher')}: <span className="text-slate-200 font-semibold">{profile?.classTeacher || 'Dr. Vikram Sethi'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Sibling Quick Switcher (if multiple wards exist) */}
-                    {wards.length > 1 && (
-                      <div className="p-3 rounded-2xl bg-slate-950/60 border border-indigo-500/20 text-left">
-                        <div className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          <span>{t('portal.switch_ward', 'Switch Enrolled Child:')}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {wards.map((w) => {
-                            const isCur = activeWardId === w.id;
-                            return (
-                              <button
-                                key={w.id}
-                                onClick={() => {
-                                  setActiveWardId(w.id);
-                                  onShowToast('success', `Switched to ${w.name}`, `Loaded ${w.grade}-${w.section} records`);
-                                }}
-                                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold font-mono transition-all border ${
-                                  isCur
-                                    ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
-                                    : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:text-white'
-                                }`}
-                              >
-                                {w.name.split(' ')[0]} ({w.grade})
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                  <div className="flex flex-wrap gap-2">
+                    {wards.map((w) => {
+                      const isCur = activeWardId === w.id;
+                      return (
+                        <button
+                          key={w.id}
+                          onClick={() => {
+                            setActiveWardId(w.id);
+                            onShowToast('success', `Switched to ${w.name}`, `Loaded ${w.grade}-${w.section} records`);
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all border cursor-pointer ${
+                            isCur
+                              ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
+                              : 'bg-slate-950/80 text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
+                          }`}
+                        >
+                          {w.name} ({w.grade}-{w.section})
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
+              )}
 
-                {/* 2. ATTENDANCE & LEAVES CARD (Vibrant Emerald/Teal Gradient) */}
+              {/* Responsive Grid: 5 Core Live Operational Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {/* 1. ATTENDANCE & LEAVES CARD (Vibrant Emerald/Teal Gradient) */}
                 <div className="bg-gradient-to-br from-emerald-950 via-teal-900/90 to-slate-950 rounded-3xl p-6 border border-emerald-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
                   <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
@@ -890,13 +799,19 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                     </div>
 
                     <p className="text-xs text-slate-300 font-mono mt-1">
-                      {attendance?.metrics?.presentDays || 14} {t('portal.card_attendance_days_present', 'Days Present')} • 1 {t('portal.card_attendance_leave', 'Leave')} • 0 {t('portal.card_attendance_absent', 'Absent')}
+                      {attendance?.metrics?.presentDays || 14} {t('portal.card_attendance_days_present', 'Days Present')} • {attendance?.metrics?.leaveDays || 1} {t('portal.card_attendance_leave', 'Leave')} • {attendance?.metrics?.absentDays || 0} {t('portal.card_attendance_absent', 'Absent')}
                     </p>
 
                     {/* Real-time Roll-Call Pill */}
                     <div className="mt-3.5 p-2.5 rounded-xl bg-slate-950/70 border border-emerald-500/30 flex items-center gap-2 text-xs font-mono">
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                      <span className="text-emerald-300 font-bold truncate">{t('portal.card_attendance_today_present', 'Today: Verified Present at 08:45 AM (RFID)')}</span>
+                      <span className="text-emerald-300 font-bold truncate">
+                        {(attendance as any)?.todayStatus?.status === 'present'
+                          ? `Today: Verified Present at ${(attendance as any)?.todayStatus?.time || '08:45 AM'} (RFID)`
+                          : (attendance as any)?.todayStatus?.status === 'absent'
+                            ? 'Today: Marked Absent / Leave'
+                            : t('portal.card_attendance_today_present', 'Today: Verified Present at 08:45 AM (RFID)')}
+                      </span>
                     </div>
 
                     {/* Visual Progress Bar */}
@@ -917,7 +832,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                     </button>
                     <button
                       onClick={() => setActiveTab('attendance')}
-                      className="text-xs text-emerald-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
+                      className="text-xs text-emerald-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
                     >
                       <span>{t('portal.full_register_btn', 'Full Register')}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -925,190 +840,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 3. HOMEWORK DIARY CARD (Vibrant Amber/Orange Gradient) */}
-                <div className="bg-gradient-to-br from-amber-950 via-orange-900/90 to-slate-950 rounded-3xl p-6 border border-amber-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          <BookOpen className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-400 block">
-                            {t('portal.card_homework_title', 'HOMEWORK DIARY')}
-                          </span>
-                          <h4 className="text-sm font-bold text-white">{t('portal.card_homework_sub', 'Daily Assignments')}</h4>
-                        </div>
-                      </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        {homeworkList.length} {t('portal.card_homework_tasks', 'Tasks')}
-                      </span>
-                    </div>
-
-                    <div className="space-y-2 mt-3">
-                      {homeworkList.length > 0 ? (
-                        homeworkList.slice(0, 2).map((hw: any, idx: number) => (
-                          <div key={hw.id || idx} className="p-2.5 rounded-xl bg-slate-950/70 border border-amber-500/30 flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300">
-                                  {hw.subject || 'General'}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  {hw.dueDate ? `Due: ${new Date(hw.dueDate).toLocaleDateString('en-GB')}` : t('portal.card_homework_due_tomorrow', 'Due Tomorrow')}
-                                </span>
-                              </div>
-                              <p className="text-xs font-bold text-white truncate mt-0.5">{hw.title}</p>
-                            </div>
-                            <span className={`text-[10px] font-mono font-bold shrink-0 ${hw.submission?.status === 'submitted' ? 'text-emerald-400' : 'text-amber-300'}`}>
-                              {hw.submission?.status === 'submitted' ? 'Submitted ✓' : t('portal.card_homework_pending', 'Pending')}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-center font-mono text-xs text-slate-400">
-                          {isHindi ? 'सभी गृहकार्य पूर्ण हैं ✓' : 'All assignments completed! No pending tasks ✓'}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-5 pt-4 border-t border-amber-500/20 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => {
-                        if (homeworkList[0]) setSelectedHomework(homeworkList[0]);
-                        setShowHomeworkModal(true);
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-amber-500/20 cursor-pointer"
-                    >
-                      {t('portal.submit_work_btn', 'Submit Work')}
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('homework')}
-                      className="text-xs text-amber-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
-                    >
-                      <span>{t('portal.open_diary_btn', 'Open Diary')}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* 4. CBSE REPORT CARD & ACADEMIC EXCELLENCE (Desktop Span 2, Vibrant Purple/Violet Gradient) */}
-                <div className="md:col-span-2 xl:col-span-2 bg-gradient-to-r from-purple-950 via-violet-900 to-indigo-950 rounded-3xl p-6 sm:p-7 border border-purple-400/40 shadow-2xl relative overflow-hidden flex flex-col justify-between gap-5">
-                  <div className="absolute top-0 right-0 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                  <div>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-500/20 pb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-2xl bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                          <Award className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-purple-400 block">
-                            {t('portal.card_report_title', 'CBSE REPORT CARD & ACADEMIC PERFORMANCE')}
-                          </span>
-                          <h4 className="text-base font-extrabold text-white">{t('portal.card_report_sub', 'Term 1 Assessment Report')}</h4>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span className="px-3 py-1 rounded-full text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          {t('portal.card_report_certified', 'Official CBSE Certified')}
-                        </span>
-                        <button
-                          onClick={() => setShowReportCardModal(true)}
-                          className="px-3.5 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-purple-500/20 flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>{t('portal.card_report_pdf', 'Marksheet PDF')}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* High-Impact Metrics Grid */}
-                    {(() => {
-                      const rep = reportCards && reportCards.length > 0 ? reportCards[0] : null;
-                      const gpa = rep?.summary?.cumulativeGpa ? `${rep.summary.cumulativeGpa} / 10` : '9.6 / 10';
-                      const pct = rep?.summary?.aggregatePercentage ? `${rep.summary.aggregatePercentage}% Marks` : '92.2% Marks';
-                      const rank = rep?.summary?.classRank ? `#${rep.summary.classRank}` : '#1';
-                      const grade = rep?.summary?.overallGrade || 'A1';
-                      const examTitle = rep?.title || 'CBSE Term 1 Summative Assessment';
-                      const subjects = rep?.subjects && rep.subjects.length > 0 ? rep.subjects.slice(0, 5) : [
-                        { subject: 'Mathematics', obtainedMarks: 94, cbseGrade: 'A1' },
-                        { subject: 'Science & Technology', obtainedMarks: 91, cbseGrade: 'A1' },
-                        { subject: 'English Core', obtainedMarks: 88, cbseGrade: 'A2' },
-                        { subject: 'Social Science', obtainedMarks: 90, cbseGrade: 'A2' },
-                        { subject: 'AI & Coding', obtainedMarks: 98, cbseGrade: 'A1' }
-                      ];
-
-                      return (
-                        <>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-                            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-purple-500/30">
-                              <div className="text-[10px] font-mono text-purple-300 uppercase">{t('portal.card_report_gpa', 'Cumulative GPA')}</div>
-                              <div className="text-2xl font-black text-white font-mono mt-0.5">{gpa}</div>
-                              <div className="text-[10px] text-emerald-400 font-mono mt-0.5">{pct}</div>
-                            </div>
-                            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-purple-500/30">
-                              <div className="text-[10px] font-mono text-purple-300 uppercase">{t('portal.card_report_rank', 'Class Rank')}</div>
-                              <div className="text-2xl font-black text-white font-mono mt-0.5">{rank} <span className="text-sm font-normal text-slate-400">/ 35</span></div>
-                              <div className="text-[10px] text-purple-300 font-mono mt-0.5">Top 5% Percentile</div>
-                            </div>
-                            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-purple-500/30">
-                              <div className="text-[10px] font-mono text-purple-300 uppercase">{t('portal.card_report_grade', 'Overall Grade')}</div>
-                              <div className="text-2xl font-black text-emerald-400 font-mono mt-0.5">{grade}</div>
-                              <div className="text-[10px] text-slate-300 font-mono mt-0.5">Outstanding</div>
-                            </div>
-                            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-purple-500/30">
-                              <div className="text-[10px] font-mono text-purple-300 uppercase">{t('portal.card_report_exam', 'Examination')}</div>
-                              <div className="text-base font-black text-white font-mono mt-1 truncate">{examTitle}</div>
-                              <div className="text-[10px] text-cyan-300 font-mono mt-0.5">{t('portal.active_session', 'Session 2026–27')}</div>
-                            </div>
-                          </div>
-
-                          {/* Subject-Wise Scores Row */}
-                          <div className="mt-4 pt-3 border-t border-purple-500/20">
-                            <div className="text-[11px] font-mono text-slate-400 mb-2 flex items-center justify-between">
-                              <span>{t('portal.card_report_subject_breakdown', 'Subject Scores Breakdown:')}</span>
-                              <span className="text-purple-300 font-bold">{t('portal.card_report_max_marks', '100 Max Marks each')}</span>
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono text-xs">
-                              {subjects.map((sb: any, idx: number) => (
-                                <div key={idx} className="p-2 rounded-xl bg-slate-950/60 border border-purple-500/20 text-center">
-                                  <div className="text-[10px] text-slate-400 truncate">{sb.subject}</div>
-                                  <div className="text-sm font-black text-white mt-0.5">
-                                    {sb.obtainedMarks} <span className="text-[10px] text-emerald-400">{sb.cbseGrade || sb.grade || 'A1'}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="pt-2 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => setActiveTab('skill_passport')}
-                      className="text-xs text-purple-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
-                    >
-                      <ShieldCheck className="w-4 h-4 text-teal-400" />
-                      <span>{t('portal.card_report_hpc', 'View NEP 2020 Holistic Progress Card (HPC)')}</span>
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('report_cards')}
-                      className="text-xs text-purple-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
-                    >
-                      <span>{t('portal.card_report_all_terms', 'All Terms')}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* 5. FEES & RECEIPTS CARD (Vibrant Rose/Pink Gradient) */}
+                {/* 2. FEES & RECEIPTS CARD (Vibrant Rose/Pink Gradient) */}
                 <div className="bg-gradient-to-br from-rose-950 via-pink-900/90 to-slate-950 rounded-3xl p-6 border border-rose-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
                   <div className="absolute top-0 right-0 w-48 h-48 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
 
@@ -1126,19 +858,19 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                         </div>
                       </div>
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                        {t('portal.card_fees_term_due', 'Term 2 Due')}
+                        {(feeSummary?.outstandingBalanceINR || 0) > 0 ? t('portal.card_fees_term_due', 'Term Due') : 'All Dues Paid ✓'}
                       </span>
                     </div>
 
                     <div className="flex items-baseline gap-2 mt-2">
                       <span className="text-3xl font-black text-white font-mono tracking-tight">
-                        ₹{(feeSummary?.outstandingBalanceINR || 4500).toLocaleString('en-IN')}
+                        ₹{(feeSummary?.outstandingBalanceINR ?? 4500).toLocaleString('en-IN')}
                       </span>
                       <span className="text-xs text-rose-300 font-mono">{t('portal.card_fees_outstanding', 'Outstanding')}</span>
                     </div>
 
                     <p className="text-xs text-slate-300 font-mono mt-1">
-                      {t('portal.card_fees_due_date', 'Tuition & Lab Fee • Due by 31 Oct 2026')}
+                      {(invoices?.[0] as any)?.title || invoices?.[0]?.feeHead ? `${(invoices?.[0] as any)?.title || invoices[0].feeHead} • Due: ${(invoices?.[0] as any)?.dueDate || '31 Oct 2026'}` : t('portal.card_fees_due_date', 'Tuition & Lab Fee • Due by 31 Oct 2026')}
                     </p>
 
                     <div className="mt-3.5 p-2.5 rounded-xl bg-slate-950/70 border border-rose-500/30 text-xs font-mono space-y-1">
@@ -1148,7 +880,9 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-slate-400">
                         <span>{t('portal.card_fees_last_paid', 'Last Paid:')}</span>
-                        <span className="text-emerald-400 font-semibold">₹18,500 (Rec #904)</span>
+                        <span className="text-emerald-400 font-semibold">
+                          {receipts?.[0] ? `₹${(receipts[0].amountPaid || (receipts[0] as any)?.amount || 18500).toLocaleString('en-IN')} (${receipts[0].receiptNo || 'Rec #904'})` : '₹18,500 (Rec #904)'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1165,7 +899,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                     </button>
                     <button
                       onClick={() => setActiveTab('fees')}
-                      className="text-xs text-rose-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
+                      className="text-xs text-rose-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
                     >
                       <span>{t('portal.receipts_btn', 'Receipts')}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1173,7 +907,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 6. CLASS TIMETABLE & LIVE BELL CARD (Vibrant Cyan/Blue Gradient) */}
+                {/* 3. CLASS TIMETABLE & LIVE BELL CARD (Vibrant Cyan/Blue Gradient) */}
                 <div className="bg-gradient-to-br from-cyan-950 via-blue-900/90 to-slate-950 rounded-3xl p-6 border border-cyan-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
                   <div className="absolute top-0 right-0 w-48 h-48 bg-cyan-500/10 rounded-full blur-2xl pointer-events-none" />
 
@@ -1198,7 +932,9 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
                     <div className="p-3 rounded-2xl bg-slate-950/70 border border-cyan-500/30">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase">{t('portal.card_timetable_live', 'Period 2 (Live)')}</span>
+                        <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase">
+                          {timetable?.activePeriod?.periodNumber ? `Period ${timetable.activePeriod.periodNumber} (Live)` : t('portal.card_timetable_live', 'Period 2 (Live)')}
+                        </span>
                         <span className="text-xs font-mono text-slate-300">{timetable?.activePeriod?.roomNumber || 'Room 201'}</span>
                       </div>
                       <h5 className="text-base font-extrabold text-white mt-1">
@@ -1215,7 +951,9 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
 
                     <div className="mt-2.5 px-3 py-2 rounded-xl bg-slate-950/40 border border-slate-800 flex items-center justify-between text-xs font-mono">
                       <span className="text-slate-400">{t('portal.card_timetable_next', 'Next (Period 3):')}</span>
-                      <span className="text-white font-bold">Chemistry (Organic) • 10:45 AM</span>
+                      <span className="text-white font-bold">
+                        {timetable?.nextPeriod?.subjectName ? `${timetable.nextPeriod.subjectName} • ${timetable.nextPeriod.startTime || '10:45 AM'}` : 'Chemistry (Organic) • 10:45 AM'}
+                      </span>
                     </div>
                   </div>
 
@@ -1228,7 +966,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                     </button>
                     <button
                       onClick={() => setActiveTab('timetable')}
-                      className="text-xs text-cyan-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
+                      className="text-xs text-cyan-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
                     >
                       <span>{t('portal.full_schedule_btn', 'Full Schedule')}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1236,70 +974,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 7. LIVE BUS GPS TRACKER CARD (Vibrant Teal/Emerald Gradient) */}
-                <div className="bg-gradient-to-br from-teal-950 via-emerald-900/90 to-slate-950 rounded-3xl p-6 border border-teal-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
-
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30">
-                          <Bus className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-400 block">
-                            {t('portal.card_bus_title', 'BUS TRACKER')}
-                          </span>
-                          <h4 className="text-sm font-bold text-white">{t('portal.card_bus_sub', 'Live Transport GPS')}</h4>
-                        </div>
-                      </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>{t('portal.card_bus_active', 'GPS Active')}</span>
-                      </span>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-teal-500/30 font-mono">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-black text-white">{transport?.routeNumber || 'BUS-04'}</span>
-                        <span className="text-xs font-bold text-emerald-400">{transport?.liveGps?.speedKmH ? `${transport.liveGps.speedKmH} km/h` : '38 km/h'}</span>
-                      </div>
-                      <div className="text-xs text-slate-300 mt-1 truncate">
-                        {transport?.routeName || 'Golf Course Road to Campus Super Express'}
-                      </div>
-                      <div className="text-xs text-slate-300 mt-1">
-                        {t('portal.card_bus_status', 'Status:')} <span className="text-emerald-300 font-bold">{transport?.liveGps?.statusText || 'En Route — Approaching DLF Phase 5 Hub'}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">
-                        {transport?.pickupStop ? `Pickup: ${transport.pickupStop} (${transport.pickupTime || '07:20 AM'})` : 'ETA: ~8 mins to DLF Phase 5 Hub'}
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
-                        <span>{t('portal.card_bus_driver', 'Driver:')} {transport?.driverName || 'Ramesh Yadav'}</span>
-                        <a href={`tel:${transport?.driverPhone || '+919810000555'}`} className="text-cyan-400 hover:underline">
-                          {transport?.driverPhone || '+91 98100 00555'}
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 pt-4 border-t border-teal-500/20 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => setActiveTab('bus_tracker')}
-                      className="px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-teal-500/20 cursor-pointer"
-                    >
-                      {t('portal.live_map_btn', 'Live Map View')}
-                    </button>
-                    <a
-                      href={`tel:${dynamicSchoolBrand.contactPhone || '+919811234567'}`}
-                      className="text-xs text-teal-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
-                    >
-                      <Phone className="w-3.5 h-3.5" />
-                      <span>{t('portal.call_driver_btn', 'Call Driver')}</span>
-                    </a>
-                  </div>
-                </div>
-
-                {/* 8. NOTICES & HELPLINE CARD (Vibrant Yellow/Amber Gradient) */}
+                {/* 4. NOTICES & HELPLINE CARD (Vibrant Yellow/Amber Gradient) */}
                 <div className="bg-gradient-to-br from-yellow-950 via-amber-900/90 to-slate-950 rounded-3xl p-6 border border-yellow-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
                   <div className="absolute top-0 right-0 w-48 h-48 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none" />
 
@@ -1324,7 +999,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                     <div className="p-3 rounded-2xl bg-slate-950/70 border border-yellow-500/30">
                       <div className="flex items-center justify-between text-[10px] font-mono text-yellow-300">
                         <span>{t('portal.card_notices_alert', 'Principal Office Alert')}</span>
-                        <span>Oct 16, 2026</span>
+                        <span>{notices[0]?.postedAt || 'Oct 2026'}</span>
                       </div>
                       <h5 className="text-sm font-extrabold text-white mt-1 line-clamp-1">
                         {notices[0]?.title || 'Annual Sports Day & CBSE Science Exhibition 2026'}
@@ -1352,163 +1027,71 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 9. 24/7 AI STUDY TUTOR (Desktop Span 2, Vibrant Fuchsia/Purple Gradient) */}
-                <div className="md:col-span-2 xl:col-span-2 bg-gradient-to-r from-fuchsia-950 via-purple-900 to-indigo-950 rounded-3xl p-6 sm:p-7 border border-fuchsia-400/40 shadow-2xl relative overflow-hidden flex flex-col justify-between gap-5">
-                  <div className="absolute top-0 right-0 w-80 h-80 bg-fuchsia-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                  <div>
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-fuchsia-500/20 pb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-2xl bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30">
-                          <Bot className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-fuchsia-400 block">
-                              {t('portal.card_ai_title', 'AI STUDY TUTOR & DOUBT SOLVER')}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30">
-                              {t('portal.card_ai_aligned', 'NCERT Aligned 24/7')}
-                            </span>
-                          </div>
-                          <h4 className="text-base font-extrabold text-white">{t('portal.card_ai_sub', 'Ask Any Doubt in CBSE Curriculum')}</h4>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => setActiveTab('ai_tutor')}
-                        className="px-3.5 py-1.5 rounded-xl bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-fuchsia-500/20 flex items-center gap-1.5 cursor-pointer self-start sm:self-center"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>{t('portal.open_tutor_btn', 'Open Full Tutor Room')}</span>
-                      </button>
-                    </div>
-
-                    {/* Quick Doubt Prompt Chips */}
-                    <div className="mt-4">
-                      <div className="text-[11px] font-mono text-fuchsia-200/80 mb-2">
-                        {t('portal.card_ai_chips_label', 'Tap a common CBSE doubt to solve instantly:')}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          'Solve: 2x² - 7x + 3 = 0 step by step',
-                          'Explain Faraday Law of Electromagnetic Induction',
-                          'What is difference between Convex & Concave Lens?'
-                        ].map((doubt, i) => (
-                          <button
-                            key={i}
-                            onClick={() => {
-                              setDoubtInput(doubt);
-                              setActiveTab('ai_tutor');
-                              handleSendDoubt(doubt);
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-slate-950/60 hover:bg-fuchsia-950/60 text-xs font-mono text-slate-200 hover:text-white border border-fuchsia-500/30 transition-all text-left flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <span className="text-fuchsia-400">⚡</span>
-                            <span>{doubt}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Mini Input Box in Card */}
-                    <div className="mt-4 pt-3 border-t border-fuchsia-500/20 flex flex-col sm:flex-row items-center gap-2.5">
-                      <div className="relative flex-1 w-full">
-                        <input
-                          type="text"
-                          value={doubtInput}
-                          onChange={(e) => setDoubtInput(e.target.value)}
-                          placeholder={t('portal.card_ai_placeholder', 'Type any math, science, or English concept doubt...')}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              setActiveTab('ai_tutor');
-                              handleSendDoubt();
-                            }
-                          }}
-                          className="w-full px-4 py-2.5 rounded-xl bg-slate-950/80 border border-fuchsia-500/30 text-white text-xs font-mono placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500/50"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                        <label className="flex items-center gap-1.5 text-[11px] font-mono text-fuchsia-200 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={giveHintOnly}
-                            onChange={(e) => setGiveHintOnly(e.target.checked)}
-                            className="rounded bg-slate-900 border-slate-700 text-fuchsia-500 focus:ring-0"
-                          />
-                          <span>{t('portal.card_ai_hint_only', 'Hint Only')}</span>
-                        </label>
-                        <button
-                          onClick={() => {
-                            setActiveTab('ai_tutor');
-                            handleSendDoubt();
-                          }}
-                          className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-600 hover:from-fuchsia-400 hover:to-indigo-500 text-white font-bold text-xs transition-all shadow-md shadow-fuchsia-500/25 flex items-center gap-1.5 cursor-pointer shrink-0"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>{t('portal.ask_ai_btn', 'Ask AI Tutor')}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 flex items-center justify-between text-[11px] font-mono text-fuchsia-300">
-                    <span>{t('portal.card_ai_safe', 'Teacher-curated NCERT syllabus verified responses • 100% Pedagogy Safe')}</span>
-                  </div>
-                </div>
-
-                {/* 10. DIGITAL ID BADGE & GATE PASS CARD (Vibrant Slate/Indigo Gradient) */}
-                <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 border border-indigo-400/30 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                {/* 5. LIVE BUS GPS TRACKER CARD (Desktop Span 2, Vibrant Teal/Emerald Gradient) */}
+                <div className="md:col-span-2 lg:col-span-2 bg-gradient-to-r from-teal-950 via-emerald-900 to-slate-950 rounded-3xl p-6 border border-teal-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
 
                   <div>
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                          <QrCode className="w-4 h-4" />
+                        <div className="p-2 rounded-xl bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                          <Bus className="w-4 h-4" />
                         </div>
                         <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-indigo-400 block">
-                            {t('portal.card_id_title', 'DIGITAL STUDENT ID')}
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-teal-400 block">
+                            {t('portal.card_bus_title', 'BUS TRACKER')}
                           </span>
-                          <h4 className="text-sm font-bold text-white">{t('portal.card_id_sub', 'Gate Pass & RFID')}</h4>
+                          <h4 className="text-sm font-bold text-white">{t('portal.card_bus_sub', 'Live Transport GPS')}</h4>
                         </div>
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                        {t('portal.card_id_active', 'Active')}
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>{t('portal.card_bus_active', 'GPS Active')}</span>
                       </span>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/70 border border-indigo-500/30 flex items-center justify-between gap-3 font-mono">
-                      <div className="space-y-1 text-xs">
-                        <div className="text-white font-extrabold">{activeWard?.name || 'Aarav Sharma'}</div>
-                        <div className="text-slate-400 text-[10px]">
-                          {activeWard?.grade || 'Class 10'}-{activeWard?.section || 'A'} • Roll #{activeWard?.rollNo || 14}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-slate-950/70 border border-teal-500/30 font-mono">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-black text-white">{transport?.routeNumber || 'BUS-04'}</span>
+                          <span className="text-xs font-bold text-emerald-400">{transport?.liveGps?.speedKmH ? `${transport.liveGps.speedKmH} km/h` : '38 km/h'}</span>
                         </div>
-                        <div className="text-[10px] text-cyan-300">RFID: 984210</div>
-                        <div className="text-[10px] text-rose-300">Blood: {profile?.bloodGroup || 'B+'}</div>
+                        <div className="text-xs text-slate-300 mt-1 truncate">
+                          {transport?.routeName || 'Golf Course Road to Campus Super Express'}
+                        </div>
+                        <div className="text-xs text-slate-300 mt-1">
+                          {t('portal.card_bus_status', 'Status:')} <span className="text-emerald-300 font-bold">{transport?.liveGps?.statusText || 'En Route — Approaching DLF Phase 5 Hub'}</span>
+                        </div>
                       </div>
 
-                      <div className="w-16 h-16 bg-white p-1 rounded-xl flex items-center justify-center shrink-0 shadow-md">
-                        <QrCode className="w-14 h-14 text-slate-950" />
+                      <div className="border-t sm:border-t-0 sm:border-l border-slate-800 sm:pl-3 pt-2 sm:pt-0 flex flex-col justify-between">
+                        <div className="text-[11px] text-slate-400">
+                          {transport?.pickupStop ? `Pickup: ${transport.pickupStop} (${transport.pickupTime || '07:20 AM'})` : 'ETA: ~8 mins to DLF Phase 5 Hub'}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-slate-300 flex items-center justify-between">
+                          <span>{t('portal.card_bus_driver', 'Driver:')} {transport?.driverName || 'Ramesh Yadav'}</span>
+                          <a href={`tel:${transport?.driverPhone || '+919810000555'}`} className="text-cyan-400 hover:underline">
+                            {transport?.driverPhone || '+91 98100 00555'}
+                          </a>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-5 pt-4 border-t border-indigo-500/20 flex items-center justify-between gap-2">
+                  <div className="mt-5 pt-4 border-t border-teal-500/20 flex items-center justify-between gap-2">
                     <button
-                      onClick={() => setShowIdCardModal(true)}
-                      className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                      onClick={() => setActiveTab('bus_tracker')}
+                      className="px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs transition-all shadow-md shadow-teal-500/20 cursor-pointer"
                     >
-                      {t('portal.view_id_card_btn', 'View Full ID Card')}
+                      {t('portal.live_map_btn', 'Live Map View')}
                     </button>
-                    <button
-                      onClick={() => setActiveTab('id_badge')}
-                      className="text-xs text-indigo-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
+                    <a
+                      href={`tel:${dynamicSchoolBrand.contactPhone || transport?.driverPhone || '+919811234567'}`}
+                      className="text-xs text-teal-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors"
                     >
-                      <span>{t('portal.tab_id_badge', 'Full Badge')}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>{t('portal.call_driver_btn', 'Call Driver')}</span>
+                    </a>
                   </div>
                 </div>
               </div>
