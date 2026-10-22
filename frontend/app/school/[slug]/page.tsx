@@ -440,6 +440,7 @@ export default function SchoolPublicPage() {
   const [authenticating, setAuthenticating] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [loginSuccessMsg, setLoginSuccessMsg] = useState("");
+  const [cmsTree, setCmsTree] = useState<any>(null);
 
   const [school, setSchool] = useState<SchoolInfo>({
     id: "87be8580-89af-4d9c-952b-73a02a9eae82",
@@ -496,14 +497,17 @@ export default function SchoolPublicPage() {
     fetch(`/api/public/schools/${encodeURIComponent(slugParam)}/cms`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.success && data.school) {
-          setSchool((prev) => ({
-            ...prev,
-            ...data.school,
-            address: data.school.address || prev.address,
-            contactPhone: data.school.contactPhone || prev.contactPhone,
-            affiliationNumber: data.school.affiliationNumber || prev.affiliationNumber || "CBSE-AFF-2130894",
-          }));
+        if (data?.success) {
+          if (data.cmsTree) setCmsTree(data.cmsTree);
+          if (data.school) {
+            setSchool((prev) => ({
+              ...prev,
+              ...data.school,
+              address: data.school.address || prev.address,
+              contactPhone: data.school.contactPhone || prev.contactPhone,
+              affiliationNumber: data.school.affiliationNumber || prev.affiliationNumber || "CBSE-AFF-2130894",
+            }));
+          }
         }
       })
       .catch(() => {});
@@ -876,17 +880,15 @@ export default function SchoolPublicPage() {
 
             <div className="space-y-1">
               <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight text-white">
-                {t.hero.title}
+                {cmsTree?.content?.heroHeadline || (isHi ? `${school.name} में आपका स्वागत है` : `Welcome to ${school.name}`)}
               </h2>
-              {isHi && (
-                <div className="text-sm font-mono text-cyan-300 font-semibold tracking-wide">
-                  New Ideal Public School • Mathura (CBSE Board)
-                </div>
-              )}
+              <div className="text-sm font-mono text-cyan-300 font-semibold tracking-wide">
+                {school.name} • {school.city} ({school.board} Board)
+              </div>
             </div>
 
             <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-2xl">
-              {t.hero.desc}
+              {cmsTree?.content?.heroSubheadline || t.hero.desc}
             </p>
 
             <div className="flex flex-wrap items-center gap-3.5 pt-2">
@@ -967,7 +969,7 @@ export default function SchoolPublicPage() {
               <span>📱</span> {t.appSection.badge}
             </div>
             <h3 className="text-2xl sm:text-3xl font-black">
-              {t.appSection.title}
+              {isHi ? `${school.name} आधिकारिक मोबाइल ऐप डाउनलोड करें` : `Download ${school.name} Official Mobile App`}
             </h3>
             <p className="text-xs sm:text-sm text-emerald-200 max-w-xl leading-relaxed">
               {t.appSection.desc}
@@ -1023,38 +1025,137 @@ export default function SchoolPublicPage() {
         </div>
       </section>
 
-      {/* 6. ABOUT & PRINCIPAL DESK */}
-      <section id="about" className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
-          <div className="lg:col-span-7 space-y-5">
-            <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black uppercase">
-              {t.aboutSection.badge}
-            </span>
-            <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
-              {t.aboutSection.title}
-            </h3>
-            <blockquote className="p-5 rounded-2xl bg-white border-l-4 border-indigo-600 shadow-sm text-slate-700 italic text-sm sm:text-base leading-relaxed">
-              {t.aboutSection.quote}
-            </blockquote>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              {t.aboutSection.p1}
-            </p>
+      {/* 6. INSTITUTIONAL LEADERSHIP: PRINCIPAL & MANAGING DIRECTOR */}
+      <section id="about" className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-10">
+        <div className="text-center max-w-3xl mx-auto space-y-3">
+          <span className="px-3.5 py-1.5 rounded-full bg-indigo-100 text-indigo-900 text-xs font-mono font-black uppercase tracking-wider inline-block">
+            {isHi ? "संस्थागत नेतृत्व एवं मार्गदर्शन (Institutional Leadership)" : "Institutional Leadership & Vision"}
+          </span>
+          <h3 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight">
+            {isHi ? `${school.name}: प्रधानाचार्य व प्रबंध निदेशक का संदेश` : `Desk of the Principal & Managing Director`}
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-600 font-mono">
+            {isHi
+              ? "विद्यार्थियों के सर्वांगीण विकास, वैज्ञानिक दृष्टिकोण और उच्च मानवीय मूल्यों के प्रति हमारी संस्थागत प्रतिबद्धता"
+              : "Fostering academic distinction, ethical leadership, and scientific innovation for Session 2026-27."}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+          {/* Card 1: Principal's Leadership Desk */}
+          <div className="bg-white rounded-3xl border-2 border-indigo-100 p-6 sm:p-8 shadow-xl hover:shadow-2xl transition-all flex flex-col justify-between space-y-6 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-bl from-indigo-100 to-transparent rounded-full -mr-10 -mt-10 pointer-events-none" />
+
+            <div className="space-y-4 relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-indigo-300 bg-indigo-50 overflow-hidden shadow-md shrink-0 ring-4 ring-indigo-50 group-hover:scale-105 transition-transform">
+                  <img
+                    src={
+                      cmsTree?.content?.principalPhotoUrl ||
+                      "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&auto=format&fit=crop&q=80"
+                    }
+                    alt="Principal"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-indigo-100 text-indigo-900 border border-indigo-300 inline-block">
+                    {isHi ? "प्रधानाचार्य का संदेश (Principal's Desk)" : "Principal's Desk"}
+                  </span>
+                  <h4 className="text-base sm:text-lg font-black text-slate-950 mt-1">
+                    {cmsTree?.content?.principalName || (isHi ? "डॉ. अनन्या शर्मा" : "Dr. Ananya Sharma")}
+                  </h4>
+                  <p className="text-xs font-mono font-bold text-indigo-700">
+                    {cmsTree?.content?.principalTitle || (isHi ? "प्रधानाचार्य एवं शैक्षणिक प्रमुख" : "Principal & Head of Academics")}
+                  </p>
+                  <p className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    {cmsTree?.content?.principalQualifications || "Ph.D. Education, M.Sc., B.Ed. (22+ Years in CBSE Leadership)"}
+                  </p>
+                </div>
+              </div>
+
+              <blockquote className="p-4 rounded-2xl bg-indigo-50/50 border-l-4 border-indigo-600 text-slate-700 italic text-xs sm:text-sm leading-relaxed">
+                "{cmsTree?.content?.principalMessage || (isHi
+                  ? "हमारा ध्येय प्रत्येक विद्यार्थी में वैज्ञानिक चिंतन, नैतिक चरित्र और भविष्योन्मुख नवाचार का विकास करना है ताकि वे वैश्विक मंच पर उत्कृष्ट प्रदर्शन कर सकें।"
+                  : "Our mission is to empower young minds with scientific innovation, ethical leadership, and individual curiosity to excel globally.")}"
+              </blockquote>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-600">
+              <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                {isHi ? "सीबीएसई मान्यता प्राप्त परिसर" : "CBSE Affiliated Academic Enclave"}
+              </span>
+              <span className="text-[11px] font-bold text-slate-500">Session 2026-27</span>
+            </div>
           </div>
 
-          <div className="lg:col-span-5 space-y-4">
-            <div className="p-6 rounded-3xl bg-indigo-900 text-white shadow-xl space-y-4">
-              <div className="text-xs font-mono uppercase text-amber-300 font-bold">
-                {t.aboutSection.factsTitle}
+          {/* Card 2: Managing Director & Chairman's Desk */}
+          <div className="bg-white rounded-3xl border-2 border-purple-100 p-6 sm:p-8 shadow-xl hover:shadow-2xl transition-all flex flex-col justify-between space-y-6 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-bl from-purple-100 to-transparent rounded-full -mr-10 -mt-10 pointer-events-none" />
+
+            <div className="space-y-4 relative z-10">
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-purple-300 bg-purple-50 overflow-hidden shadow-md shrink-0 ring-4 ring-purple-50 group-hover:scale-105 transition-transform">
+                  <img
+                    src={
+                      cmsTree?.content?.directorPhotoUrl ||
+                      "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=800&auto=format&fit=crop&q=80"
+                    }
+                    alt="Managing Director"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-purple-100 text-purple-900 border border-purple-300 inline-block">
+                    {isHi ? "प्रबंध निदेशक का विजन (Director's Vision)" : "Managing Director & Founder"}
+                  </span>
+                  <h4 className="text-base sm:text-lg font-black text-slate-950 mt-1">
+                    {cmsTree?.content?.directorName || (isHi ? "इंजी. राजेश दक्षोरा" : "Er. Rajesh Dakshora")}
+                  </h4>
+                  <p className="text-xs font-mono font-bold text-purple-700">
+                    {cmsTree?.content?.directorTitle || (isHi ? "प्रबंध निदेशक एवं संस्थापक" : "Managing Director & Founder")}
+                  </p>
+                  <p className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    {cmsTree?.content?.directorQualifications || "B.Tech (IIT Delhi), M.S. (Stanford), Education Futurist"}
+                  </p>
+                </div>
               </div>
-              <ul className="space-y-3 text-xs">
-                {t.aboutSection.facts.map((f, idx) => (
-                  <li key={idx} className="flex items-center justify-between border-b border-indigo-800 pb-2">
-                    <span className="text-indigo-200">{f.label}:</span>
-                    <span className="font-bold">{f.val}</span>
-                  </li>
-                ))}
-              </ul>
+
+              <blockquote className="p-4 rounded-2xl bg-purple-50/50 border-l-4 border-purple-600 text-slate-700 italic text-xs sm:text-sm leading-relaxed">
+                "{cmsTree?.content?.directorMessage || (isHi
+                  ? "दक्षोरा 2.0 आधुनिक डिजिटल अधोसंरचना, पारदर्शी संस्थागत प्रबंधन और समग्र छात्र-केंद्रित शिक्षा को एक ही एकीकृत क्लाउड डेटाबेस पर जोड़ता है।"
+                  : "Dakshora 2.0 brings together world-class digital infrastructure, transparent governance, and holistic student-centric learning on a unified cloud database.")}"
+              </blockquote>
             </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-mono text-slate-600">
+              <span className="font-bold text-purple-900 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-500" />
+                {isHi ? "3-इन-1 एकीकृत तकनीक (वेबसाइट, ERP व ऐप)" : "3-in-1 Unified Tech (Website, ERP & App)"}
+              </span>
+              <span className="text-[11px] font-bold text-slate-500">Live Cloud Sync</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Institution Highlights / Fast Facts Strip */}
+        <div className="p-6 rounded-3xl bg-slate-900 text-white shadow-xl grid grid-cols-2 sm:grid-cols-4 gap-4 text-center font-mono">
+          <div className="space-y-1">
+            <span className="text-slate-400 text-[10px] block uppercase">{isHi ? "बोर्ड संबद्धता" : "AFFILIATION"}</span>
+            <span className="font-black text-amber-300 text-xs sm:text-sm">{school.affiliationNumber || "CBSE-AFF-2130894"}</span>
+          </div>
+          <div className="space-y-1">
+            <span className="text-slate-400 text-[10px] block uppercase">{isHi ? "परिसर शहर" : "CAMPUS CITY"}</span>
+            <span className="font-black text-cyan-300 text-xs sm:text-sm">{school.city || "New Delhi"}</span>
+          </div>
+          <div className="space-y-1">
+            <span className="text-slate-400 text-[10px] block uppercase">{isHi ? "कक्षाएं" : "GRADES"}</span>
+            <span className="font-black text-emerald-300 text-xs sm:text-sm">Nursery to Class XII</span>
+          </div>
+          <div className="space-y-1">
+            <span className="text-slate-400 text-[10px] block uppercase">{isHi ? "सत्र" : "SESSION"}</span>
+            <span className="font-black text-purple-300 text-xs sm:text-sm">2026 - 2027</span>
           </div>
         </div>
       </section>

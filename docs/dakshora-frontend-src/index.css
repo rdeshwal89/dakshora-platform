@@ -1,0 +1,298 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #EDF2F7;
+    color: #0F172A;
+    overflow-x: hidden;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Devanagari', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Optimize Devanagari glyphs line-height to avoid vowel matra clipping */
+  :lang(hi), [lang="hi"] {
+    line-height: 1.6;
+  }
+}
+
+/* Custom modern light scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* High-Contrast, Eye-Catchy Modern Canvas & Panel System */
+.glass-panel {
+  background: #FFFFFF !important;
+  border: 2px solid #CBD5E1 !important;
+  box-shadow: 0 14px 40px -10px rgba(15, 23, 42, 0.09), 0 4px 14px 0 rgba(15, 23, 42, 0.04) !important;
+  color: #020617;
+}
+
+/* Ensure headings inside .glass-panel have bold, punchy, dark visibility */
+.glass-panel h1,
+.glass-panel h2,
+.glass-panel h3,
+.glass-panel h4 {
+  color: #020617 !important;
+  font-weight: 900 !important;
+  letter-spacing: -0.02em;
+}
+
+/* Ensure secondary text is high-contrast deep slate, not washed-out faint gray */
+.glass-panel .text-slate-400,
+.glass-panel .text-slate-500 {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+/* Contrast fix for text-white headers & titles inside glass-panel */
+.glass-panel > div > div > h1.text-white,
+.glass-panel > div > div > h2.text-white,
+.glass-panel > div > div > h3.text-white,
+.glass-panel > div > h1.text-white,
+.glass-panel > div > h2.text-white,
+.glass-panel > div > h3.text-white,
+.glass-panel > h1.text-white,
+.glass-panel > h2.text-white,
+.glass-panel > h3.text-white,
+.glass-panel .text-white:not(button *):not(button):not([class*="from-"]):not([class*="to-"]):not([class*="bg-indigo"]):not([class*="bg-purple"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-cyan"]):not([class*="bg-sky"]):not([class*="bg-blue"]):not([class*="bg-teal"]):not([class*="badge"]) {
+  color: #020617 !important;
+}
+
+/* Sub-containers inside glass-panel that were dark (bg-slate-900, bg-slate-950) transformed to crisp high-contrast cards */
+.glass-panel .bg-slate-900\/60,
+.glass-panel .bg-slate-900\/70,
+.glass-panel .bg-slate-900\/80,
+.glass-panel .bg-slate-950\/80,
+.glass-panel .bg-slate-900 {
+  background-color: #F8FAFC !important;
+  border: 2px solid #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+.glass-panel .bg-slate-900\/60 .text-white,
+.glass-panel .bg-slate-900\/70 .text-white,
+.glass-panel .bg-slate-900\/80 .text-white,
+.glass-panel .bg-slate-950\/80 .text-white,
+.glass-panel .bg-slate-900 .text-white {
+  color: #020617 !important;
+  font-weight: 900 !important;
+}
+
+/* Table headers & cells inside glass panel */
+.glass-panel table tr.bg-slate-900\/70,
+.glass-panel table thead tr {
+  background-color: #F1F5F9 !important;
+  color: #0F172A !important;
+  border-bottom: 2px solid #CBD5E1 !important;
+}
+
+.glass-panel table thead th {
+  color: #0F172A !important;
+  font-weight: 800 !important;
+  font-size: 0.8rem !important;
+}
+
+.glass-panel table tbody tr {
+  border-bottom: 1px solid #E2E8F0 !important;
+}
+
+.glass-panel table tbody tr:hover {
+  background-color: #F8FAFC !important;
+}
+
+.glass-panel table tbody td {
+  color: #0F172A !important;
+  font-weight: 600 !important;
+}
+
+/* Form inputs & Selects inside glass panel */
+.glass-panel input[type="text"],
+.glass-panel input[type="search"],
+.glass-panel input[type="date"],
+.glass-panel input[type="number"],
+.glass-panel input[type="email"],
+.glass-panel select {
+  background-color: #FFFFFF !important;
+  border: 2px solid #CBD5E1 !important;
+  color: #020617 !important;
+  font-weight: 600 !important;
+}
+
+.glass-panel input::placeholder {
+  color: #64748B !important;
+}
+
+/* Border overrides */
+.glass-panel .border-slate-800,
+.glass-panel .border-slate-800\/80 {
+  border-color: #CBD5E1 !important;
+}
+
+.glass-panel-hover {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel-hover:hover {
+  border-color: rgba(99, 102, 241, 0.5) !important;
+  box-shadow: 0 18px 40px -10px rgba(99, 102, 241, 0.15), 0 0 20px rgba(168, 85, 247, 0.08) !important;
+  transform: translateY(-2px);
+}
+
+/* Vibrant pastel glow effects */
+.glow-purple {
+  box-shadow: 0 0 25px rgba(168, 85, 247, 0.2);
+}
+
+.glow-pink {
+  box-shadow: 0 0 25px rgba(236, 72, 153, 0.2);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 25px rgba(14, 165, 233, 0.2);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.2);
+}
+
+.glow-amber {
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.2);
+}
+
+.glow-indigo {
+  box-shadow: 0 0 25px rgba(99, 102, 241, 0.22);
+}
+
+.glow-rose {
+  box-shadow: 0 0 25px rgba(244, 63, 94, 0.22);
+}
+
+/* Mobile-First horizontal swipeable pill bar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Premium interactive card micro-interactions */
+.card-interactive {
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-interactive:hover {
+  transform: translateY(-3px);
+}
+.card-interactive:active {
+  transform: scale(0.98);
+}
+
+/* Vibrant text gradient matching 'future skills' in second picture */
+.text-future-skills {
+  background: linear-gradient(135deg, #7C3AED 0%, #D946EF 50%, #EC4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.font-mono-code {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ========================================================================= */
+/* 🖨️ A4 PRINT OPTIMIZATION FOR OFFICIAL REPORT CARDS & CERTIFICATES */
+/* ========================================================================= */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  body {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+
+  /* Hide entire application chrome, headers, navbars, sidebars, buttons */
+  header,
+  nav,
+  footer,
+  aside,
+  button,
+  .print\\:hidden,
+  [role="dialog"] > div:first-child,
+  .backdrop-blur-md,
+  .backdrop-blur-xl {
+    display: none !important;
+  }
+
+  /* Exclusively display printable documents (Report Card, Fee Receipts, Transfer Certificates, Question Papers & Remedial Reports) */
+  #printable-report-card,
+  #printable-receipt,
+  #printable-tc-certificate,
+  #printable-question-paper,
+  #printable-remedial-report {
+    display: block !important;
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    z-index: 999999 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #printable-id-card,
+  #printable-batch-id-cards {
+    display: block !important;
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 10mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #FFFFFF !important;
+    z-index: 999999 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #printable-report-card *,
+  #printable-receipt *,
+  #printable-tc-certificate *,
+  #printable-question-paper *,
+  #printable-remedial-report * {
+    color: #000000 !important;
+    border-color: #333333 !important;
+  }
+}
+
+

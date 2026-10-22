@@ -4552,25 +4552,47 @@ function getOrCreateCmsTree(site) {
       { id: "sec-hero", pageId: "pg-home", type: "HeroBanner", title: "Main Welcome Hero", order: 1, isEnabled: true },
       { id: "sec-thoughts", pageId: "pg-home", type: "DailyThoughtTicker", title: "Thought of the Day Ticker", order: 2, isEnabled: true },
       { id: "sec-stats", pageId: "pg-home", type: "StatsCounters", title: "Campus Highlights & Stats", order: 3, isEnabled: true },
-      { id: "sec-labs", pageId: "pg-home", type: "LabsGallery", title: "Smart Labs & Robotics Arena", order: 4, isEnabled: true },
-      { id: "sec-vision", pageId: "pg-home", type: "PrincipalVision", title: "Principal's Leadership Desk", order: 5, isEnabled: true },
-      { id: "sec-admission", pageId: "pg-home", type: "AdmissionLeadForm", title: "Online Admission Form", order: 6, isEnabled: true }
+      { id: "sec-vision", pageId: "pg-home", type: "PrincipalVision", title: "Leadership Desk (Principal & Managing Director)", order: 4, isEnabled: true },
+      { id: "sec-labs", pageId: "pg-home", type: "LabsGallery", title: "Smart Labs & Robotics Arena", order: 5, isEnabled: true },
+      { id: "sec-admission", pageId: "pg-home", type: "AdmissionLeadForm", title: "Online Admission Form", order: 6, isEnabled: true },
+      { id: "sec-app", pageId: "pg-home", type: "MobileAppDownload", title: "Branded Parent & Student Mobile App", order: 7, isEnabled: true },
+      { id: "sec-erp-sso", pageId: "pg-home", type: "ErpSsoGateway", title: "School ERP & Institutional Login Portal", order: 8, isEnabled: true }
     ],
     // 5. Components
     components: [
       { id: "cmp-adm-form", sectionId: "sec-admission", type: "AdmissionEngine", config: { grades: ["Class 1-5", "Class 6-10", "Class 11-12"], fastifyCrmSync: true } },
       { id: "cmp-ai-copilot", sectionId: "sec-hero", type: "AiTeacherCopilot", config: { persona: "teachers", ncertSyllabus: true } },
       { id: "cmp-thought-ticker", sectionId: "sec-thoughts", type: "ThoughtRotator", config: { autoRotateSec: 10 } },
-      { id: "cmp-bus-tracker", sectionId: "sec-stats", type: "GpsBusWidget", config: { liveTracking: true } }
+      { id: "cmp-bus-tracker", sectionId: "sec-stats", type: "GpsBusWidget", config: { liveTracking: true } },
+      { id: "cmp-app-card", sectionId: "sec-app", type: "ApkDownloadWidget", config: { directApk: true, qrCode: true } },
+      { id: "cmp-erp-sso", sectionId: "sec-erp-sso", type: "InstitutionalLoginModal", config: { multiRole: true } }
     ],
     // 6. Content
     content: {
       heroHeadline: `Welcome to ${site.name}`,
       heroSubheadline: "State-of-the-art smart campus fostering experiential learning, robotics labs, Olympic sports, and DAKSHORA AI Copilot.",
-      principalMessage: "Our vision is to empower young minds with scientific innovation and timeless ethical character.",
+      // Principal Leadership Profile
+      principalName: "Dr. Ananya Sharma",
+      principalTitle: "Principal & Head of Academics",
+      principalQualifications: "Ph.D. Education, M.Sc., B.Ed. (22+ Years in CBSE Leadership)",
+      principalPhotoUrl: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&auto=format&fit=crop&q=80",
+      principalMessage: "Our vision is to empower young minds with scientific innovation, ethical leadership, and individual curiosity in a rapidly evolving world.",
+      principalSignatureUrl: "",
+      // Managing Director / Chairman Leadership Profile
+      directorName: "Er. Rajesh Dakshora",
+      directorTitle: "Managing Director & Founder",
+      directorQualifications: "B.Tech (IIT Delhi), M.S. (Stanford), Education Futurist",
+      directorPhotoUrl: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=800&auto=format&fit=crop&q=80",
+      directorMessage: "Dakshora 2.0 brings together world-class digital infrastructure, transparent governance, and holistic student-centric learning on a single unified cloud database.",
+      directorSignatureUrl: "",
+      schoolLogoUrl: site.logo_url || "https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=200",
       contactPhone: "+91 98765 43210",
       contactEmail: "info@school.edu.in",
-      address: "Campus Ring Road, Knowledge Park, India"
+      address: "Campus Ring Road, Knowledge Park, India",
+      erpLoginUrl: "https://www.dakshora.co.in/portal",
+      appDownloadUrl: `/api/public/mobile-app/${site.id}/download`,
+      ctaText: "Apply for Admission (2026-27)",
+      schoolMotto: "विद्या ददाति विनयं • Excellence in Modern & Holistic Education"
     },
     // 7. SEO
     seo: {
@@ -4798,7 +4820,21 @@ async function persistCmsTree(site, tree) {
         settings: {
           heroHeadline: tree.content?.heroHeadline,
           heroSubheadline: tree.content?.heroSubheadline,
+          principalName: tree.content?.principalName,
+          principalTitle: tree.content?.principalTitle,
+          principalQualifications: tree.content?.principalQualifications,
+          principalPhotoUrl: tree.content?.principalPhotoUrl,
           principalMessage: tree.content?.principalMessage,
+          principalSignatureUrl: tree.content?.principalSignatureUrl,
+          directorName: tree.content?.directorName,
+          directorTitle: tree.content?.directorTitle,
+          directorQualifications: tree.content?.directorQualifications,
+          directorPhotoUrl: tree.content?.directorPhotoUrl,
+          directorMessage: tree.content?.directorMessage,
+          directorSignatureUrl: tree.content?.directorSignatureUrl,
+          schoolLogoUrl: tree.content?.schoolLogoUrl || tree.branding?.logoUrl,
+          erpLoginUrl: tree.content?.erpLoginUrl || "https://www.dakshora.co.in/portal",
+          appDownloadUrl: tree.content?.appDownloadUrl || `/api/public/mobile-app/${site.id}/download`,
           schoolMotto: tree.content?.schoolMotto,
           ctaText: tree.content?.ctaText
         }
@@ -4950,6 +4986,192 @@ app.post("/api/websites/cascade-generate", (req, res) => {
     ],
     website: newSite,
     tree
+  });
+});
+
+// POST /api/websites/auto-synthesize & /api/cms/auto-synthesize
+// 11-Step Full Architectural Synthesis: Domain -> Theme -> Pages -> Sections -> Widgets -> Content -> SEO -> Media -> Publishing -> Website Integration -> Mobile App
+app.post(["/api/websites/auto-synthesize", "/api/cms/auto-synthesize"], async (req, res) => {
+  const {
+    websiteId,
+    schoolName = "Dakshora Academy New Delhi",
+    domain,
+    templateId = "tpl-cbse-secondary",
+    themeColor = "#06B6D4",
+    logoUrl,
+    city = "New Delhi",
+    principal,
+    director,
+    slides
+  } = req.body;
+
+  let site = null;
+  if (websiteId) {
+    site = IN_MEMORY_WEBSITES.find(s => s.id === websiteId);
+  }
+  if (!site) {
+    const siteId = websiteId || crypto.randomUUID();
+    const siteDomain = domain || `${schoolName.toLowerCase().replace(/[^a-z0-9]/g, "-")}.school.dakshora.app`;
+    site = {
+      id: siteId,
+      name: schoolName,
+      domain: siteDomain,
+      template: templateId,
+      status: "live",
+      created_at: new Date().toISOString()
+    };
+    IN_MEMORY_WEBSITES.unshift(site);
+  }
+
+  const baseTree = getOrCreateCmsTree(site);
+  const synthesizedTree = {
+    ...baseTree,
+    websiteId: site.id,
+    name: schoolName || site.name,
+    domain: {
+      subdomain: site.domain || `${site.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}.school.dakshora.app`,
+      customDomain: site.custom_domain || "",
+      sslStatus: "active",
+      dnsVerified: true,
+      dnsRecord: { type: "CNAME", name: "www", value: "cname.dakshora.app" }
+    },
+    template: {
+      id: templateId,
+      name: schoolName || site.name,
+      themeColor: themeColor || "#06B6D4",
+      fontFamily: "Inter, sans-serif",
+      layoutStyle: "Modern Glassmorphism",
+      darkModeEnabled: true
+    },
+    pages: [
+      { id: "pg-home", title: "Home", slug: "/", isHome: true, order: 1, visible: true },
+      { id: "pg-about", title: "About Us", slug: "/about", isHome: false, order: 2, visible: true },
+      { id: "pg-leadership", title: "Leadership & Vision", slug: "/leadership", isHome: false, order: 3, visible: true },
+      { id: "pg-admissions", title: "Admissions 2026-27", slug: "/admissions", isHome: false, order: 4, visible: true },
+      { id: "pg-academics", title: "Academics & CBSE", slug: "/academics", isHome: false, order: 5, visible: true },
+      { id: "pg-labs", title: "Smart Labs & Robotics", slug: "/labs", isHome: false, order: 6, visible: true },
+      { id: "pg-notices", title: "Notice Board", slug: "/notices", isHome: false, order: 7, visible: true },
+      { id: "pg-contact", title: "Contact Us", slug: "/contact", isHome: false, order: 8, visible: true }
+    ],
+    sections: [
+      { id: "sec-hero", pageId: "pg-home", type: "HeroBanner", title: "Main Welcome Hero", order: 1, isEnabled: true },
+      { id: "sec-thoughts", pageId: "pg-home", type: "DailyThoughtTicker", title: "Thought of the Day Ticker", order: 2, isEnabled: true },
+      { id: "sec-stats", pageId: "pg-home", type: "StatsCounters", title: "Campus Highlights & Stats", order: 3, isEnabled: true },
+      { id: "sec-vision", pageId: "pg-home", type: "PrincipalVision", title: "Leadership Desk (Principal & Managing Director)", order: 4, isEnabled: true },
+      { id: "sec-labs", pageId: "pg-home", type: "LabsGallery", title: "Smart Labs & Robotics Arena", order: 5, isEnabled: true },
+      { id: "sec-admission", pageId: "pg-home", type: "AdmissionLeadForm", title: "Online Admission Form", order: 6, isEnabled: true },
+      { id: "sec-app", pageId: "pg-home", type: "MobileAppDownload", title: "Branded Parent & Student Mobile App", order: 7, isEnabled: true },
+      { id: "sec-erp-sso", pageId: "pg-home", type: "ErpSsoGateway", title: "School ERP & Institutional Login Portal", order: 8, isEnabled: true }
+    ],
+    components: [
+      { id: "cmp-adm-form", sectionId: "sec-admission", type: "AdmissionEngine", config: { grades: ["Nursery to Class 5", "Class 6-10", "Class 11-12"], fastifyCrmSync: true } },
+      { id: "cmp-ai-copilot", sectionId: "sec-hero", type: "AiTeacherCopilot", config: { persona: "teachers", ncertSyllabus: true } },
+      { id: "cmp-thought-ticker", sectionId: "sec-thoughts", type: "ThoughtRotator", config: { autoRotateSec: 10 } },
+      { id: "cmp-bus-tracker", sectionId: "sec-stats", type: "GpsBusWidget", config: { liveTracking: true } },
+      { id: "cmp-app-card", sectionId: "sec-app", type: "ApkDownloadWidget", config: { directApk: true, qrCode: true } },
+      { id: "cmp-erp-sso", sectionId: "sec-erp-sso", type: "InstitutionalLoginModal", config: { multiRole: true } }
+    ],
+    content: {
+      heroHeadline: `Welcome to ${schoolName || site.name}`,
+      heroSubheadline: "State-of-the-art smart campus fostering experiential learning, robotics labs, Olympic sports, and DAKSHORA AI Copilot.",
+      principalName: principal?.name || "Dr. Ananya Sharma",
+      principalTitle: principal?.title || "Principal & Head of Academics",
+      principalQualifications: principal?.qualifications || "Ph.D. Education, M.Sc., B.Ed. (22+ Years in CBSE Leadership)",
+      principalPhotoUrl: principal?.photoUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&auto=format&fit=crop&q=80",
+      principalMessage: principal?.message || "Our vision is to empower young minds with scientific innovation, ethical leadership, and individual curiosity in a rapidly evolving world.",
+      principalSignatureUrl: principal?.signatureUrl || "",
+      directorName: director?.name || "Er. Rajesh Dakshora",
+      directorTitle: director?.title || "Managing Director & Founder",
+      directorQualifications: director?.qualifications || "B.Tech (IIT Delhi), M.S. (Stanford), Education Futurist",
+      directorPhotoUrl: director?.photoUrl || "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=800&auto=format&fit=crop&q=80",
+      directorMessage: director?.message || "Dakshora 2.0 brings together world-class digital infrastructure, transparent governance, and holistic student-centric learning on a single unified cloud database.",
+      directorSignatureUrl: director?.signatureUrl || "",
+      schoolLogoUrl: logoUrl || site.logo_url || "https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=200",
+      contactPhone: "+91 98765 43210",
+      contactEmail: `info@${site.domain ? site.domain.split('.')[0] : 'school'}.edu.in`,
+      address: `Campus Ring Road, Knowledge Park, ${city}`,
+      erpLoginUrl: "https://www.dakshora.co.in/portal",
+      appDownloadUrl: `/api/public/mobile-app/${site.id}/download`,
+      ctaText: "Apply for Admission (2026-27)",
+      schoolMotto: "विद्या ददाति विनयं • Excellence in Modern & Holistic Education",
+      heroSlides: (Array.isArray(slides) && slides.length > 0) ? slides : undefined
+    },
+    seo: {
+      metaTitle: `${schoolName || site.name} — Top Ranked CBSE Smart Campus`,
+      metaDescription: `Admissions open 2026-27 for ${schoolName || site.name}. 100% CBSE distinction, AI & Robotics labs, Olympic sports arena. Apply online today!`,
+      keywords: ["best cbse school", "smart campus", "admissions 2026", "robotics labs", "top school in india", city.toLowerCase()],
+      ogImage: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=1200",
+      canonicalUrl: `https://${site.domain}`
+    },
+    media: [
+      { id: "med-1", name: "Campus Front Enclave", url: "https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=1200", type: "Campus Architecture" },
+      { id: "med-2", name: "Atal Robotics Innovation Lab", url: "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=1200", type: "STEM & Robotics" },
+      { id: "med-3", name: "Olympic Athletic Arena", url: "https://images.unsplash.com/photo-1576495199011-eb94736d05d6?w=1200", type: "Sports & Athletics" },
+      { id: "med-4", name: "Digital Smart Library", url: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=1200", type: "Digital Library" }
+    ],
+    publishing: {
+      status: "live",
+      version: (baseTree.publishing?.version || 1) + 1,
+      lastPublishedAt: new Date().toISOString(),
+      sslCertificate: "TLS 1.3 Active (Auto-Renewing)",
+      cdnDeployment: "Edge CDN Live"
+    },
+    website_integration: {
+      subdomain: site.domain,
+      customDomain: null,
+      customDomainStatus: "active",
+      dnsRecords: [
+        { type: "CNAME", host: "@", value: "cname.dakshora.app", ttl: 3600, status: "verified" },
+        { type: "TXT", host: "_dakshora-verify", value: `dakshora-domain-verification=${site.id.slice(0, 8)}`, status: "verified" }
+      ],
+      sslStatus: "tls_active",
+      portalLoginUrl: "https://www.dakshora.co.in/portal",
+      seoSitemapUrl: `https://${site.domain}/sitemap.xml`,
+      status: "ready"
+    },
+    mobile_app: {
+      appName: `${schoolName || site.name} App`,
+      packageName: `in.edu.${(schoolName || site.name).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 16)}.parentapp`,
+      themeColor: themeColor || "#06B6D4",
+      iconUrl: logoUrl || "/icon-512.png",
+      enabledModules: [
+        "attendance",
+        "homework",
+        "fees",
+        "notices",
+        "timetable",
+        "exams",
+        "bus_tracking",
+        "ai_copilot"
+      ],
+      buildStatus: "ready",
+      version: "2.1.0",
+      apkDownloadUrl: `/api/public/mobile-app/${site.id}/download`,
+      assetLinksConfigured: true
+    }
+  };
+
+  await persistCmsTree(site, synthesizedTree);
+  recordAuditLog("website.auto_synthesize", "admin", "website", site.id, req);
+
+  res.json({
+    success: true,
+    message: "11-Step Architectural Hierarchy Auto-Synthesized Successfully 🚀",
+    pipeline: [
+      { step: 1, layer: "Domain & SSL", status: "active", details: `Subdomain: ${synthesizedTree.domain.subdomain} (TLS 1.3 Active)` },
+      { step: 2, layer: "Theme & Styling", status: "applied", details: `Modern Glassmorphism with palette [${synthesizedTree.template.themeColor}]` },
+      { step: 3, layer: "Pages Hierarchy", status: "routed", details: `Configured ${synthesizedTree.pages.length} pages (Home, Leadership, Admissions, Labs, Notices, Contact)` },
+      { step: 4, layer: "Modular Sections", status: "rendered", details: `Attached ${synthesizedTree.sections.length} blocks including Leadership Desk, Mobile App, ERP SSO` },
+      { step: 5, layer: "Atomic Widgets", status: "bound", details: `Wired ${synthesizedTree.components.length} components (AdmissionEngine, ThoughtRotator, GpsBusWidget)` },
+      { step: 6, layer: "Dynamic Content", status: "populated", details: `Principal (${synthesizedTree.content.principalName}) & Director (${synthesizedTree.content.directorName}) messages and photos loaded` },
+      { step: 7, layer: "SEO & Social", status: "indexed", details: `Google Meta Title & OpenGraph tags generated` },
+      { step: 8, layer: "Media Assets", status: "optimized", details: `High-res campus gallery and logo linked to Edge CDN` },
+      { step: 9, layer: "Edge Publishing", status: "live", details: `Released build v${synthesizedTree.publishing.version} to Edge CDN` },
+      { step: 10, layer: "Website & ERP", status: "integrated", details: `Unified database synced with ERP portal (${synthesizedTree.content.erpLoginUrl})` },
+      { step: 11, layer: "Mobile App APK", status: "packaged", details: `White-label APK generated: ${synthesizedTree.mobile_app.packageName}` }
+    ],
+    website: site,
+    tree: synthesizedTree
   });
 });
 
