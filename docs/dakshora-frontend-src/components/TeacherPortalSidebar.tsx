@@ -34,6 +34,7 @@ import { useTranslation } from '../i18n';
 export type TeacherPortalTab =
   | 'pulse'
   | 'attendance'
+  | 'leaves'
   | 'reports'
   | 'unmarked'
   | 'timetable'
@@ -79,6 +80,7 @@ interface TeacherPortalSidebarProps {
   setIsMobileDrawerOpen: (open: boolean) => void;
   pendingAttendanceCount?: number;
   arrangementCount?: number;
+  pendingLeavesCount?: number;
 }
 
 export const TeacherPortalSidebar: React.FC<TeacherPortalSidebarProps> = ({
@@ -97,7 +99,8 @@ export const TeacherPortalSidebar: React.FC<TeacherPortalSidebarProps> = ({
   isMobileDrawerOpen,
   setIsMobileDrawerOpen,
   pendingAttendanceCount = 17,
-  arrangementCount = 1
+  arrangementCount = 1,
+  pendingLeavesCount = 0
 }) => {
   const { t, isHindi, isBilingual } = useTranslation();
 
@@ -162,6 +165,16 @@ export const TeacherPortalSidebar: React.FC<TeacherPortalSidebarProps> = ({
           badge: 'Active',
           badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
           gradient: 'from-emerald-500 to-teal-600'
+        },
+        {
+          id: 'leaves',
+          label: 'Student Leave Approvals',
+          hindiLabel: 'छात्र अवकाश प्रार्थना पत्र',
+          icon: Calendar,
+          description: 'Review & approve Class 10-A student leaves',
+          badge: pendingLeavesCount > 0 ? `${pendingLeavesCount} Pending` : null,
+          badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+          gradient: 'from-pink-500 to-rose-600'
         },
         {
           id: 'reports',

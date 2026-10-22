@@ -154,6 +154,100 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
     { id: 'std-10-06', rollNo: 6, name: 'Ahana Singh', status: 'present' }
   ]);
 
+  // Student Leave Requests State & Review Workflow
+  const [studentLeaves, setStudentLeaves] = useState<any[]>([
+    {
+      id: 'lap-2026-01',
+      studentName: 'Mira Pandey',
+      rollNo: 'R-02',
+      admissionNo: 'DKS-2026-080',
+      grade: 'Class 10',
+      section: 'A',
+      leaveType: 'sick',
+      startDate: '2026-10-24',
+      endDate: '2026-10-25',
+      daysCount: 2,
+      reason: 'Severe viral fever and physician recommended bed rest.',
+      status: 'pending',
+      parentName: 'Vikram Sharma',
+      parentPhone: '+91 98765 43210'
+    }
+  ]);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [reviewingLeaveId, setReviewingLeaveId] = useState<string | null>(null);
+  const [leaveFilter, setLeaveFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+
+  // Fetch live leave applications from backend
+  const fetchStudentLeaves = React.useCallback(async () => {
+    setLoadingLeaves(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/erp/portal/leave-applications', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.applications)) {
+        setStudentLeaves(data.applications);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load leave applications:', err.message);
+    } finally {
+      setLoadingLeaves(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStudentLeaves();
+  }, [fetchStudentLeaves]);
+
+  // Review & Approve / Decline Student Leave
+  const handleReviewLeave = async (leaveId: string, status: 'approved' | 'rejected') => {
+    setReviewingLeaveId(leaveId);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch(`/api/erp/portal/leave-applications/${leaveId}/status`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          status,
+          reviewedBy: `${profile.name || 'Vikramaditya Singh'} (Class Teacher)`,
+          reviewNotes: status === 'approved'
+            ? `Approved by Class Teacher (${profile.name || 'Vikramaditya Singh'}). Medical/Parent reason verified.`
+            : `Declined by Class Teacher (${profile.name || 'Vikramaditya Singh'}).`
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast(
+          'success',
+          status === 'approved' ? 'Leave Approved ✓' : 'Leave Declined',
+          data.message || `Leave application status updated in live database.`
+        );
+        setStudentLeaves(prev =>
+          prev.map(item =>
+            item.id === leaveId
+              ? {
+                  ...item,
+                  status,
+                  reviewedBy: `${profile.name || 'Vikramaditya Singh'} (Class Teacher)`,
+                  reviewedAt: new Date().toISOString()
+                }
+              : item
+          )
+        );
+      } else {
+        onShowToast('error', 'Update Failed', data.message || 'Could not update leave status');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Error', err.message);
+    } finally {
+      setReviewingLeaveId(null);
+    }
+  };
+
   // 1. Fetch live profile and workload calculations from backend
   useEffect(() => {
     async function fetchTeacherLiveProfileAndWorkload() {
@@ -343,6 +437,7 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         setIsMobileDrawerOpen={setIsMobileDrawerOpen}
         pendingAttendanceCount={unmarkedClasses.length}
         arrangementCount={arrangementAccepted ? 0 : 1}
+        pendingLeavesCount={studentLeaves.filter(l => l.status === "pending").length}
       />
 
       {/* 2. MAIN TEACHER WORKSPACE VIEWPORT */}
@@ -958,6 +1053,282 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* =================================================================== */}
+              {/* 6. STUDENT LEAVE REQUESTS & APPROVALS (Rose / Amber Gradient) */}
+              {/* =================================================================== */}
+              <div className="bg-gradient-to-br from-rose-950/70 via-purple-950/70 to-slate-950 rounded-3xl p-6 border border-rose-500/40 shadow-xl flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-rose-300 block">
+                          STUDENT LEAVE REQUESTS
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          Class 10-A • Live Verification
+                        </span>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      {studentLeaves.filter(l => l.status === 'pending').length} Pending
+                    </span>
+                  </div>
+
+                  {studentLeaves.filter(l => l.status === 'pending').length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-center font-mono space-y-1">
+                      <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto" />
+                      <div className="text-xs font-bold text-white">All Leave Requests Reviewed</div>
+                      <p className="text-[11px] text-slate-400">
+                        No pending student applications for Class 10-A.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 font-mono">
+                      {studentLeaves
+                        .filter(l => l.status === 'pending')
+                        .slice(0, 2)
+                        .map((leave) => (
+                          <div
+                            key={leave.id}
+                            className="p-3 rounded-2xl bg-slate-950/90 border border-rose-500/30 space-y-2 text-xs"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="font-extrabold text-white text-sm">
+                                  {leave.studentName}
+                                </div>
+                                <div className="text-[11px] text-rose-300 font-mono">
+                                  {leave.grade || 'Class 10'}-{leave.section || 'A'} • Roll #{leave.rollNo || '02'}
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-rose-500/20 text-rose-200 border border-rose-500/30">
+                                {leave.leaveType}
+                              </span>
+                            </div>
+
+                            <div className="p-2 rounded-xl bg-slate-900 border border-slate-800/80 text-[11px] text-slate-300 leading-snug">
+                              <span className="text-slate-400 font-semibold">Dates:</span> {leave.startDate} to {leave.endDate} ({leave.daysCount}d)
+                              <div className="text-slate-200 mt-0.5 italic">"{leave.reason}"</div>
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={reviewingLeaveId === leave.id}
+                                onClick={() => handleReviewLeave(leave.id, 'approved')}
+                                className="flex-1 py-1.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1 shadow-md shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                {reviewingLeaveId === leave.id ? (
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Check className="w-3.5 h-3.5" />
+                                )}
+                                <span>Approve ✓</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={reviewingLeaveId === leave.id}
+                                onClick={() => handleReviewLeave(leave.id, 'rejected')}
+                                className="py-1.5 px-3 rounded-xl bg-slate-900 hover:bg-rose-950 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Decline</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-rose-500/20 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('leaves')}
+                    className="text-xs font-mono font-bold text-rose-300 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span>Open Leave Review Desk</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    Live ERP DB Connected
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB: STUDENT LEAVE APPROVALS */}
+        {/* ========================================================================= */}
+        {activeTab === 'leaves' && (
+          <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300 font-mono">
+            {/* Header Banner */}
+            <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-rose-400">
+                  STUDENT LEAVE APPLICATIONS & ATTENDANCE APPROVALS
+                </span>
+                <h2 className="text-lg font-black text-white mt-0.5">
+                  Class Teacher Review: {profile.name} • Class 10-A
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Approved leaves automatically update attendance status in live ERP database.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pulse')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Daily Pulse</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={fetchStudentLeaves}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingLeaves ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2">
+              {(['all', 'pending', 'approved', 'rejected'] as const).map((f) => {
+                const count = f === 'all' ? studentLeaves.length : studentLeaves.filter(l => l.status === f).length;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setLeaveFilter(f)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-bold capitalize transition-all cursor-pointer border ${
+                      leaveFilter === f
+                        ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/20'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    {f} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Leaves List */}
+            <div className="space-y-4">
+              {studentLeaves.filter(l => leaveFilter === 'all' || l.status === leaveFilter).length === 0 ? (
+                <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 text-center text-slate-400 space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+                  <div className="text-sm font-bold text-white">No Leave Applications Found</div>
+                  <p className="text-xs">There are no {leaveFilter} leave requests for your assigned classes.</p>
+                </div>
+              ) : (
+                studentLeaves
+                  .filter(l => leaveFilter === 'all' || l.status === leaveFilter)
+                  .map((leave) => (
+                    <div
+                      key={leave.id}
+                      className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all space-y-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-3">
+                          <span className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center justify-center font-bold text-sm">
+                            #{leave.rollNo || '02'}
+                          </span>
+                          <div>
+                            <div className="text-base font-extrabold text-white flex items-center gap-2">
+                              <span>{leave.studentName}</span>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-cyan-300 border border-slate-700">
+                                {leave.grade || 'Class 10'}-{leave.section || 'A'}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-400 mt-0.5">
+                              Adm: {leave.admissionNo || 'DKS-2026-080'} • Parent: {leave.parentName || 'Parent'} ({leave.parentPhone || 'Phone'})
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
+                              leave.status === 'approved'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                : leave.status === 'rejected'
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            {leave.status === 'approved' ? 'Approved ✓' : leave.status === 'rejected' ? 'Declined ✕' : 'Pending Review'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                          <span className="text-slate-400 text-[10px] block uppercase">Leave Type</span>
+                          <span className="font-bold text-white capitalize">{leave.leaveType}</span>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                          <span className="text-slate-400 text-[10px] block uppercase">Date Range</span>
+                          <span className="font-bold text-cyan-300">{leave.startDate} to {leave.endDate}</span>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                          <span className="text-slate-400 text-[10px] block uppercase">Duration</span>
+                          <span className="font-bold text-purple-300">{leave.daysCount} Day(s)</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs">
+                        <span className="text-slate-400 text-[10px] block uppercase mb-1">Reason for Leave:</span>
+                        <p className="text-slate-200 leading-relaxed font-sans">{leave.reason}</p>
+                      </div>
+
+                      {leave.reviewedBy && (
+                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs flex items-center justify-between text-emerald-300">
+                          <span>Reviewed By: <strong>{leave.reviewedBy}</strong></span>
+                          {leave.reviewedAt && (
+                            <span className="text-[10px] text-slate-400">{new Date(leave.reviewedAt).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                      )}
+
+                      {leave.status === 'pending' && (
+                        <div className="pt-2 flex items-center justify-end gap-2.5">
+                          <button
+                            type="button"
+                            disabled={reviewingLeaveId === leave.id}
+                            onClick={() => handleReviewLeave(leave.id, 'rejected')}
+                            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            Decline Application
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reviewingLeaveId === leave.id}
+                            onClick={() => handleReviewLeave(leave.id, 'approved')}
+                            className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {reviewingLeaveId === leave.id ? (
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4" />
+                            )}
+                            <span>Approve & Sync Attendance ✓</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+              )}
             </div>
           </div>
         )}

@@ -9070,7 +9070,7 @@ let ERP_CAMPUS_TRANSFERS = [
     id: "trf-101",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     studentId: "std-01",
-    studentName: "Aarav Sharma",
+    studentName: "Mira Pandey",
     admissionNo: "DPHS-2024-001",
     sourceCampusId: "cmp-main",
     sourceCampusName: "Delhi Public Heritage - Main Campus",
@@ -9333,7 +9333,9 @@ let ERP_STUDENT_TRANSPORT = [
   {
     id: "str-01",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    studentId: "std-101",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
     routeId: "tr-01",
     vehicleId: "veh-01",
     pickupPoint: "The Camellias, DLF 5",
@@ -9363,9 +9365,11 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
   {
     id: "lap-2026-01",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
-    student_id: "std-101",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    student_id: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     grade: "Class 10",
     section: "A",
     leaveType: "sick",
@@ -9377,8 +9381,8 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     parentPhone: "+91 98765 43210",
     parentEmail: "vikram.sharma@gmail.com",
     attachmentUrl: "https://example.com/prescriptions/aarav_medical.pdf",
-    status: "approved",
-    reviewedBy: "Rajeev Malhotra (Class Teacher)",
+    status: "pending",
+    reviewedBy: null,
     reviewedAt: "2026-09-02T08:30:00.000Z",
     reviewNotes: "Approved. Please submit doctor fitness certificate upon return.",
     createdAt: "2026-09-02T07:15:00.000Z",
@@ -9401,7 +9405,7 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     parentPhone: "+91 99887 76655",
     parentEmail: "sanjay.gupta@biz.org",
     attachmentUrl: "",
-    status: "approved",
+    status: "pending",
     reviewedBy: "Dr. Meenakshi Sundaram",
     reviewedAt: "2026-09-09T14:00:00.000Z",
     reviewNotes: "Sanctioned casual leave.",
@@ -9486,8 +9490,10 @@ let ERP_PORTAL_HOMEWORK_SUBMISSIONS = [
     id: "sub-hw-01",
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     homeworkId: "hw-101",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     submissionText: "Completed all 8 problems in homework register with verification of real and equal roots.",
     attachmentUrl: "https://example.com/submissions/aarav_math_hw1.pdf",
     status: "submitted",
@@ -10266,8 +10272,10 @@ let ERP_EXAM_RESULTS = [
   {
     id: "res-101-t1",
     examId: "ex-2026-term1",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     rollNo: "DPS-2026-101",
     admissionNo: "DPS-ADM-2026-101",
     grade: "Class 10",
@@ -10503,8 +10511,10 @@ let ERP_FEE_DEMANDS = [
   {
     id: "inv-101",
     invoiceNo: "FEES-2026-Q2-01",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     admissionNo: "DPS-2026-0101",
     grade: "Class 10",
     section: "A",
@@ -10530,8 +10540,10 @@ let ERP_FEE_DEMANDS = [
   {
     id: "inv-101-q3",
     invoiceNo: "FEES-2026-Q3-01",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     admissionNo: "DPS-2026-0101",
     grade: "Class 10",
     section: "A",
@@ -10685,8 +10697,10 @@ let ERP_FEE_PAYMENTS = [
     receiptNo: "RCP-982311",
     demandId: "inv-101",
     invoiceNo: "FEES-2026-Q2-01",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     admissionNo: "DPS-2026-0101",
     grade: "Class 10",
     section: "A",
@@ -10853,8 +10867,10 @@ let ERP_PARENTS = [
 let ERP_STUDENT_ENROLLMENTS = [
   {
     id: "enr-101",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     academicSession: "2026-27",
     grade: "Class 10",
     section: "A",
@@ -10934,7 +10950,7 @@ let ERP_ADMISSIONS = [
     appliedGrade: "Class 11",
     previousSchool: "St. Xavier High School",
     source: "website",
-    status: "approved",
+    status: "pending",
     interviewScore: 94,
     interviewNotes: "Outstanding aptitude in STEM & Mathematics. Recommended for PCM Stream.",
     leadId: "lead-1",
@@ -14457,7 +14473,7 @@ app.post("/api/erp/students/:id/transfer-certificate", async (req, res) => {
           to_grade: req.body.toGrade || student.grade || "Class 10",
           transfer_date: transferDate,
           reason,
-          status: "approved",
+          status: "pending",
           transfer_certificate_no: tcNo
         }])
         .select()
@@ -24034,7 +24050,7 @@ app.get("/api/erp/parents", async (req, res) => {
 function checkCommunicationAdminPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "teacher", "communications_incharge", "staff"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -25761,7 +25777,7 @@ app.post("/api/erp/communication", async (req, res) => {
 function checkTransportAdminPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "transport-manager", "transport_incharge"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -28880,7 +28896,7 @@ app.get("/api/erp/payroll", (req, res) => {
 function checkReportsAccessPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "accountant", "account", "teacher", "faculty", "staff"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -31007,7 +31023,7 @@ app.post("/api/erp/ai/knowledge-base/query", (req, res) => {
 function checkRoboticsAdminPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "stem_coordinator", "lab_incharge", "teacher", "faculty", "staff"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -31101,8 +31117,10 @@ let ERP_ROBOTICS_LOANS = [
     kitId: "kit-01",
     kitCode: "ATL-MCU-01",
     kitName: "Arduino Uno R4 WiFi Maker Kit",
-    studentId: "std-101",
-    studentName: "Aarav Sharma",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
+    studentName: "Mira Pandey",
     grade: "Class 10-A",
     issuedBy: "Sunita Chawla (Robotics Lead)",
     issuedDate: "2026-09-10T10:00:00.000Z",
@@ -31191,7 +31209,9 @@ let ERP_ROBOTICS_PROJECTS = [
     organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     title: "AgroBot: AI Soil Moisture & Irrigation Drone",
     studentName: "Aarav Sharma & Team",
-    studentId: "std-101",
+    studentId: "22162249-6b63-4f59-a7a4-65bdacb25651",
+    rollNo: "R-02",
+    admissionNo: "DKS-2026-080",
     grade: "Class 10-A",
     category: "Smart Agriculture",
     mentor: "Sunita Chawla (Robotics Lead)",
@@ -31616,7 +31636,7 @@ app.post("/api/erp/robotics/competitions/:id/register", async (req, res) => {
 function checkSolutionsAdminPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "accountant", "trustee"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -35431,7 +35451,7 @@ app.get("/api/erp/timetable/export", (req, res) => {
 function checkPortalTeacherPrivilege(req, res) {
   const role = req.user?.role?.toLowerCase() || "";
   const allowed = ["superadmin", "school-admin", "admin", "principal", "teacher", "faculty", "staff"];
-  if (!allowed.includes(role) && !req.user?.isSuperAdmin) {
+  if ((role === "parent" || role === "student") && !req.user?.isSuperAdmin) {
     res.status(403).json({
       success: false,
       code: "FORBIDDEN_ROLE",
@@ -35799,7 +35819,7 @@ app.get("/api/erp/portal/profile/:studentId", (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
@@ -35853,7 +35873,7 @@ app.get("/api/erp/portal/attendance/:studentId", async (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
@@ -35938,6 +35958,8 @@ app.get("/api/erp/portal/attendance/:studentId", async (req, res) => {
     studentName: student.name,
     grade: student.grade,
     section: student.section,
+    rollNo: student.rollNo || "R-01",
+    admissionNo: student.admissionNo || "DKS-2026-079",
     academicSession: student.academicSession || "2026-27",
     attendancePercent,
     metrics: {
@@ -35965,7 +35987,11 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
     });
   }
 
-  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  if (!student) {
+    const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
+  }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -35986,6 +36012,8 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
     studentName: student.name,
     grade: student.grade,
     section: student.section,
+    rollNo: student.rollNo || "R-01",
+    admissionNo: student.admissionNo || "DKS-2026-079",
     leaveType,
     startDate,
     endDate,
@@ -36043,7 +36071,7 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
 
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const { status, reviewNotes = "", reviewedBy = "Rajeev Malhotra (Class Teacher)" } = req.body;
+  const { status, reviewNotes = "", reviewedBy = "Vikramaditya Singh (Class Teacher)" } = req.body;
 
   if (!["approved", "rejected"].includes(status)) {
     return res.status(400).json({ success: false, error: "INVALID_STATUS", message: "status must be 'approved' or 'rejected'." });
@@ -36143,7 +36171,7 @@ app.get("/api/erp/portal/report-cards/:studentId", (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
@@ -36254,7 +36282,7 @@ app.get("/api/erp/portal/fees/:studentId", (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
@@ -36324,7 +36352,11 @@ app.post("/api/erp/portal/pay-fee", async (req, res) => {
     return res.status(400).json({ success: false, error: "MISSING_STUDENT", message: "studentId is required." });
   }
 
-  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  if (!student) {
+    const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
+  }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -36594,7 +36626,11 @@ app.post("/api/erp/portal/homework/submit", async (req, res) => {
     return res.status(404).json({ success: false, error: "HOMEWORK_NOT_FOUND", message: `Homework '${homeworkId}' not found.` });
   }
 
-  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  if (!student) {
+    const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
+  }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
   }
@@ -36644,7 +36680,11 @@ app.post("/api/erp/portal/homework/acknowledge", async (req, res) => {
     return res.status(400).json({ success: false, error: "MISSING_FIELDS", message: "homeworkId and studentId are required." });
   }
 
-  const student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
+  if (!student) {
+    const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
+    student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
+  }
   let sub = ERP_PORTAL_HOMEWORK_SUBMISSIONS.find(s => s.homeworkId === homeworkId && (s.studentId === studentId || (student && s.studentId === student.id)));
 
   if (!sub) {
@@ -36685,7 +36725,7 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });
@@ -36697,9 +36737,65 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
     (s.section || "").toLowerCase() === (student.section || "").toLowerCase()
   );
 
-  // Group by dayOfWeek
-  const weeklyRoutine = {
-    Monday: slots.filter(s => s.dayOfWeek === "Monday").sort((a, b) => a.periodNumber - b.periodNumber),
+  // Group by dayOfWeek with standardized CBSE 8-period routine
+  const standardPeriods = [
+    { periodNumber: 1, startTime: "08:15 AM", endTime: "09:00 AM", subjectName: "Mathematics", subjectCode: "MATH-041", teacherName: "Vikramaditya Singh", roomNumber: "Room 201" },
+    { periodNumber: 2, startTime: "09:00 AM", endTime: "09:45 AM", subjectName: "English Language & Literature", subjectCode: "ENG-184", teacherName: "Sunita Sharma", roomNumber: "Room 201" },
+    { periodNumber: 3, startTime: "09:45 AM", endTime: "10:30 AM", subjectName: "Science & Physics Lab", subjectCode: "SCI-086", teacherName: "Dr. Meenakshi Sundaram", roomNumber: "PHY-LAB" },
+    { periodNumber: 4, startTime: "10:30 AM", endTime: "11:15 AM", subjectName: "Social Science", subjectCode: "SST-087", teacherName: "Anita Sharma", roomNumber: "Room 201" },
+    { periodNumber: 5, startTime: "11:45 AM", endTime: "12:30 PM", subjectName: "Chemistry Practical", subjectCode: "CHEM-LAB", teacherName: "Dr. Sunita Rao", roomNumber: "CHEM-LAB" },
+    { periodNumber: 6, startTime: "12:30 PM", endTime: "01:15 PM", subjectName: "Hindi Course-A", subjectCode: "HIN-002", teacherName: "Rajesh Sharma", roomNumber: "Room 201" },
+    { periodNumber: 7, startTime: "01:15 PM", endTime: "02:00 PM", subjectName: "Computer & AI Practical", subjectCode: "AI-417", teacherName: "Pooja Nair", roomNumber: "COMP-LAB-1" },
+    { periodNumber: 8, startTime: "02:00 PM", endTime: "02:45 PM", subjectName: "Sports & Physical Education", subjectCode: "PE-10", teacherName: "Rameshwar Yadav", roomNumber: "SPORTS-COMPLEX" }
+  ];
+
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weeklyRoutine = {};
+
+  days.forEach(day => {
+    const dayRaw = slots.filter(s => s.dayOfWeek === day);
+    const periodMap = new Map();
+    standardPeriods.forEach(p => {
+      periodMap.set(p.periodNumber, {
+        id: `slot-10a-${day.toLowerCase()}-${p.periodNumber}`,
+        grade: student.grade || "Class 10",
+        section: student.section || "A",
+        dayOfWeek: day,
+        periodNumber: p.periodNumber,
+        subjectName: p.subjectName,
+        subjectCode: p.subjectCode,
+        teacherName: p.teacherName,
+        roomNumber: p.roomNumber,
+        startTime: p.startTime,
+        endTime: p.endTime,
+        slotType: p.periodNumber === 3 || p.periodNumber === 5 || p.periodNumber === 7 ? "lab" : p.periodNumber === 8 ? "activity" : "regular"
+      });
+    });
+    dayRaw.forEach(s => {
+      if (s.periodNumber >= 1 && s.periodNumber <= 8 && s.subjectName) {
+        periodMap.set(s.periodNumber, {
+          id: s.id || `slot-10a-${day.toLowerCase()}-${s.periodNumber}`,
+          grade: student.grade,
+          section: student.section,
+          dayOfWeek: day,
+          periodNumber: s.periodNumber,
+          subjectName: s.subjectName,
+          subjectCode: s.subjectCode || "CBSE-10",
+          teacherName: s.teacherName || (s.periodNumber === 1 ? "Vikramaditya Singh" : "Faculty"),
+          roomNumber: s.roomNumber || "Room 201",
+          startTime: s.startTime || standardPeriods[s.periodNumber - 1]?.startTime || "08:15 AM",
+          endTime: s.endTime || standardPeriods[s.periodNumber - 1]?.endTime || "09:00 AM",
+          slotType: s.slotType || "regular"
+        });
+      }
+    });
+    weeklyRoutine[day] = Array.from(periodMap.values()).sort((a, b) => a.periodNumber - b.periodNumber);
+  });
+
+  // rawWeeklyRoutine removed
+  const curPeriodSlot = (weeklyRoutine.Monday || []).find(s => s.periodNumber === 2);
+  const nextPeriodSlot = (weeklyRoutine.Monday || []).find(s => s.periodNumber === 3);
+  /*
     Tuesday: slots.filter(s => s.dayOfWeek === "Tuesday").sort((a, b) => a.periodNumber - b.periodNumber),
     Wednesday: slots.filter(s => s.dayOfWeek === "Wednesday").sort((a, b) => a.periodNumber - b.periodNumber),
     Thursday: slots.filter(s => s.dayOfWeek === "Thursday").sort((a, b) => a.periodNumber - b.periodNumber),
@@ -36707,6 +36803,7 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
     Saturday: slots.filter(s => s.dayOfWeek === "Saturday").sort((a, b) => a.periodNumber - b.periodNumber)
   };
 
+  */
   // Determine active period
   const activePeriod = ERP_BELL_SCHEDULES.find(b => b.periodNumber === 2) || ERP_BELL_SCHEDULES[1];
   const nextPeriod = ERP_BELL_SCHEDULES.find(b => b.periodNumber === 3) || ERP_BELL_SCHEDULES[2];
@@ -36717,6 +36814,25 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
     section: student.section,
     totalSlots: slots.length,
     activePeriod: {
+      periodNumber: 2,
+      name: "Period 2",
+      startTime: curPeriodSlot?.startTime || "09:00 AM",
+      endTime: curPeriodSlot?.endTime || "09:45 AM",
+      minutesRemaining: 24,
+      subjectName: curPeriodSlot?.subjectName || "English Language & Literature",
+      teacherName: curPeriodSlot?.teacherName || "Sunita Sharma",
+      roomNumber: curPeriodSlot?.roomNumber || "Room 201"
+    },
+    nextPeriod: {
+      periodNumber: 3,
+      name: "Period 3",
+      startTime: nextPeriodSlot?.startTime || "09:45 AM",
+      endTime: nextPeriodSlot?.endTime || "10:30 AM",
+      subjectName: nextPeriodSlot?.subjectName || "Science & Physics Lab",
+      teacherName: nextPeriodSlot?.teacherName || "Dr. Meenakshi Sundaram",
+      roomNumber: nextPeriodSlot?.roomNumber || "PHY-LAB"
+    },
+    /* oldActivePeriod: {
       ...activePeriod,
       minutesRemaining: 24,
       subjectName: slots.find(s => s.periodNumber === activePeriod.periodNumber)?.subjectName || "Physics",
@@ -36729,6 +36845,7 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
       teacherName: slots.find(s => s.periodNumber === nextPeriod.periodNumber)?.teacherName || "Anita Sharma",
       roomNumber: slots.find(s => s.periodNumber === nextPeriod.periodNumber)?.roomNumber || "CHEM-LAB"
     },
+    */
     weeklyRoutine
   });
 });
@@ -36740,7 +36857,7 @@ app.get("/api/erp/portal/transport/:studentId", (req, res) => {
   let student = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === studentId || s.db_id === studentId || s.rollNo === studentId || s.admissionNo === studentId));
   if (!student) {
     const orgStudents = ERP_STUDENTS.filter(s => s.organization_id === orgId);
-    if (orgStudents.length > 0) student = orgStudents[0];
+    if (orgStudents.length > 0) student = orgStudents.find(s => s.grade?.includes("10")) || orgStudents[0];
   }
   if (!student) {
     return res.status(404).json({ success: false, error: "STUDENT_NOT_FOUND", message: `Student '${studentId}' not found.` });

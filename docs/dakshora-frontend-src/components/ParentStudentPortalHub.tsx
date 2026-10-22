@@ -841,72 +841,148 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   </div>
                 </div>
 
-                {/* 2. FEES & RECEIPTS CARD (Vibrant Rose/Pink Gradient) */}
-                <div className="bg-gradient-to-br from-rose-950 via-pink-900/90 to-slate-950 rounded-3xl p-6 border border-rose-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+                {/* 2. FEES & RECEIPTS CARD (Vibrant Rose/Pink Gradient or Inactive if No Pending Fees) */}
+                {(() => {
+                  const pendingFeeAmount = feeSummary?.outstandingBalanceINR !== undefined 
+                    ? Number(feeSummary.outstandingBalanceINR) 
+                    : (activeWard?.duesINR !== undefined ? Number(activeWard.duesINR) : 0);
+                  const hasPendingFee = pendingFeeAmount > 0;
 
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                          <CreditCard className="w-4 h-4" />
-                        </div>
+                  if (hasPendingFee) {
+                    return (
+                      <div className="bg-gradient-to-br from-rose-950 via-pink-900/90 to-slate-950 rounded-3xl p-6 border border-rose-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
+                        <div className="absolute top-0 right-0 w-48 h-48 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+
                         <div>
-                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-rose-400 block">
-                            {t('portal.card_fees_title', 'FEES & RECEIPTS')}
-                          </span>
-                          <h4 className="text-sm font-bold text-white">{t('portal.card_fees_sub', 'Student Account')}</h4>
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                <CreditCard className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-rose-400 block">
+                                  {t('portal.card_fees_title', 'FEES & RECEIPTS')}
+                                </span>
+                                <h4 className="text-sm font-bold text-white">{t('portal.card_fees_sub', 'Student Account')}</h4>
+                              </div>
+                            </div>
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              {t('portal.card_fees_term_due', 'Term Due')}
+                            </span>
+                          </div>
+
+                          <div className="flex items-baseline gap-2 mt-2">
+                            <span className="text-3xl font-black text-white font-mono tracking-tight">
+                              ₹{pendingFeeAmount.toLocaleString('en-IN')}
+                            </span>
+                            <span className="text-xs text-rose-300 font-mono">{t('portal.card_fees_outstanding', 'Outstanding')}</span>
+                          </div>
+
+                          <p className="text-xs text-slate-300 font-mono mt-1">
+                            {(invoices?.[0] as any)?.title || invoices?.[0]?.feeHead ? `${(invoices?.[0] as any)?.title || invoices[0].feeHead} • Due: ${(invoices?.[0] as any)?.dueDate || '31 Oct 2026'}` : t('portal.card_fees_due_date', 'Tuition & Lab Fee • Due by 31 Oct 2026')}
+                          </p>
+
+                          <div className="mt-3.5 p-2.5 rounded-xl bg-slate-950/70 border border-rose-500/30 text-xs font-mono space-y-1">
+                            <div className="flex items-center justify-between text-slate-300">
+                              <span>{t('portal.card_fees_payment_methods', 'Payment Methods:')}</span>
+                              <span className="text-cyan-300 font-bold">UPI / RuPay / Cards</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400">
+                              <span>{t('portal.card_fees_last_paid', 'Last Paid:')}</span>
+                              <span className="text-emerald-400 font-semibold">
+                                {receipts?.[0] ? `₹${(receipts[0].amountPaid || (receipts[0] as any)?.amount || 18500).toLocaleString('en-IN')} (${receipts[0].receiptNo || 'Rec #904'})` : '₹18,500 (Rec #904)'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 pt-4 border-t border-rose-500/20 flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => {
+                              setSelectedInvoiceForPay(invoices[0] || null);
+                              setShowPayModal(true);
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs transition-all shadow-md shadow-rose-500/20 cursor-pointer"
+                          >
+                            {t('portal.pay_now_btn', 'Pay Now')}
+                          </button>
+                          <button
+                            onClick={() => setActiveTab('fees')}
+                            className="text-xs text-rose-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <span>{t('portal.receipts_btn', 'Receipts')}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                        {(feeSummary?.outstandingBalanceINR || 0) > 0 ? t('portal.card_fees_term_due', 'Term Due') : 'All Dues Paid ✓'}
-                      </span>
-                    </div>
+                    );
+                  }
 
-                    <div className="flex items-baseline gap-2 mt-2">
-                      <span className="text-3xl font-black text-white font-mono tracking-tight">
-                        ₹{(feeSummary?.outstandingBalanceINR ?? 4500).toLocaleString('en-IN')}
-                      </span>
-                      <span className="text-xs text-rose-300 font-mono">{t('portal.card_fees_outstanding', 'Outstanding')}</span>
-                    </div>
+                  // INACTIVE CARD STATE (When No Fee is Pending)
+                  return (
+                    <div className="bg-slate-900/50 rounded-3xl p-6 border border-slate-800 shadow-lg relative overflow-hidden flex flex-col justify-between opacity-80 transition-all hover:opacity-95">
+                      <div>
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700">
+                              <CreditCard className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 block">
+                                {t('portal.card_fees_title', 'FEES & RECEIPTS')} (INACTIVE)
+                              </span>
+                              <h4 className="text-sm font-bold text-slate-200">{t('portal.card_fees_sub', 'Student Account')}</h4>
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <Check className="w-3 h-3" />
+                            <span>{isHindi ? 'सभी देय राशि चुकता ✓' : 'All Dues Cleared ✓'}</span>
+                          </span>
+                        </div>
 
-                    <p className="text-xs text-slate-300 font-mono mt-1">
-                      {(invoices?.[0] as any)?.title || invoices?.[0]?.feeHead ? `${(invoices?.[0] as any)?.title || invoices[0].feeHead} • Due: ${(invoices?.[0] as any)?.dueDate || '31 Oct 2026'}` : t('portal.card_fees_due_date', 'Tuition & Lab Fee • Due by 31 Oct 2026')}
-                    </p>
+                        <div className="flex items-baseline gap-2 mt-2">
+                          <span className="text-3xl font-black text-slate-300 font-mono tracking-tight">
+                            ₹0
+                          </span>
+                          <span className="text-xs text-slate-400 font-mono">{isHindi ? 'कोई बकाया नहीं' : 'No Pending Dues'}</span>
+                        </div>
 
-                    <div className="mt-3.5 p-2.5 rounded-xl bg-slate-950/70 border border-rose-500/30 text-xs font-mono space-y-1">
-                      <div className="flex items-center justify-between text-slate-300">
-                        <span>{t('portal.card_fees_payment_methods', 'Payment Methods:')}</span>
-                        <span className="text-cyan-300 font-bold">UPI / RuPay / Cards</span>
+                        <p className="text-xs text-slate-400 font-mono mt-1">
+                          {isHindi ? 'चालू सत्र 2026-27 के सभी स्कूल शुल्क पूरी तरह चुकता हैं।' : 'All school term fees & laboratory invoices are paid up to date.'}
+                        </p>
+
+                        <div className="mt-3.5 p-2.5 rounded-xl bg-slate-950/50 border border-slate-800 text-xs font-mono space-y-1">
+                          <div className="flex items-center justify-between text-slate-400">
+                            <span>{isHindi ? 'खाता स्थिति:' : 'Account Status:'}</span>
+                            <span className="text-emerald-400 font-bold">{isHindi ? 'सक्रिय एवं चुकता' : 'Zero Balance / Cleared'}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-slate-400">
+                            <span>{t('portal.card_fees_last_paid', 'Last Paid:')}</span>
+                            <span className="text-slate-300 font-semibold">
+                              {receipts?.[0] ? `₹${(receipts[0].amountPaid || (receipts[0] as any)?.amount || 18500).toLocaleString('en-IN')} (${receipts[0].receiptNo || 'Rec #904'})` : '₹18,500 (Rec #904)'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span>{t('portal.card_fees_last_paid', 'Last Paid:')}</span>
-                        <span className="text-emerald-400 font-semibold">
-                          {receipts?.[0] ? `₹${(receipts[0].amountPaid || (receipts[0] as any)?.amount || 18500).toLocaleString('en-IN')} (${receipts[0].receiptNo || 'Rec #904'})` : '₹18,500 (Rec #904)'}
-                        </span>
+
+                      <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
+                        <button
+                          disabled
+                          className="px-3.5 py-1.5 rounded-xl bg-slate-800/80 text-slate-500 font-bold text-xs cursor-not-allowed border border-slate-700/50"
+                        >
+                          {isHindi ? 'कोई देय राशि शेष नहीं (निष्क्रिय)' : 'No Dues Pending (Inactive)'}
+                        </button>
+                        <button
+                          onClick={() => setActiveTab('fees')}
+                          className="text-xs text-cyan-400 hover:text-cyan-300 font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <span>{t('portal.receipts_btn', 'View Receipts')}</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
-                  </div>
-
-                  <div className="mt-5 pt-4 border-t border-rose-500/20 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedInvoiceForPay(invoices[0] || null);
-                        setShowPayModal(true);
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-bold text-xs transition-all shadow-md shadow-rose-500/20 cursor-pointer"
-                    >
-                      {t('portal.pay_now_btn', 'Pay Now')}
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('fees')}
-                      className="text-xs text-rose-300 hover:text-white font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                    >
-                      <span>{t('portal.receipts_btn', 'Receipts')}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* 3. CLASS TIMETABLE & LIVE BELL CARD (Vibrant Cyan/Blue Gradient) */}
                 <div className="bg-gradient-to-br from-cyan-950 via-blue-900/90 to-slate-950 rounded-3xl p-6 border border-cyan-400/40 shadow-xl relative overflow-hidden flex flex-col justify-between">
@@ -2225,14 +2301,48 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
             </div>
 
             <form onSubmit={handleLeaveSubmit} className="space-y-4 text-xs font-mono">
-              <div>
-                <label className="block text-slate-400 mb-1">{isHindi ? 'छात्र वार्ड' : 'Student Ward'}</label>
-                <input
-                  type="text"
-                  disabled
-                  value={`${activeWard?.name} (${activeWard?.grade}-${activeWard?.section})`}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 font-bold"
-                />
+              {/* Automatic Verified Student Identity Card */}
+              <div className="p-4 rounded-2xl bg-slate-950/90 border border-cyan-500/30 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase tracking-wider">
+                    {isHindi ? 'विद्यार्थी विवरण (स्वचालित रूप से भरा हुआ)' : 'Student Details (Auto-Populated)'}
+                  </span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Live ERP
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block font-mono">Student Name & Roll No:</span>
+                    <span className="text-sm font-extrabold text-white block mt-0.5">
+                      {activeWard?.name || profile?.name || 'Advik Chaudhary'}
+                    </span>
+                    <span className="text-xs text-purple-300 font-mono font-bold block mt-0.5">
+                      Roll #{activeWard?.rollNo || profile?.rollNo || '01'}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block font-mono">Class & Admission No:</span>
+                    <span className="text-sm font-extrabold text-cyan-300 block mt-0.5">
+                      {activeWard?.grade || profile?.grade || 'Class 10'}-{activeWard?.section || profile?.section || 'A'}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono block mt-0.5">
+                      Adm: {activeWard?.admissionNo || profile?.admissionNo || 'DKS-2026-079'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-slate-300">Class Teacher (Reviewer):</span>
+                  <span className="text-amber-300 font-bold">Vikramaditya Singh (Class 10-A)</span>
+                </div>
+
+                <div className="pt-1 text-[10px] text-slate-400 flex items-center gap-1.5 font-mono">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>{isHindi ? 'यह आवेदन सीधे कक्षा अध्यापक विक्रम आदित्य सिंह को समीक्षा व उपस्थिति स्वीकृति हेतु भेजा जाएगा।' : 'This application is routed directly to Class Teacher Vikramaditya Singh for attendance review & approval.'}</span>
+                </div>
               </div>
 
               <div>
