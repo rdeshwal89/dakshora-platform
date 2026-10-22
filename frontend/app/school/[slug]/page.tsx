@@ -1,3 +1,8 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
+
 async function parseJsonRes(res: Response) {
   try {
     return await res.clone().json();
@@ -17,11 +22,6 @@ async function parseJsonRes(res: Response) {
     return null;
   }
 }
-
-"use client";
-
-import React, { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
 
 interface SchoolInfo {
   id: string;
