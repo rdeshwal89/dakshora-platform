@@ -550,7 +550,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-black text-white tracking-wide">
-                  DAKSHORA 2.0
+                  {isSuperAdminOtpStep ? 'PLATFORM SECURITY' : 'INSTITUTIONAL PORTAL'}
                 </h2>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono border ${
                   isSuperAdminOtpStep
@@ -567,7 +567,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     ? '🔑 Password Recovery'
                     : isRegisterView
                     ? '🏫 Institution Application & Verification'
-                    : 'Single Secure Portal'}
+                    : 'Faculty, Parent & Staff Sign-In'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-mono">
@@ -577,7 +577,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   ? 'Account Recovery • पासवर्ड पुनर्प्राप्ति'
                   : isRegisterView
                   ? 'Institutional Onboarding Application & SuperAdmin Approval'
-                  : 'Unified Institutional ERP & Multi-Tenant Access'}
+                  : 'Teacher & Staff Workspace • Parent & Student Portal'}
               </p>
             </div>
           </div>
@@ -1343,7 +1343,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   className="w-full py-2 px-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{showDemoPersonas ? 'Hide Demo Personas' : 'Evaluating DAKSHORA? [ ⚡ Test Drive Demo Sandbox ]'}</span>
+                  <span>{showDemoPersonas ? 'Hide Demo Personas' : 'Quick Demo Logins [ ⚡ Test Drive Faculty / Parent / Admin ]'}</span>
                 </button>
 
                 {showDemoPersonas && (

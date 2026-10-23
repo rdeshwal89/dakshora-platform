@@ -126,9 +126,17 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   // Employee Profile Modal (Screenshot 2)
   const [showProfileModal, setShowProfileModal] = useState(false);
 
-  // Dynamic School Brand
-  const resolvedSchoolName = schoolBrand?.schoolName || currentUser?.schoolName || 'Dakshora Academy, New Delhi';
-  const resolvedSchoolLogo = schoolBrand?.logoUrl || currentUser?.logoUrl || '/assets/dakshora-logo.png';
+  // Dynamic School Brand (White-Labeled Institutional Identity)
+  const resolvedSchoolName = (() => {
+    const raw = schoolBrand?.schoolName || currentUser?.schoolName || currentUser?.school?.name || '';
+    if (raw && !raw.toLowerCase().includes('dakshora')) return raw;
+    return 'Delhi Public Academy, New Delhi';
+  })();
+  const resolvedSchoolLogo = (() => {
+    const raw = schoolBrand?.logoUrl || currentUser?.logoUrl || currentUser?.school?.logoUrl || '';
+    if (raw && !raw.includes('dakshora') && !raw.endsWith('/logo.svg')) return raw;
+    return '/assets/schools/new-ideal-logo.svg';
+  })();
 
   // Real Teacher Substitution / Arrangement Duties State from Backend Database
   const [arrangements, setArrangements] = useState<any[]>([]);
@@ -189,34 +197,26 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   ]);
 
   // Live student roster for active marking class
-  const [classRoster, setClassRoster] = useState([
-    { id: 'std-10-01', rollNo: 1, name: 'Advik Chaudhary', status: 'present' },
-    { id: 'std-10-02', rollNo: 2, name: 'Mira Pandey', status: 'present' },
-    { id: 'std-10-03', rollNo: 3, name: 'Kavya Sharma', status: 'present' },
-    { id: 'std-10-04', rollNo: 4, name: 'Ishita Verma', status: 'present' },
-    { id: 'std-10-05', rollNo: 5, name: 'Pranav Gupta', status: 'absent' },
-    { id: 'std-10-06', rollNo: 6, name: 'Ahana Singh', status: 'present' }
+  const [classRoster, setClassRoster] = useState<any[]>([
+    { id: 'std-10-01', rollNo: 1, name: 'Advik Chaudhary', admissionNo: 'DKS-2026-079', status: 'present' },
+    { id: 'std-10-02', rollNo: 2, name: 'Mira Pandey', admissionNo: 'DKS-2026-080', status: 'leave', isLeaveLocked: true, leaveReason: 'Approved Leave: Severe viral fever' },
+    { id: 'std-10-03', rollNo: 3, name: 'Kavya Sharma', admissionNo: 'DKS-2026-081', status: 'present' },
+    { id: 'std-10-04', rollNo: 4, name: 'Ishita Verma', admissionNo: 'DKS-2026-082', status: 'present' },
+    { id: 'std-10-05', rollNo: 5, name: 'Pranav Gupta', admissionNo: 'DKS-2026-083', status: 'absent' },
+    { id: 'std-10-06', rollNo: 6, name: 'Ahana Singh', admissionNo: 'DKS-2026-084', status: 'present' }
   ]);
 
   // Student Leave Requests State & Review Workflow
-  const [studentLeaves, setStudentLeaves] = useState<any[]>([
-    {
-      id: 'lap-2026-01',
-      studentName: 'Mira Pandey',
-      rollNo: 'R-02',
-      admissionNo: 'DKS-2026-080',
-      grade: 'Class 10',
-      section: 'A',
-      leaveType: 'sick',
-      startDate: '2026-10-24',
-      endDate: '2026-10-25',
-      daysCount: 2,
-      reason: 'Severe viral fever and physician recommended bed rest.',
-      status: 'pending',
-      parentName: 'Vikram Sharma',
-      parentPhone: '+91 98765 43210'
-    }
-  ]);
+  const [studentLeaves, setStudentLeaves] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('dakshora_approved_student_leaves');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
   const [loadingLeaves, setLoadingLeaves] = useState(false);
   const [reviewingLeaveId, setReviewingLeaveId] = useState<string | null>(null);
   const [leaveFilter, setLeaveFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
@@ -231,6 +231,9 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
       const data = await res.json();
       if (data.success && Array.isArray(data.applications)) {
         setStudentLeaves(data.applications);
+        try {
+          localStorage.setItem('dakshora_approved_student_leaves', JSON.stringify(data.applications));
+        } catch {}
       }
     } catch (err: any) {
       console.warn('Failed to load leave applications:', err.message);
@@ -270,18 +273,45 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
           status === 'approved' ? 'Leave Approved ✓' : 'Leave Declined',
           data.message || `Leave application status updated in live database.`
         );
-        setStudentLeaves(prev =>
-          prev.map(item =>
-            item.id === leaveId
-              ? {
-                  ...item,
-                  status,
-                  reviewedBy: `${profile.name || 'Vikramaditya Singh'} (Class Teacher)`,
-                  reviewedAt: new Date().toISOString()
-                }
-              : item
-          )
+        const updatedLeaves = studentLeaves.map(item =>
+          item.id === leaveId
+            ? {
+                ...item,
+                status,
+                reviewedBy: `${profile.name || 'Vikramaditya Singh'} (Class Teacher)`,
+                reviewedAt: new Date().toISOString()
+              }
+            : item
         );
+        setStudentLeaves(updatedLeaves);
+        try {
+          localStorage.setItem('dakshora_approved_student_leaves', JSON.stringify(updatedLeaves));
+        } catch {}
+
+        // If approved, automatically update classRoster to lock the student's status to 'leave'
+        if (status === 'approved') {
+          const approvedApp = updatedLeaves.find(item => item.id === leaveId);
+          if (approvedApp) {
+            setClassRoster(prev =>
+              prev.map(st => {
+                const matches = 
+                  st.id === approvedApp.studentId ||
+                  st.admissionNo === approvedApp.admissionNo ||
+                  st.name?.toLowerCase() === approvedApp.studentName?.toLowerCase() ||
+                  String(st.rollNo) === String(approvedApp.rollNo).replace(/\D/g, '');
+                if (matches) {
+                  return {
+                    ...st,
+                    status: 'leave',
+                    isLeaveLocked: true,
+                    leaveReason: approvedApp.reason
+                  };
+                }
+                return st;
+              })
+            );
+          }
+        }
       } else {
         onShowToast('error', 'Update Failed', data.message || 'Could not update leave status');
       }
@@ -422,13 +452,28 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
           });
 
           if (filtered.length > 0) {
-            setClassRoster(filtered.map((s: any, idx: number) => ({
-              id: s.id || `std-${idx + 1}`,
-              rollNo: s.rollNo ? parseInt(s.rollNo.replace(/\D/g, ''), 10) || (idx + 1) : (idx + 1),
-              name: s.name || `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim() || 'Student',
-              admissionNo: s.admissionNo || s.admission_number || `DKS-2026-${String(idx + 1).padStart(3, '0')}`,
-              status: idx === 4 ? 'absent' : idx === 3 ? 'leave' : 'present'
-            })));
+            setClassRoster(filtered.map((s: any, idx: number) => {
+              const stdName = s.name || `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim() || 'Student';
+              const admNo = s.admissionNo || s.admission_number || `DKS-2026-${String(idx + 1).padStart(3, '0')}`;
+              const rollVal = s.rollNo ? parseInt(String(s.rollNo).replace(/\D/g, ''), 10) || (idx + 1) : (idx + 1);
+
+              // Check if student has an active approved leave
+              const activeApp = studentLeaves.find(l =>
+                (l.studentId === s.id || l.student_id === s.id || l.admissionNo === admNo || l.studentName?.toLowerCase() === stdName.toLowerCase() || String(l.rollNo).replace(/\D/g, '') === String(rollVal)) &&
+                l.status === 'approved'
+              );
+              const isLeaveLocked = Boolean(activeApp);
+
+              return {
+                id: s.id || `std-${idx + 1}`,
+                rollNo: rollVal,
+                name: stdName,
+                admissionNo: admNo,
+                status: isLeaveLocked ? 'leave' : (idx === 4 ? 'absent' : 'present'),
+                isLeaveLocked,
+                leaveReason: activeApp?.reason || null
+              };
+            }));
           }
         }
       } catch (err) {
@@ -438,6 +483,29 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
     fetchClassStudents();
   }, [selectedClassForMarking]);
 
+  // Synchronize student leaves with class roster so approved leaves are automatically locked
+  useEffect(() => {
+    if (studentLeaves.length > 0 && classRoster.length > 0) {
+      setClassRoster(prev =>
+        prev.map(st => {
+          const activeApp = studentLeaves.find(l =>
+            (l.studentId === st.id || l.student_id === st.id || l.admissionNo === st.admissionNo || l.studentName?.toLowerCase() === st.name?.toLowerCase() || String(l.rollNo).replace(/\D/g, '') === String(st.rollNo)) &&
+            l.status === 'approved'
+          );
+          if (activeApp && (!st.isLeaveLocked || st.status !== 'leave')) {
+            return {
+              ...st,
+              status: 'leave',
+              isLeaveLocked: true,
+              leaveReason: activeApp.reason
+            };
+          }
+          return st;
+        })
+      );
+    }
+  }, [studentLeaves]);
+
   // Toggle student attendance (Present -> Absent -> Leave -> Present)
   const handleToggleAttendance = (id: string) => {
     const isLocked = Boolean(submittedClasses[selectedClassForMarking]) && !isEditingAttendance;
@@ -446,6 +514,16 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         'info',
         'Attendance Register Locked 🔒',
         'Daily roll call is already submitted. Click "Edit Attendance" to modify records.'
+      );
+      return;
+    }
+
+    const targetStudent = classRoster.find(st => st.id === id);
+    if (targetStudent?.isLeaveLocked) {
+      onShowToast(
+        'warning',
+        'Attendance Locked: Approved Leave 🔒',
+        `${targetStudent.name} is on officially sanctioned leave (${targetStudent.leaveReason || 'Sanctioned'}). Status is locked as On Leave.`
       );
       return;
     }
@@ -467,8 +545,13 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
       onShowToast('warning', 'Attendance Locked 🔒', 'Click "Edit Attendance" before modifying the roster.');
       return;
     }
-    setClassRoster(prev => prev.map(st => ({ ...st, status: 'present' })));
-    onShowToast('success', 'Roster Updated', `All ${classRoster.length} students marked present`);
+    const lockedCount = classRoster.filter(st => st.isLeaveLocked).length;
+    setClassRoster(prev => prev.map(st => (st.isLeaveLocked ? st : { ...st, status: 'present' })));
+    if (lockedCount > 0) {
+      onShowToast('success', 'Roster Updated', `Available students marked present. ${lockedCount} student(s) remain locked as On Leave.`);
+    } else {
+      onShowToast('success', 'Roster Updated', `All ${classRoster.length} students marked present`);
+    }
   };
 
   const handleSaveAttendance = async () => {
@@ -1747,11 +1830,16 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                       <div>
                         <div className="text-sm font-bold text-white flex items-center gap-2">
                           <span>{st.name}</span>
-                          {st.status === 'leave' && (
+                          {st.isLeaveLocked ? (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/25 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1 shadow-sm">
+                              <Lock className="w-2.5 h-2.5 text-amber-400" />
+                              Approved Leave ✓
+                            </span>
+                          ) : st.status === 'leave' ? (
                             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                               Leave
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         <div className="text-[11px] text-slate-400">
                           Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}
@@ -1766,20 +1854,27 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                           <span>Locked</span>
                         </span>
                       )}
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all flex items-center gap-1.5 ${
-                          st.status === 'present'
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : st.status === 'absent'
-                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        }`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          st.status === 'present' ? 'bg-emerald-400' : st.status === 'absent' ? 'bg-rose-400' : 'bg-amber-400'
-                        }`} />
-                        <span>{st.status === 'leave' ? 'On Leave' : st.status}</span>
-                      </span>
+                      {st.isLeaveLocked ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold uppercase border bg-amber-500/25 text-amber-300 border-amber-500/50 flex items-center gap-1.5 shadow-sm">
+                          <Lock className="w-3 h-3 text-amber-400" />
+                          <span>ON LEAVE (LOCKED)</span>
+                        </span>
+                      ) : (
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all flex items-center gap-1.5 ${
+                            st.status === 'present'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : st.status === 'absent'
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                              : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            st.status === 'present' ? 'bg-emerald-400' : st.status === 'absent' ? 'bg-rose-400' : 'bg-amber-400'
+                          }`} />
+                          <span>{st.status === 'leave' ? 'On Leave' : st.status}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}

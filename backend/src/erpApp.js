@@ -9372,8 +9372,8 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     grade: "Class 10",
     section: "A",
     leaveType: "sick",
-    startDate: "2026-09-02",
-    endDate: "2026-09-03",
+    startDate: "2026-10-23",
+    endDate: "2026-10-24",
     daysCount: 2,
     reason: "Severe viral fever and physician recommended bed rest.",
     parentName: "Vikram Sharma",
@@ -9382,10 +9382,10 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     attachmentUrl: "https://example.com/prescriptions/aarav_medical.pdf",
     status: "pending",
     reviewedBy: null,
-    reviewedAt: "2026-09-02T08:30:00.000Z",
-    reviewNotes: "Approved. Please submit doctor fitness certificate upon return.",
-    createdAt: "2026-09-02T07:15:00.000Z",
-    updatedAt: "2026-09-02T08:30:00.000Z"
+    reviewedAt: null,
+    reviewNotes: null,
+    createdAt: "2026-10-22T07:15:00.000Z",
+    updatedAt: "2026-10-22T08:30:00.000Z"
   },
   {
     id: "lap-2026-02",
@@ -9396,8 +9396,8 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     grade: "Class 9",
     section: "B",
     leaveType: "casual",
-    startDate: "2026-09-10",
-    endDate: "2026-09-11",
+    startDate: "2026-10-25",
+    endDate: "2026-10-26",
     daysCount: 2,
     reason: "Attending cousin sister's wedding out of station.",
     parentName: "Sanjay Gupta",
@@ -9405,13 +9405,42 @@ let ERP_PORTAL_LEAVE_APPLICATIONS = [
     parentEmail: "sanjay.gupta@biz.org",
     attachmentUrl: "",
     status: "pending",
-    reviewedBy: "Dr. Meenakshi Sundaram",
-    reviewedAt: "2026-09-09T14:00:00.000Z",
-    reviewNotes: "Sanctioned casual leave.",
-    createdAt: "2026-09-08T18:00:00.000Z",
-    updatedAt: "2026-09-09T14:00:00.000Z"
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewNotes: null,
+    createdAt: "2026-10-22T18:00:00.000Z",
+    updatedAt: "2026-10-22T18:00:00.000Z"
   }
 ];
+
+// Persistent File Storage for Portal Student Leave Applications across Server Restarts
+const PORTAL_LEAVES_PERSISTENCE_FILE = path.join(process.cwd(), "data", "portal_leave_applications.json");
+function loadPortalLeaveApplicationsFromFile() {
+  try {
+    if (fs.existsSync(PORTAL_LEAVES_PERSISTENCE_FILE)) {
+      const raw = fs.readFileSync(PORTAL_LEAVES_PERSISTENCE_FILE, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list) && list.length > 0) {
+        ERP_PORTAL_LEAVE_APPLICATIONS = list;
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("[Portal Leaves] File load notice:", err.message);
+  }
+}
+function savePortalLeaveApplicationsToFile() {
+  try {
+    const parentDir = path.dirname(PORTAL_LEAVES_PERSISTENCE_FILE);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.writeFileSync(PORTAL_LEAVES_PERSISTENCE_FILE, JSON.stringify(ERP_PORTAL_LEAVE_APPLICATIONS, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Portal Leaves] File save notice:", err.message);
+  }
+}
+loadPortalLeaveApplicationsFromFile();
 
 let ERP_PORTAL_HOMEWORK = [
   {
@@ -16115,6 +16144,19 @@ app.get("/api/erp/attendance/student", async (req, res) => {
 
   const records = matchingStudents.map(std => {
     const existing = attMap.get(std.id);
+    // Check if student has an active approved leave application covering this date
+    const activeLeave = ERP_PORTAL_LEAVE_APPLICATIONS.find(l =>
+      (l.organization_id === orgId) &&
+      (l.studentId === std.id || l.student_id === std.id || l.rollNo === std.rollNo || l.admissionNo === std.admissionNo || (l.studentName && std.name && l.studentName.toLowerCase() === std.name.toLowerCase())) &&
+      l.status === "approved" &&
+      date >= l.startDate &&
+      date <= l.endDate
+    );
+
+    const isLeaveLocked = Boolean(activeLeave);
+    const resolvedStatus = isLeaveLocked ? "leave" : (existing ? existing.status : ERP_ATTENDANCE_SETTINGS.defaultStatus || "present");
+    const resolvedRemarks = isLeaveLocked ? `Approved Leave: ${activeLeave.reason}` : (existing ? existing.remarks || "" : "");
+
     return {
       id: existing?.id || null,
       studentId: std.id,
@@ -16124,8 +16166,10 @@ app.get("/api/erp/attendance/student", async (req, res) => {
       grade: std.grade,
       section: std.section,
       date,
-      status: existing ? existing.status : ERP_ATTENDANCE_SETTINGS.defaultStatus || "present",
-      remarks: existing ? existing.remarks || "" : "",
+      status: resolvedStatus,
+      isLocked: isLeaveLocked,
+      lockReason: isLeaveLocked ? `Approved Leave (${activeLeave.reason})` : null,
+      remarks: resolvedRemarks,
       marked_by: existing ? existing.marked_by : null
     };
   });
@@ -16196,8 +16240,18 @@ app.post("/api/erp/attendance/student/bulk", async (req, res) => {
 
     const std = ERP_STUDENTS.find(s => s.id === studentId);
     const studentName = item.studentName || std?.name || "Student";
-    const status = item.status || "present";
-    const remarks = item.remarks || "";
+    
+    // Check if student has an active approved leave application covering this date
+    const activeLeave = ERP_PORTAL_LEAVE_APPLICATIONS.find(l =>
+      (l.organization_id === orgId) &&
+      (l.studentId === studentId || l.student_id === studentId || l.rollNo === std?.rollNo || l.admissionNo === std?.admissionNo || (l.studentName && studentName && l.studentName.toLowerCase() === studentName.toLowerCase())) &&
+      l.status === "approved" &&
+      date >= l.startDate &&
+      date <= l.endDate
+    );
+
+    const status = activeLeave ? "leave" : (item.status || "present");
+    const remarks = activeLeave ? `Approved Leave: ${activeLeave.reason}` : (item.remarks || "");
 
     const existingIdx = ERP_ATTENDANCE.findIndex(a =>
       (a.organization_id === orgId) &&
@@ -35775,7 +35829,7 @@ app.get("/api/erp/portal/ward-students", (req, res) => {
     school_code: "DKS-DEL-01",
     board: "CBSE",
     affiliation_no: "CBSE-AFF-202601",
-    logo_url: "/assets/dakshora-logo.png",
+    logo_url: "/assets/schools/new-ideal-logo.svg",
     address: "Institutional Area, Vasant Kunj, New Delhi - 110070"
   };
 
@@ -35790,7 +35844,7 @@ app.get("/api/erp/portal/ward-students", (req, res) => {
       board: sch.board || "CBSE",
       schoolCode: sch.school_code || "DKS-DEL-01",
       affiliationNo: sch.affiliation_no || "CBSE-AFF-202601",
-      logoUrl: sch.logo_url || "/assets/dakshora-logo.png",
+      logoUrl: sch.logo_url || "/assets/schools/new-ideal-logo.svg",
       address: sch.address || "Institutional Area, Vasant Kunj, New Delhi - 110070"
     },
     wards: wards.map(w => ({
@@ -36050,6 +36104,7 @@ app.post("/api/erp/portal/leave-applications", async (req, res) => {
   };
 
   ERP_PORTAL_LEAVE_APPLICATIONS.unshift(newApp);
+  savePortalLeaveApplicationsToFile();
   await recordAuditLog("portal.leave_applied", student.parentEmail || "parent", "leave_application", newApp.id, req);
 
   res.status(201).json({
@@ -36108,7 +36163,7 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
   appItem.reviewedAt = new Date().toISOString();
   appItem.updatedAt = new Date().toISOString();
 
-  // If approved, mark attendance records as 'leave' and persist to Supabase public.student_attendance
+  // If approved, mark attendance records as 'leave' with lock and persist to Supabase public.student_attendance
   if (status === "approved") {
     const cur = new Date(appItem.startDate);
     const end = new Date(appItem.endDate);
@@ -36116,23 +36171,29 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
       const dStr = cur.toISOString().split("T")[0];
       const existing = ERP_ATTENDANCE.find(a => 
         (a.organization_id === orgId) && 
-        (a.studentId || a.student_id) === appItem.studentId && 
+        ((a.studentId || a.student_id) === appItem.studentId || a.rollNo === appItem.rollNo || a.admissionNo === appItem.admissionNo) && 
         (a.attendanceDate || a.date) === dStr
       );
       if (existing) {
         existing.status = "leave";
+        existing.isLocked = true;
+        existing.lockReason = `Approved Leave: ${appItem.reason}`;
         existing.remarks = `Approved Leave: ${appItem.reason}`;
       } else {
         ERP_ATTENDANCE.push({
           id: `att-leave-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           studentId: appItem.studentId,
           studentName: appItem.studentName,
+          rollNo: appItem.rollNo,
+          admissionNo: appItem.admissionNo,
           grade: appItem.grade,
           section: appItem.section,
           academicSession: "2026-27",
           attendanceDate: dStr,
           date: dStr,
           status: "leave",
+          isLocked: true,
+          lockReason: `Approved Leave: ${appItem.reason}`,
           remarks: `Approved Leave: ${appItem.reason}`,
           organization_id: orgId
         });
@@ -36151,6 +36212,9 @@ app.patch("/api/erp/portal/leave-applications/:id/status", async (req, res) => {
       cur.setDate(cur.getDate() + 1);
     }
   }
+
+  // Persist updated leave applications to file immediately
+  savePortalLeaveApplicationsToFile();
 
   await recordAuditLog(`portal.leave_${status}`, req.user?.email || "teacher", "leave_application", id, req);
 
@@ -36174,6 +36238,7 @@ app.delete("/api/erp/portal/leave-applications/:id", async (req, res) => {
 
   if (idx !== -1) {
     ERP_PORTAL_LEAVE_APPLICATIONS.splice(idx, 1);
+    savePortalLeaveApplicationsToFile();
   }
 
   res.json({

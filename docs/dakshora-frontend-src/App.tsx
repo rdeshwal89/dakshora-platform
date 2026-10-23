@@ -336,6 +336,8 @@ export function App() {
 
   const isPublicWebsite = surface === 'public_website';
   const isWardPortalSurface = surface === 'parent_portal' || (isAuthenticated && (currentUser?.role === 'parent' || currentUser?.role === 'student'));
+  const isTeacherPortalSurface = isAuthenticated && (currentUser?.role === 'teacher' || ['teacher', 'faculty', 'lecturer'].includes((currentUser?.role || '').toLowerCase()));
+  const isStandalonePortal = isWardPortalSurface || isTeacherPortalSurface || surface === 'school_app';
 
   return (
     <div
@@ -366,8 +368,8 @@ export function App() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {/* Header with Top Surface Switcher (Strictly Hidden for Ward Portal and School App) */}
-      {!isWardPortalSurface && surface !== 'school_app' && (
+      {/* Header with Top Surface Switcher (Strictly Hidden for Standalone Portals: Ward, Teacher, and App) */}
+      {!isStandalonePortal && (
         <Header
           surface={surface}
           setSurface={handleSetSurface}
@@ -560,8 +562,8 @@ export function App() {
         )}
       </main>
 
-      {/* Footer for Internal / ERP Dashboard Surfaces */}
-      {!isPublicWebsite && (
+      {/* Footer for Internal / ERP Dashboard Surfaces (Hidden for Standalone Portals) */}
+      {!isPublicWebsite && !isStandalonePortal && (
         <footer className="w-full border-t border-slate-200/90 bg-white/80 backdrop-blur-md py-6 mt-12 relative z-10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-slate-500">
             <div className="flex items-center gap-2">
