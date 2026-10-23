@@ -41536,6 +41536,375 @@ app.post("/api/erp/teacher/arrangements/:id/decline", async (req, res) => {
   });
 });
 
+// =========================================================================
+// 👩‍🏫 TEACHER / FACULTY LEAVE MANAGEMENT (CL, Earn Leave, Medical, Other)
+// =========================================================================
+let ERP_TEACHER_LEAVES = [
+  {
+    id: "tch-lev-2026-01",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    staffId: "410a0d02-a84f-4036-8bf0-34d99c6ca514",
+    empId: "DKS-FAC-03",
+    teacherName: "Vikramaditya Singh",
+    email: "teacher@dakshoraacademy.edu.in",
+    leaveType: "CL",
+    leaveTypeLabel: "Casual Leave (CL)",
+    fromDate: "2026-09-08",
+    toDate: "2026-09-08",
+    daysCount: 1,
+    reason: "Urgent personal bank and documentation work.",
+    handoverNotes: "Mr. Rajeev Malhotra requested to monitor Period 3 Math (Class 10-A).",
+    emergencyPhone: "+91 98110 00003",
+    status: "approved",
+    reviewedBy: "Dr. Meenakshi Sundaram (Principal)",
+    reviewedAt: "2026-09-07T14:30:00.000Z",
+    reviewRemarks: "Sanctioned. Please ensure student homework checked upon return.",
+    createdAt: "2026-09-07T09:00:00.000Z",
+    updatedAt: "2026-09-07T14:30:00.000Z"
+  },
+  {
+    id: "tch-lev-2026-02",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    staffId: "410a0d02-a84f-4036-8bf0-34d99c6ca514",
+    empId: "DKS-FAC-03",
+    teacherName: "Vikramaditya Singh",
+    email: "teacher@dakshoraacademy.edu.in",
+    leaveType: "Earn Leave",
+    leaveTypeLabel: "Earned Leave (EL)",
+    fromDate: "2026-09-28",
+    toDate: "2026-09-29",
+    daysCount: 2,
+    reason: "Family wedding ceremony out of station.",
+    handoverNotes: "Lesson plan and question bank uploaded to Teacher Portal for Class 10-A.",
+    emergencyPhone: "+91 98110 00003",
+    status: "approved",
+    reviewedBy: "Dr. Meenakshi Sundaram (Principal)",
+    reviewedAt: "2026-09-26T16:00:00.000Z",
+    reviewRemarks: "Approved with full EL balance deduction.",
+    createdAt: "2026-09-25T11:00:00.000Z",
+    updatedAt: "2026-09-26T16:00:00.000Z"
+  }
+];
+
+const TEACHER_LEAVES_PERSISTENCE_FILE = path.join(process.cwd(), "data", "teacher_leave_applications.json");
+function loadTeacherLeavesFromFile() {
+  try {
+    if (fs.existsSync(TEACHER_LEAVES_PERSISTENCE_FILE)) {
+      const raw = fs.readFileSync(TEACHER_LEAVES_PERSISTENCE_FILE, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list) && list.length > 0) {
+        ERP_TEACHER_LEAVES = list;
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("[Teacher Leaves] File load error:", err.message);
+  }
+}
+function saveTeacherLeavesToFile() {
+  try {
+    const parentDir = path.dirname(TEACHER_LEAVES_PERSISTENCE_FILE);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.writeFileSync(TEACHER_LEAVES_PERSISTENCE_FILE, JSON.stringify(ERP_TEACHER_LEAVES, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Teacher Leaves] File save error:", err.message);
+  }
+}
+loadTeacherLeavesFromFile();
+
+function calculateTeacherLeaveBalances(orgId, staffIdentifier) {
+  const teacherApps = ERP_TEACHER_LEAVES.filter(l =>
+    (l.organization_id === orgId) &&
+    (l.status === "approved")
+  );
+
+  let usedCL = 0;
+  let usedEL = 0;
+  let usedML = 0;
+  let usedOther = 0;
+
+  teacherApps.forEach(app => {
+    const type = (app.leaveType || "").toUpperCase();
+    const days = Number(app.daysCount) || 1;
+    if (type.includes("CL") || type.includes("CASUAL")) {
+      usedCL += days;
+    } else if (type.includes("EARN") || type.includes("EL")) {
+      usedEL += days;
+    } else if (type.includes("MED") || type.includes("ML") || type.includes("SICK")) {
+      usedML += days;
+    } else {
+      usedOther += days;
+    }
+  });
+
+  const totalCL = 12;
+  const totalEL = 15;
+  const totalML = 10;
+  const totalOther = 5;
+
+  return {
+    cl: {
+      type: "CL",
+      name: "Casual Leave (CL)",
+      hindiName: "आकस्मिक अवकाश (CL)",
+      total: totalCL,
+      used: usedCL,
+      balance: Math.max(0, totalCL - usedCL),
+      remaining: Math.max(0, totalCL - usedCL),
+      color: "amber"
+    },
+    el: {
+      type: "Earn Leave",
+      name: "Earned Leave (EL)",
+      hindiName: "अर्जित अवकाश (EL)",
+      total: totalEL,
+      used: usedEL,
+      balance: Math.max(0, totalEL - usedEL),
+      remaining: Math.max(0, totalEL - usedEL),
+      color: "blue"
+    },
+    ml: {
+      type: "Medical Leave",
+      name: "Medical Leave (ML)",
+      hindiName: "चिकित्सा अवकाश (ML)",
+      total: totalML,
+      used: usedML,
+      balance: Math.max(0, totalML - usedML),
+      remaining: Math.max(0, totalML - usedML),
+      color: "purple"
+    },
+    other: {
+      type: "Other Leave",
+      name: "Special / Other Leave",
+      hindiName: "विशेष / अन्य अवकाश",
+      total: totalOther,
+      used: usedOther,
+      balance: Math.max(0, totalOther - usedOther),
+      remaining: Math.max(0, totalOther - usedOther),
+      color: "emerald"
+    }
+  };
+}
+
+// GET /api/erp/teacher/leaves - Fetch Teacher Leave Balances & Applied Leave History
+app.get("/api/erp/teacher/leaves", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const staffId = req.user?.staffId || req.user?.id || "410a0d02-a84f-4036-8bf0-34d99c6ca514";
+  const empId = req.user?.empId || "DKS-FAC-03";
+
+  // Filter for this teacher
+  let apps = ERP_TEACHER_LEAVES.filter(l =>
+    (l.organization_id === orgId) &&
+    (l.staffId === staffId || l.empId === empId || !l.staffId || l.email === (req.user?.email || "teacher@dakshoraacademy.edu.in"))
+  );
+
+  // Sync any records from Supabase leave_requests
+  if (supabase) {
+    try {
+      const { data: dbLeaves } = await supabase
+        .from("leave_requests")
+        .select("*")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: false });
+
+      if (dbLeaves && dbLeaves.length > 0) {
+        dbLeaves.forEach(dbl => {
+          const exists = apps.find(a => a.id === dbl.id || a.db_id === dbl.id);
+          if (!exists) {
+            apps.push({
+              id: dbl.id,
+              db_id: dbl.id,
+              organization_id: dbl.organization_id,
+              staffId: dbl.staff_id,
+              empId: empId,
+              teacherName: req.user?.name || "Vikramaditya Singh",
+              email: req.user?.email || "teacher@dakshoraacademy.edu.in",
+              leaveType: dbl.leave_type || "CL",
+              fromDate: dbl.from_date,
+              toDate: dbl.to_date,
+              daysCount: 1,
+              reason: dbl.reason,
+              status: dbl.status,
+              createdAt: dbl.created_at
+            });
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  const balances = calculateTeacherLeaveBalances(orgId, staffId);
+
+  res.json({
+    success: true,
+    balances,
+    applications: apps,
+    count: apps.length
+  });
+});
+
+// POST /api/erp/teacher/leaves/apply - Teacher Submits New Leave Application
+app.post("/api/erp/teacher/leaves/apply", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const {
+    leaveType = "CL",
+    fromDate,
+    toDate,
+    reason,
+    handoverNotes = "",
+    emergencyPhone = "",
+    attachmentUrl = "",
+    halfDay = false,
+    halfDayType = "first_half"
+  } = req.body || {};
+
+  if (!fromDate || !toDate || !reason?.trim()) {
+    return res.status(400).json({
+      success: false,
+      code: "MISSING_REQUIRED_FIELDS",
+      message: "From Date, To Date, and Reason for leave are required."
+    });
+  }
+
+  const start = new Date(fromDate);
+  const end = new Date(toDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_DATE_RANGE",
+      message: "To Date must be on or after From Date."
+    });
+  }
+
+  let daysCount = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
+  if (halfDay) {
+    daysCount = 0.5;
+  }
+
+  const staffId = req.user?.staffId || req.user?.id || "410a0d02-a84f-4036-8bf0-34d99c6ca514";
+  const empId = req.user?.empId || "DKS-FAC-03";
+  const teacherName = req.user?.name || "Vikramaditya Singh";
+  const email = req.user?.email || "teacher@dakshoraacademy.edu.in";
+
+  // Check leave balance
+  const currentBalances = calculateTeacherLeaveBalances(orgId, staffId);
+  const typeKey = (leaveType.toLowerCase().includes("cl") || leaveType.toLowerCase().includes("casual"))
+    ? "cl"
+    : (leaveType.toLowerCase().includes("earn") || leaveType.toLowerCase().includes("el"))
+    ? "el"
+    : (leaveType.toLowerCase().includes("med") || leaveType.toLowerCase().includes("ml"))
+    ? "ml"
+    : "other";
+
+  const quota = currentBalances[typeKey];
+  if (quota && quota.balance < daysCount) {
+    return res.status(400).json({
+      success: false,
+      code: "INSUFFICIENT_LEAVE_BALANCE",
+      message: `Insufficient ${quota.name} balance. Available: ${quota.balance} day(s), Requested: ${daysCount} day(s).`
+    });
+  }
+
+  const newApp = {
+    id: `tch-lev-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+    organization_id: orgId,
+    staffId,
+    empId,
+    teacherName,
+    email,
+    leaveType,
+    leaveTypeLabel: quota?.name || leaveType,
+    fromDate,
+    toDate,
+    daysCount,
+    halfDay: Boolean(halfDay),
+    halfDayType: halfDay ? halfDayType : null,
+    reason: reason.trim(),
+    handoverNotes: handoverNotes.trim(),
+    emergencyPhone: emergencyPhone.trim() || "+91 98110 00003",
+    attachmentUrl: attachmentUrl.trim(),
+    status: "pending",
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewRemarks: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  ERP_TEACHER_LEAVES.unshift(newApp);
+
+  // Sync to ERP_STAFF_LEAVES as well
+  ERP_STAFF_LEAVES.unshift({
+    id: newApp.id,
+    organization_id: orgId,
+    staffId,
+    empId,
+    staffName: teacherName,
+    designation: req.user?.designation || "PGT Mathematics",
+    department: req.user?.department || "Mathematics",
+    fromDate,
+    toDate,
+    leaveType,
+    reason: reason.trim(),
+    status: "pending",
+    created_at: newApp.createdAt
+  });
+
+  // Persist to file
+  saveTeacherLeavesToFile();
+
+  // Persist to Supabase public.leave_requests if available
+  if (typeof recordStaffLeaveRequestDb === "function") {
+    try {
+      const dbLeave = await recordStaffLeaveRequestDb(orgId, staffId, fromDate, toDate, reason, "pending", req.user?.id);
+      if (dbLeave) newApp.db_id = dbLeave.id;
+    } catch (_) {}
+  }
+
+  await recordAuditLog("erp.teacher_leave_applied", email, "teacher_leave", newApp.id, req);
+
+  const updatedBalances = calculateTeacherLeaveBalances(orgId, staffId);
+
+  res.status(201).json({
+    success: true,
+    message: `Leave application for ${daysCount} day(s) submitted successfully. Forwarded to Principal Office.`,
+    application: newApp,
+    balances: updatedBalances
+  });
+});
+
+// DELETE /api/erp/teacher/leaves/:id - Withdraw Pending Leave Application
+app.delete("/api/erp/teacher/leaves/:id", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { id } = req.params;
+
+  const idx = ERP_TEACHER_LEAVES.findIndex(l =>
+    (l.organization_id === orgId) &&
+    (l.id === id || l.db_id === id)
+  );
+
+  if (idx === -1) {
+    return res.status(404).json({ success: false, message: "Leave application not found." });
+  }
+
+  const app = ERP_TEACHER_LEAVES[idx];
+  if (app.status === "approved") {
+    return res.status(400).json({ success: false, message: "Approved leave cannot be withdrawn without Principal authorization." });
+  }
+
+  ERP_TEACHER_LEAVES.splice(idx, 1);
+  saveTeacherLeavesToFile();
+
+  await recordAuditLog("erp.teacher_leave_withdrawn", req.user?.email || "teacher", "teacher_leave", id, req);
+
+  res.json({
+    success: true,
+    message: "Leave application withdrawn successfully."
+  });
+});
+
 // POST /api/erp/teacher/attendance/submit - Teacher Class Roll Call Submission
 app.post("/api/erp/teacher/attendance/submit", async (req, res) => {
   const orgId = resolveTenantOrgId(req);

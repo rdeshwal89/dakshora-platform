@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Calendar,
+  CalendarDays,
   BookOpen,
   Award,
   Clock,
@@ -35,6 +36,7 @@ export type TeacherPortalTab =
   | 'pulse'
   | 'attendance'
   | 'leaves'
+  | 'my_leaves'
   | 'reports'
   | 'unmarked'
   | 'timetable'
@@ -175,6 +177,16 @@ export const TeacherPortalSidebar: React.FC<TeacherPortalSidebarProps> = ({
           badge: pendingLeavesCount > 0 ? `${pendingLeavesCount} Pending` : null,
           badgeColor: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
           gradient: 'from-pink-500 to-rose-600'
+        },
+        {
+          id: 'my_leaves',
+          label: 'Apply Faculty Leave',
+          hindiLabel: 'शिक्षक अवकाश आवेदन (CL/EL/ML)',
+          icon: CalendarDays,
+          description: 'Apply CL, Earned, Medical & track balance',
+          badge: 'Apply',
+          badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+          gradient: 'from-amber-500 to-orange-600'
         },
         {
           id: 'reports',

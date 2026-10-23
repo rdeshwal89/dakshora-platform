@@ -40,7 +40,8 @@ import {
   Clock3,
   MapPin,
   Check,
-  X
+  X,
+  CalendarDays
 } from 'lucide-react';
 import { useTranslation, LanguageSelector } from '../i18n';
 import { TeacherPortalSidebar, TeacherPortalTab } from './TeacherPortalSidebar';
@@ -245,6 +246,151 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   useEffect(() => {
     fetchStudentLeaves();
   }, [fetchStudentLeaves]);
+
+  // Teacher Faculty Leave Desk State (CL, Earn Leave, Medical Leave, Other Leave)
+  const [teacherLeaves, setTeacherLeaves] = useState<any[]>([]);
+  const [teacherLeaveBalances, setTeacherLeaveBalances] = useState<{
+    cl: { total: number; used: number; remaining: number; label: string };
+    el: { total: number; used: number; remaining: number; label: string };
+    ml: { total: number; used: number; remaining: number; label: string };
+    other: { total: number; used: number; remaining: number; label: string };
+  }>({
+    cl: { total: 12, used: 2, remaining: 10, label: 'Casual Leave (CL)' },
+    el: { total: 15, used: 3, remaining: 12, label: 'Earned Leave (EL)' },
+    ml: { total: 10, used: 1, remaining: 9, label: 'Medical Leave (ML)' },
+    other: { total: 5, used: 0, remaining: 5, label: 'Other / Duty Leave' }
+  });
+  const [loadingTeacherLeaves, setLoadingTeacherLeaves] = useState(false);
+  const [showTeacherApplyLeaveModal, setShowTeacherApplyLeaveModal] = useState(false);
+  const [submittingTeacherLeave, setSubmittingTeacherLeave] = useState(false);
+  const [leaveDeskSubTab, setLeaveDeskSubTab] = useState<'student_leaves' | 'my_leaves'>('my_leaves');
+
+  const [teacherLeaveForm, setTeacherLeaveForm] = useState({
+    leaveType: 'CL' as 'CL' | 'EL' | 'ML' | 'OTHER',
+    fromDate: new Date().toISOString().split('T')[0],
+    toDate: new Date().toISOString().split('T')[0],
+    isHalfDay: false,
+    halfDayType: 'first_half' as 'first_half' | 'second_half',
+    reason: '',
+    handoverNotes: '',
+    contactNumber: profile.mobile || '9811000003'
+  });
+
+  // Fetch live faculty leaves from backend
+  const fetchTeacherLeaves = React.useCallback(async () => {
+    setLoadingTeacherLeaves(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/erp/teacher/leaves', { headers });
+      const data = await res.json();
+      if (data.success) {
+        if (Array.isArray(data.applications)) {
+          setTeacherLeaves(data.applications);
+        }
+        if (data.balances) {
+          const norm = (b: any, defTotal: number, defLabel: string) => ({
+            total: b?.total ?? defTotal,
+            used: b?.used ?? 0,
+            remaining: b?.remaining ?? b?.balance ?? (defTotal - (b?.used ?? 0)),
+            label: b?.name ?? b?.label ?? defLabel
+          });
+          setTeacherLeaveBalances({
+            cl: norm(data.balances.cl, 12, 'Casual Leave (CL)'),
+            el: norm(data.balances.el, 15, 'Earned Leave (EL)'),
+            ml: norm(data.balances.ml, 10, 'Medical Leave (ML)'),
+            other: norm(data.balances.other, 5, 'Other / Special Leave')
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn('Failed to load teacher leave data:', err.message);
+    } finally {
+      setLoadingTeacherLeaves(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTeacherLeaves();
+  }, [fetchTeacherLeaves]);
+
+  useEffect(() => {
+    if (activeTab === 'my_leaves') {
+      setLeaveDeskSubTab('my_leaves');
+    } else if (activeTab === 'leaves') {
+      setLeaveDeskSubTab('student_leaves');
+    }
+  }, [activeTab]);
+
+  const handleSubmitTeacherLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teacherLeaveForm.reason.trim()) {
+      onShowToast('warning', 'Reason Required', 'Please provide a reason for the leave application.');
+      return;
+    }
+    setSubmittingTeacherLeave(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch('/api/erp/teacher/leaves/apply', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          staffName: profile.name,
+          staffPost: profile.currentPost,
+          empId: profile.empId,
+          department: profile.department,
+          assignedClass: profile.assignedClass,
+          ...teacherLeaveForm
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast(
+          'success',
+          'Application Submitted ✓',
+          data.message || 'Leave application successfully forwarded to Principal / HR desk.'
+        );
+        setShowTeacherApplyLeaveModal(false);
+        setTeacherLeaveForm(prev => ({
+          ...prev,
+          reason: '',
+          handoverNotes: '',
+          isHalfDay: false
+        }));
+        await fetchTeacherLeaves();
+      } else {
+        onShowToast('error', 'Submission Failed', data.message || 'Unable to submit leave request.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Server Error', err.message || 'Connection failed.');
+    } finally {
+      setSubmittingTeacherLeave(false);
+    }
+  };
+
+  const handleWithdrawTeacherLeave = async (id: string) => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`/api/erp/teacher/leaves/${id}`, {
+        method: 'DELETE',
+        headers
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast('info', 'Application Withdrawn', data.message || 'Leave application cancelled.');
+        await fetchTeacherLeaves();
+      } else {
+        onShowToast('error', 'Failed', data.message || 'Cannot withdraw application.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Error', err.message || 'Could not withdraw leave.');
+    }
+  };
 
   // Review & Approve / Decline Student Leave
   const handleReviewLeave = async (leaveId: string, status: 'approved' | 'rejected') => {
@@ -1438,172 +1584,455 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         )}
 
         {/* ========================================================================= */}
-        {/* TAB: STUDENT LEAVE APPROVALS */}
+        {/* TAB: LEAVE DESK — STUDENT APPROVALS & TEACHER FACULTY LEAVE (CL/EL/ML) */}
         {/* ========================================================================= */}
-        {activeTab === 'leaves' && (
-          <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300 font-mono">
+        {(activeTab === 'leaves' || activeTab === 'my_leaves') && (
+          <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-6xl w-full mx-auto animate-in fade-in duration-300 font-mono">
             {/* Header Banner */}
-            <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
               <div>
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-rose-400">
-                  STUDENT LEAVE APPLICATIONS & ATTENDANCE APPROVALS
-                </span>
-                <h2 className="text-lg font-black text-white mt-0.5">
-                  Class Teacher Review: {profile.name} • Class 10-A
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-amber-400">
+                    FACULTY LEAVE DESK & STUDENT APPROVALS
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    CL • Earn Leave • Medical • Other
+                  </span>
+                </div>
+                <h2 className="text-lg font-black text-white mt-1">
+                  {profile.name} • {profile.currentPost || 'PGT Mathematics'} (Class 10-A)
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Approved leaves automatically update attendance status in live ERP database.
+                  Manage personal faculty leave applications and review Class 10-A student leave requests.
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                  onClick={() => setShowTeacherApplyLeaveModal(true)}
+                  className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:brightness-105 text-white font-black text-xs shadow-lg shadow-amber-500/25 transition-all cursor-pointer flex items-center gap-2"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Daily Pulse</span>
+                  <Plus className="w-4 h-4" />
+                  <span>Apply For Leave (अवकाश आवेदन)</span>
                 </button>
                 <button
                   type="button"
-                  onClick={fetchStudentLeaves}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                  onClick={() => {
+                    fetchStudentLeaves();
+                    fetchTeacherLeaves();
+                  }}
+                  className="px-3.5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Refresh Leave Data"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingLeaves ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingLeaves || loadingTeacherLeaves ? 'animate-spin' : ''}`} />
                   <span>Refresh</span>
                 </button>
               </div>
             </div>
 
-            {/* Filter Pills */}
-            <div className="flex flex-wrap items-center gap-2">
-              {(['all', 'pending', 'approved', 'rejected'] as const).map((f) => {
-                const count = f === 'all' ? studentLeaves.length : studentLeaves.filter(l => l.status === f).length;
-                return (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => setLeaveFilter(f)}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-bold capitalize transition-all cursor-pointer border ${
-                      leaveFilter === f
-                        ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/20'
-                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
-                    }`}
-                  >
-                    {f} ({count})
-                  </button>
-                );
-              })}
+            {/* Segmented Sub-Tab Switcher: Student Leave Approvals vs Apply Faculty Leave */}
+            <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 w-full sm:w-fit shadow-md">
+              <button
+                type="button"
+                onClick={() => setLeaveDeskSubTab('my_leaves')}
+                className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-mono font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  leaveDeskSubTab === 'my_leaves'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/25 border border-amber-400'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <CalendarDays className="w-4 h-4" />
+                <span>My Faculty Leave (शिक्षक अवकाश आवेदन व कोटा)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLeaveDeskSubTab('student_leaves')}
+                className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl text-xs font-mono font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  leaveDeskSubTab === 'student_leaves'
+                    ? 'bg-rose-500 text-white shadow-md shadow-rose-500/25 border border-rose-400'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                <span>Student Leave Approvals (छात्र अवकाश)</span>
+                {studentLeaves.filter(l => l.status === 'pending').length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-white text-[10px]">
+                    {studentLeaves.filter(l => l.status === 'pending').length}
+                  </span>
+                )}
+              </button>
             </div>
 
-            {/* Leaves List */}
-            <div className="space-y-4">
-              {studentLeaves.filter(l => leaveFilter === 'all' || l.status === leaveFilter).length === 0 ? (
-                <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 text-center text-slate-400 space-y-2">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                  <div className="text-sm font-bold text-white">No Leave Applications Found</div>
-                  <p className="text-xs">There are no {leaveFilter} leave requests for your assigned classes.</p>
+            {/* VIEW A: MY FACULTY LEAVE DESK (CL, EARN LEAVE, MEDICAL, OTHER) */}
+            {leaveDeskSubTab === 'my_leaves' && (
+              <div className="space-y-6 animate-in fade-in duration-200">
+                {/* 4 Leave Quotas & Balances Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Card 1: CL */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-br from-amber-500/10 via-slate-900 to-slate-900 border border-amber-500/30 hover:border-amber-500/50 transition-all shadow-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        Casual Leave (CL)
+                      </span>
+                      <span className="text-xs text-amber-400 font-bold">आकस्मिक</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className="text-3xl font-black text-white">{teacherLeaveBalances.cl.remaining}</span>
+                      <span className="text-xs text-slate-400 font-mono">/ {teacherLeaveBalances.cl.total} Available</span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full mt-3 overflow-hidden">
+                      <div
+                        className="bg-amber-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((teacherLeaveBalances.cl.remaining / (teacherLeaveBalances.cl.total || 12)) * 100))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+                      <span>Used: {teacherLeaveBalances.cl.used}</span>
+                      <span>Left: {teacherLeaveBalances.cl.remaining} Days</span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Earn Leave (EL) */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-br from-cyan-500/10 via-slate-900 to-slate-900 border border-cyan-500/30 hover:border-cyan-500/50 transition-all shadow-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        Earn Leave (EL)
+                      </span>
+                      <span className="text-xs text-cyan-400 font-bold">अर्जित</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className="text-3xl font-black text-white">{teacherLeaveBalances.el.remaining}</span>
+                      <span className="text-xs text-slate-400 font-mono">/ {teacherLeaveBalances.el.total} Available</span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full mt-3 overflow-hidden">
+                      <div
+                        className="bg-cyan-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((teacherLeaveBalances.el.remaining / (teacherLeaveBalances.el.total || 15)) * 100))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+                      <span>Used: {teacherLeaveBalances.el.used}</span>
+                      <span>Left: {teacherLeaveBalances.el.remaining} Days</span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Medical Leave (ML) */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-slate-900 to-slate-900 border border-emerald-500/30 hover:border-emerald-500/50 transition-all shadow-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Medical Leave (ML)
+                      </span>
+                      <span className="text-xs text-emerald-400 font-bold">चिकित्सा</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className="text-3xl font-black text-white">{teacherLeaveBalances.ml.remaining}</span>
+                      <span className="text-xs text-slate-400 font-mono">/ {teacherLeaveBalances.ml.total} Available</span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full mt-3 overflow-hidden">
+                      <div
+                        className="bg-emerald-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((teacherLeaveBalances.ml.remaining / (teacherLeaveBalances.ml.total || 10)) * 100))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+                      <span>Used: {teacherLeaveBalances.ml.used}</span>
+                      <span>Left: {teacherLeaveBalances.ml.remaining} Days</span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Other / Duty Leave */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-br from-purple-500/10 via-slate-900 to-slate-900 border border-purple-500/30 hover:border-purple-500/50 transition-all shadow-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        Other / Special
+                      </span>
+                      <span className="text-xs text-purple-400 font-bold">विशेष / ड्यूटी</span>
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className="text-3xl font-black text-white">{teacherLeaveBalances.other.remaining}</span>
+                      <span className="text-xs text-slate-400 font-mono">/ {teacherLeaveBalances.other.total} Available</span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full mt-3 overflow-hidden">
+                      <div
+                        className="bg-purple-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((teacherLeaveBalances.other.remaining / (teacherLeaveBalances.other.total || 5)) * 100))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 font-mono">
+                      <span>Used: {teacherLeaveBalances.other.used}</span>
+                      <span>Left: {teacherLeaveBalances.other.remaining} Days</span>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                studentLeaves
-                  .filter(l => leaveFilter === 'all' || l.status === leaveFilter)
-                  .map((leave) => (
-                    <div
-                      key={leave.id}
-                      className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all space-y-3"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                        <div className="flex items-center gap-3">
-                          <span className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center justify-center font-bold text-sm">
-                            #{leave.rollNo || '02'}
-                          </span>
-                          <div>
-                            <div className="text-base font-extrabold text-white flex items-center gap-2">
-                              <span>{leave.studentName}</span>
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-cyan-300 border border-slate-700">
-                                {leave.grade || 'Class 10'}-{leave.section || 'A'}
+
+                {/* Teacher Applications History Table & Status Tracker */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <ClipboardList className="w-4 h-4 text-amber-400" />
+                      <span>My Leave Applications History (अवकाश आवेदन इतिहास)</span>
+                    </h3>
+                    <span className="text-xs text-slate-400 font-mono">
+                      {teacherLeaves.length} record(s) on file
+                    </span>
+                  </div>
+
+                  {teacherLeaves.length === 0 ? (
+                    <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 text-center text-slate-400 space-y-2">
+                      <CalendarDays className="w-8 h-8 text-amber-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">No Leave Applications Found</div>
+                      <p className="text-xs">You have not submitted any faculty leave requests yet this session.</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowTeacherApplyLeaveModal(true)}
+                        className="mt-3 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-md inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Apply First Leave Now</span>
+                      </button>
+                    </div>
+                  ) : (
+                    teacherLeaves.map((leave) => {
+                      const typeLabel =
+                        leave.leaveType === 'CL'
+                          ? 'Casual Leave (CL)'
+                          : leave.leaveType === 'EL'
+                          ? 'Earn Leave (EL)'
+                          : leave.leaveType === 'ML'
+                          ? 'Medical Leave (ML)'
+                          : 'Other / Duty Leave';
+                      const badgeBg =
+                        leave.leaveType === 'CL'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                          : leave.leaveType === 'EL'
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                          : leave.leaveType === 'ML'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          : 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+
+                      return (
+                        <div
+                          key={leave.id}
+                          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all space-y-3"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                            <div className="flex items-center gap-3">
+                              <span className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase border ${badgeBg}`}>
+                                {leave.leaveType}
                               </span>
+                              <div>
+                                <div className="text-sm font-black text-white flex items-center gap-2">
+                                  <span>{typeLabel}</span>
+                                  {leave.isHalfDay && (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-amber-300 border border-amber-500/30">
+                                      Half Day ({leave.halfDayType === 'second_half' ? '2nd Half' : '1st Half'})
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-400 mt-0.5">
+                                  Duration: <strong className="text-cyan-300">{leave.fromDate} to {leave.toDate}</strong> ({leave.daysCount} Day(s))
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-xs text-slate-400 mt-0.5">
-                              Adm: {leave.admissionNo || 'DKS-2026-080'} • Parent: {leave.parentName || 'Parent'} ({leave.parentPhone || 'Phone'})
+
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
+                                  leave.status === 'approved'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                    : leave.status === 'rejected'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                }`}
+                              >
+                                {leave.status === 'approved' ? 'Approved ✓' : leave.status === 'rejected' ? 'Declined ✕' : 'Pending Review'}
+                              </span>
+
+                              {leave.status === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleWithdrawTeacherLeave(leave.id)}
+                                  className="px-3 py-1 rounded-full bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 text-xs border border-slate-700 hover:border-rose-500/40 transition-colors cursor-pointer"
+                                  title="Withdraw Pending Application"
+                                >
+                                  Withdraw
+                                </button>
+                              )}
                             </div>
                           </div>
-                        </div>
 
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
-                              leave.status === 'approved'
-                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                : leave.status === 'rejected'
-                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                            }`}
-                          >
-                            {leave.status === 'approved' ? 'Approved ✓' : leave.status === 'rejected' ? 'Declined ✕' : 'Pending Review'}
-                          </span>
-                        </div>
-                      </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                              <span className="text-slate-400 text-[10px] block uppercase mb-1">Reason for Leave:</span>
+                              <p className="text-slate-200 leading-relaxed font-sans">{leave.reason}</p>
+                            </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
-                          <span className="text-slate-400 text-[10px] block uppercase">Leave Type</span>
-                          <span className="font-bold text-white capitalize">{leave.leaveType}</span>
-                        </div>
-                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
-                          <span className="text-slate-400 text-[10px] block uppercase">Date Range</span>
-                          <span className="font-bold text-cyan-300">{leave.startDate} to {leave.endDate}</span>
-                        </div>
-                        <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
-                          <span className="text-slate-400 text-[10px] block uppercase">Duration</span>
-                          <span className="font-bold text-purple-300">{leave.daysCount} Day(s)</span>
-                        </div>
-                      </div>
+                            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                              <span className="text-slate-400 text-[10px] block uppercase mb-1">Substitution / Class Handover Notes:</span>
+                              <p className="text-slate-300 leading-relaxed font-sans">
+                                {leave.handoverNotes || 'No specific period arrangement noted. Regular timetable routines apply.'}
+                              </p>
+                            </div>
+                          </div>
 
-                      <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs">
-                        <span className="text-slate-400 text-[10px] block uppercase mb-1">Reason for Leave:</span>
-                        <p className="text-slate-200 leading-relaxed font-sans">{leave.reason}</p>
-                      </div>
-
-                      {leave.reviewedBy && (
-                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs flex items-center justify-between text-emerald-300">
-                          <span>Reviewed By: <strong>{leave.reviewedBy}</strong></span>
-                          {leave.reviewedAt && (
-                            <span className="text-[10px] text-slate-400">{new Date(leave.reviewedAt).toLocaleDateString()}</span>
+                          {leave.reviewedBy && (
+                            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-emerald-300">
+                              <div>
+                                <span>Principal Review: <strong>{leave.reviewedBy}</strong></span>
+                                {leave.reviewRemarks && (
+                                  <span className="block text-slate-300 text-[11px] mt-0.5">"{leave.reviewRemarks}"</span>
+                                )}
+                              </div>
+                              {leave.reviewedAt && (
+                                <span className="text-[10px] text-slate-400">
+                                  Reviewed on {new Date(leave.reviewedAt).toLocaleDateString()}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
-                      )}
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
 
-                      {leave.status === 'pending' && (
-                        <div className="pt-2 flex items-center justify-end gap-2.5">
-                          <button
-                            type="button"
-                            disabled={reviewingLeaveId === leave.id}
-                            onClick={() => handleReviewLeave(leave.id, 'rejected')}
-                            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                          >
-                            Decline Application
-                          </button>
-                          <button
-                            type="button"
-                            disabled={reviewingLeaveId === leave.id}
-                            onClick={() => handleReviewLeave(leave.id, 'approved')}
-                            className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                          >
-                            {reviewingLeaveId === leave.id ? (
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                            <span>Approve & Sync Attendance ✓</span>
-                          </button>
-                        </div>
-                      )}
+            {/* VIEW B: STUDENT LEAVE APPROVALS */}
+            {leaveDeskSubTab === 'student_leaves' && (
+              <div className="space-y-6 animate-in fade-in duration-200">
+                {/* Filter Pills */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {(['all', 'pending', 'approved', 'rejected'] as const).map((f) => {
+                    const count = f === 'all' ? studentLeaves.length : studentLeaves.filter(l => l.status === f).length;
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setLeaveFilter(f)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-mono font-bold capitalize transition-all cursor-pointer border ${
+                          leaveFilter === f
+                            ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/20'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {f} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Leaves List */}
+                <div className="space-y-4">
+                  {studentLeaves.filter(l => leaveFilter === 'all' || l.status === leaveFilter).length === 0 ? (
+                    <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 text-center text-slate-400 space-y-2">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+                      <div className="text-sm font-bold text-white">No Leave Applications Found</div>
+                      <p className="text-xs">There are no {leaveFilter} leave requests for your assigned classes.</p>
                     </div>
-                  ))
-              )}
-            </div>
+                  ) : (
+                    studentLeaves
+                      .filter(l => leaveFilter === 'all' || l.status === leaveFilter)
+                      .map((leave) => (
+                        <div
+                          key={leave.id}
+                          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all space-y-3"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                            <div className="flex items-center gap-3">
+                              <span className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center justify-center font-bold text-sm">
+                                #{leave.rollNo || '02'}
+                              </span>
+                              <div>
+                                <div className="text-base font-extrabold text-white flex items-center gap-2">
+                                  <span>{leave.studentName}</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-cyan-300 border border-slate-700">
+                                    {leave.grade || 'Class 10'}-{leave.section || 'A'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-slate-400 mt-0.5">
+                                  Adm: {leave.admissionNo || 'DKS-2026-080'} • Parent: {leave.parentName || 'Parent'} ({leave.parentPhone || 'Phone'})
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
+                                  leave.status === 'approved'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                    : leave.status === 'rejected'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                    : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                }`}
+                              >
+                                {leave.status === 'approved' ? 'Approved ✓' : leave.status === 'rejected' ? 'Declined ✕' : 'Pending Review'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                            <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                              <span className="text-slate-400 text-[10px] block uppercase">Leave Type</span>
+                              <span className="font-bold text-white capitalize">{leave.leaveType}</span>
+                            </div>
+                            <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                              <span className="text-slate-400 text-[10px] block uppercase">Date Range</span>
+                              <span className="font-bold text-cyan-300">{leave.startDate} to {leave.endDate}</span>
+                            </div>
+                            <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800">
+                              <span className="text-slate-400 text-[10px] block uppercase">Duration</span>
+                              <span className="font-bold text-purple-300">{leave.daysCount} Day(s)</span>
+                            </div>
+                          </div>
+
+                          <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs">
+                            <span className="text-slate-400 text-[10px] block uppercase mb-1">Reason for Leave:</span>
+                            <p className="text-slate-200 leading-relaxed font-sans">{leave.reason}</p>
+                          </div>
+
+                          {leave.reviewedBy && (
+                            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs flex items-center justify-between text-emerald-300">
+                              <span>Reviewed By: <strong>{leave.reviewedBy}</strong></span>
+                              {leave.reviewedAt && (
+                                <span className="text-[10px] text-slate-400">{new Date(leave.reviewedAt).toLocaleDateString()}</span>
+                              )}
+                            </div>
+                          )}
+
+                          {leave.status === 'pending' && (
+                            <div className="pt-2 flex items-center justify-end gap-2.5">
+                              <button
+                                type="button"
+                                disabled={reviewingLeaveId === leave.id}
+                                onClick={() => handleReviewLeave(leave.id, 'rejected')}
+                                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                              >
+                                Decline Application
+                              </button>
+                              <button
+                                type="button"
+                                disabled={reviewingLeaveId === leave.id}
+                                onClick={() => handleReviewLeave(leave.id, 'approved')}
+                                className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                {reviewingLeaveId === leave.id ? (
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Check className="w-4 h-4" />
+                                )}
+                                <span>Approve & Sync Attendance ✓</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2699,6 +3128,210 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                 <span>Back to Dashboard / Close</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: APPLY FACULTY LEAVE (CL / EARN LEAVE / MEDICAL / OTHER) */}
+      {/* ========================================================================= */}
+      {showTeacherApplyLeaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-2xl font-mono max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                  FACULTY LEAVE APPLICATION (शिक्षक अवकाश आवेदन)
+                </span>
+                <h3 className="text-base font-black text-white mt-0.5">
+                  Apply for Leave: {profile.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTeacherApplyLeaveModal(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitTeacherLeave} className="space-y-4">
+              {/* Leave Type Selector with Quotas */}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-2">
+                  Select Leave Type (अवकाश का प्रकार) *
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'CL', label: 'Casual (CL)', bal: teacherLeaveBalances.cl.remaining, color: 'border-amber-500/40 text-amber-300' },
+                    { id: 'EL', label: 'Earn (EL)', bal: teacherLeaveBalances.el.remaining, color: 'border-cyan-500/40 text-cyan-300' },
+                    { id: 'ML', label: 'Medical (ML)', bal: teacherLeaveBalances.ml.remaining, color: 'border-emerald-500/40 text-emerald-300' },
+                    { id: 'OTHER', label: 'Other Leave', bal: teacherLeaveBalances.other.remaining, color: 'border-purple-500/40 text-purple-300' }
+                  ].map((t) => {
+                    const isSelected = teacherLeaveForm.leaveType === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTeacherLeaveForm(prev => ({ ...prev, leaveType: t.id as any }))}
+                        className={`p-3 rounded-2xl border text-left cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-amber-500/20 border-amber-400 shadow-md shadow-amber-500/20 ring-1 ring-amber-400'
+                            : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="text-xs font-black text-white">{t.label}</div>
+                        <div className={`text-[11px] font-bold mt-1 ${t.color}`}>
+                          {t.bal} Days left
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Date Pickers */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    From Date (आरंभ तिथि) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={teacherLeaveForm.fromDate}
+                    onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, fromDate: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    To Date (समाप्ति तिथि) *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={teacherLeaveForm.toDate}
+                    min={teacherLeaveForm.fromDate}
+                    onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, toDate: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Half Day Option */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-white block">Half-Day Leave (आधा दिन अवकाश)</span>
+                  <span className="text-[11px] text-slate-400">Count as 0.5 Day debit from quota</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={teacherLeaveForm.isHalfDay}
+                      onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, isHalfDay: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                  </label>
+                  {teacherLeaveForm.isHalfDay && (
+                    <select
+                      value={teacherLeaveForm.halfDayType}
+                      onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, halfDayType: e.target.value as any }))}
+                      className="text-xs bg-slate-900 border border-slate-700 text-amber-300 rounded-lg px-2 py-1 font-mono focus:outline-none"
+                    >
+                      <option value="first_half">1st Half (Morning)</option>
+                      <option value="second_half">2nd Half (Post-Lunch)</option>
+                    </select>
+                  )}
+                </div>
+              </div>
+
+              {/* Reason for Leave */}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Reason for Leave (अवकाश का कारण) *
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  value={teacherLeaveForm.reason}
+                  onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, reason: e.target.value }))}
+                  placeholder="e.g. Urgent domestic work / Viral fever / Attending family event..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-amber-400 focus:outline-none resize-none"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {[
+                    'Urgent Personal Work',
+                    'Viral Fever / Medical Rest',
+                    'Family Function / Event',
+                    'Out of Station Duty'
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => setTeacherLeaveForm(prev => ({ ...prev, reason: suggestion }))}
+                      className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] border border-slate-700 cursor-pointer"
+                    >
+                      + {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Substitution / Handover Notes */}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Class Handover / Substitution Arrangement Notes
+                </label>
+                <input
+                  type="text"
+                  value={teacherLeaveForm.handoverNotes}
+                  onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, handoverNotes: e.target.value }))}
+                  placeholder="e.g. Period 2 & 4 Math class handed to Mr. Rajesh Kumar; assignments given."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              {/* Emergency Contact Phone */}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Emergency Contact Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={teacherLeaveForm.contactNumber}
+                  onChange={(e) => setTeacherLeaveForm(prev => ({ ...prev, contactNumber: e.target.value }))}
+                  placeholder="10-digit mobile number"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end items-center gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowTeacherApplyLeaveModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingTeacherLeave}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:brightness-105 text-white text-xs font-black shadow-lg shadow-amber-500/25 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {submittingTeacherLeave ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  <span>Submit Application (आवेदन जमा करें)</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
