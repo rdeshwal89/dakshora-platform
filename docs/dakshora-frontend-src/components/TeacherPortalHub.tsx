@@ -130,9 +130,21 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   const resolvedSchoolName = schoolBrand?.schoolName || currentUser?.schoolName || 'Dakshora Academy, New Delhi';
   const resolvedSchoolLogo = schoolBrand?.logoUrl || currentUser?.logoUrl || '/assets/dakshora-logo.png';
 
-  // Arrangement Notification Alert State
-  const [arrangementAccepted, setArrangementAccepted] = useState(false);
+  // Real Teacher Substitution / Arrangement Duties State from Backend Database
+  const [arrangements, setArrangements] = useState<any[]>([]);
+  const [loadingArrangements, setLoadingArrangements] = useState(false);
+  const [selectedArrangement, setSelectedArrangement] = useState<any | null>(null);
   const [showArrangementModal, setShowArrangementModal] = useState(false);
+
+  const pendingArrangements = useMemo(() => 
+    arrangements.filter(a => a.status === 'assigned' || a.status === 'pending'),
+    [arrangements]
+  );
+  const activePendingArrangement = pendingArrangements[0] || null;
+  const acceptedArrangements = useMemo(() => 
+    arrangements.filter(a => a.status === 'accepted'),
+    [arrangements]
+  );
 
   // Selected class for roll-call
   const [selectedClassForMarking, setSelectedClassForMarking] = useState<string>(profile.assignedClass || 'Class 10-A');
@@ -277,6 +289,55 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
       onShowToast('error', 'Error', err.message);
     } finally {
       setReviewingLeaveId(null);
+    }
+  };
+
+  // Fetch real arrangement duties from backend database
+  const fetchTeacherArrangements = React.useCallback(async () => {
+    try {
+      setLoadingArrangements(true);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/erp/teacher/arrangements', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.arrangements)) {
+        setArrangements(data.arrangements);
+      } else {
+        setArrangements([]);
+      }
+    } catch (_err) {
+      setArrangements([]);
+    } finally {
+      setLoadingArrangements(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTeacherArrangements();
+  }, [fetchTeacherArrangements]);
+
+  // Accept substitution duty in real backend database
+  const handleAcceptArrangement = async (arrId: string) => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch(`/api/erp/teacher/arrangements/${arrId}/accept`, {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast('success', 'Duty Accepted ✓', 'Arrangement duty confirmed and saved to ERP database.');
+        setArrangements(prev => prev.map(a => a.id === arrId ? { ...a, status: 'accepted', isAccepted: true } : a));
+        setShowArrangementModal(false);
+      } else {
+        onShowToast('error', 'Error', data.message || 'Could not accept duty');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Error', err.message);
     }
   };
 
@@ -544,7 +605,7 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         isMobileDrawerOpen={isMobileDrawerOpen}
         setIsMobileDrawerOpen={setIsMobileDrawerOpen}
         pendingAttendanceCount={unmarkedClasses.length}
-        arrangementCount={arrangementAccepted ? 0 : 1}
+        arrangementCount={pendingArrangements.length}
         pendingLeavesCount={studentLeaves.filter(l => l.status === "pending").length}
       />
 
@@ -598,9 +659,18 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
             {/* Arrangement / Duty Alert Bell */}
             <button
               type="button"
-              onClick={() => setShowArrangementModal(true)}
+              onClick={() => {
+                if (pendingArrangements.length > 0) {
+                  setSelectedArrangement(pendingArrangements[0]);
+                } else if (arrangements.length > 0) {
+                  setSelectedArrangement(arrangements[0]);
+                } else {
+                  setSelectedArrangement(null);
+                }
+                setShowArrangementModal(true);
+              }}
               className={`p-2 sm:p-2.5 rounded-xl border transition-all relative cursor-pointer ${
-                !arrangementAccepted
+                pendingArrangements.length > 0
                   ? 'bg-rose-500/15 text-rose-300 border-rose-500/40 animate-pulse'
                   : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
               }`}
@@ -608,9 +678,9 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               aria-label="Arrangement Notifications"
             >
               <Bell className="w-4 h-4" />
-              {!arrangementAccepted && (
+              {pendingArrangements.length > 0 && (
                 <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[9px] font-mono font-bold shadow-md">
-                  1
+                  {pendingArrangements.length}
                 </span>
               )}
             </button>
@@ -689,8 +759,8 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         {/* ========================================================================= */}
         {activeTab === 'pulse' && (
           <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl w-full mx-auto animate-in fade-in duration-300">
-            {/* Urgent Arrangement Duty Alert Banner (if pending) */}
-            {!arrangementAccepted && (
+            {/* Urgent Arrangement Duty Alert Banner (ONLY rendered if a real pending substitution exists in database) */}
+            {activePendingArrangement && (
               <div className="bg-gradient-to-r from-rose-950/80 via-purple-950/60 to-slate-900 p-4 sm:p-5 rounded-3xl border border-rose-500/40 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start gap-3.5">
                   <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/40 shrink-0">
@@ -701,23 +771,22 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                       <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/30 text-rose-200 uppercase">
                         SUBSTITUTION DUTY TODAY
                       </span>
-                      <span className="text-xs text-rose-300 font-mono font-bold">Period 4 (11:15 AM)</span>
+                      <span className="text-xs text-rose-300 font-mono font-bold">
+                        Period {activePendingArrangement.periodNumber} ({activePendingArrangement.time || '11:15 AM'})
+                      </span>
                     </div>
                     <h3 className="text-sm sm:text-base font-extrabold text-white mt-1">
-                      Assigned to Class IX-B (Room 104) • Proxy for Dr. Vikram Sethi
+                      Assigned to {activePendingArrangement.grade}-{activePendingArrangement.section} ({activePendingArrangement.roomNumber || 'Room 104'}) • Proxy for {activePendingArrangement.absentTeacherName}
                     </h3>
                     <p className="text-xs text-slate-300 mt-0.5">
-                      Subject: Science revision & supervision. Please confirm receipt.
+                      Subject: {activePendingArrangement.subjectName || 'Science revision & supervision'}. {activePendingArrangement.notes || 'Please confirm receipt.'}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      setArrangementAccepted(true);
-                      onShowToast('success', 'Arrangement Duty Accepted', 'Principal & Academic Coordinator notified');
-                    }}
+                    onClick={() => handleAcceptArrangement(activePendingArrangement.id)}
                     className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer hover:brightness-105"
                   >
                     <Check className="w-4 h-4" />
@@ -725,7 +794,10 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowArrangementModal(true)}
+                    onClick={() => {
+                      setSelectedArrangement(activePendingArrangement);
+                      setShowArrangementModal(true);
+                    }}
                     className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-mono font-bold border border-slate-700 cursor-pointer"
                   >
                     Details
@@ -1954,40 +2026,54 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               </div>
             </div>
 
-            <div className="p-5 rounded-3xl bg-slate-900 border border-rose-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 uppercase">
-                  Today • Period 4
-                </span>
-                <span className="text-xs text-emerald-400 font-bold">
-                  {arrangementAccepted ? 'Status: Accepted ✓' : 'Status: Action Required'}
-                </span>
+            {arrangements.length === 0 ? (
+              <div className="p-8 rounded-3xl bg-slate-900/60 border border-slate-800 text-center space-y-3 font-mono">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/30 shadow-inner">
+                  <Check className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-white">No Substitution Duties Assigned Today</h4>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  You are currently on your regular teaching schedule. All faculty coverage is normal and verified with School Academic Office.
+                </p>
               </div>
-              <h3 className="text-base font-extrabold text-white">
-                Substitution for Dr. Vikram Sethi — Class IX-B (Room 104)
-              </h3>
-              <p className="text-xs text-slate-300">
-                Reason: Medical leave. Please conduct supervised chapter revision or science quiz exercises.
-              </p>
-              <div className="pt-2 flex items-center gap-2">
-                {!arrangementAccepted ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setArrangementAccepted(true);
-                      onShowToast('success', 'Accepted', 'Substitution duty confirmed.');
-                    }}
-                    className="px-4 py-2 rounded-xl bg-emerald-500 text-slate-950 font-bold text-xs"
-                  >
-                    Confirm & Accept Duty
-                  </button>
-                ) : (
-                  <span className="text-xs text-emerald-400 font-bold">
-                    ✓ You have accepted this arrangement period.
-                  </span>
-                )}
+            ) : (
+              <div className="space-y-4">
+                {arrangements.map(a => (
+                  <div key={a.id} className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
+                        Today • Period {a.periodNumber} ({a.time || '11:15 AM'})
+                      </span>
+                      <span className={`text-xs font-bold ${a.status === 'accepted' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {a.status === 'accepted' ? 'Status: Accepted ✓' : 'Status: Action Required'}
+                      </span>
+                    </div>
+                    <h3 className="text-base font-extrabold text-white">
+                      Substitution for {a.absentTeacherName} — {a.grade}-{a.section} ({a.roomNumber || 'Room 104'})
+                    </h3>
+                    <p className="text-xs text-slate-300">
+                      Reason: {a.reason}. {a.notes || 'Please conduct supervised chapter revision.'}
+                    </p>
+                    <div className="pt-2 flex items-center gap-2">
+                      {a.status !== 'accepted' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptArrangement(a.id)}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs cursor-pointer"
+                        >
+                          Confirm & Accept Duty
+                        </button>
+                      ) : (
+                        <span className="text-xs text-emerald-400 font-bold flex items-center gap-1.5">
+                          <Check className="w-4 h-4" />
+                          <span>You have accepted this arrangement period.</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -2541,12 +2627,43 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               <h3 className="text-base font-bold text-white">Arrangement Substitution Duty</h3>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <div className="text-rose-300 font-bold">Duty Timing: Period 4 (11:15 AM - 12:00 PM)</div>
-              <div className="text-white text-sm font-extrabold">Class IX-B (Room 104)</div>
-              <div className="text-slate-400">Regular Teacher: Dr. Vikram Sethi (On Medical Leave)</div>
-              <div className="text-slate-400">Assigned Topic: Science Practice & Revision</div>
-            </div>
+            {(() => {
+              const currentDuty = selectedArrangement || activePendingArrangement || acceptedArrangements[0];
+              if (!currentDuty) {
+                return (
+                  <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-2">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+                    <div className="text-white font-bold text-sm">No Pending Substitution Duties</div>
+                    <p className="text-slate-400 text-xs">
+                      You are not assigned to any proxy arrangements today. All classroom coverage is normal.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="text-rose-300 font-bold">
+                    Duty Timing: Period {currentDuty.periodNumber} ({currentDuty.time || '11:15 AM - 12:00 PM'})
+                  </div>
+                  <div className="text-white text-sm font-extrabold">
+                    {currentDuty.grade}-{currentDuty.section} ({currentDuty.roomNumber || 'Room 104'})
+                  </div>
+                  <div className="text-slate-400">
+                    Regular Teacher: {currentDuty.absentTeacherName} ({currentDuty.reason})
+                  </div>
+                  <div className="text-slate-400">
+                    Assigned Topic: {currentDuty.subjectName}. {currentDuty.notes || ''}
+                  </div>
+                  {currentDuty.status === 'accepted' && (
+                    <div className="mt-2 text-emerald-400 font-bold text-xs flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Duty Accepted and Confirmed ✓</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="mt-6 flex justify-end gap-2.5">
               <button
@@ -2557,19 +2674,21 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Close / Back</span>
               </button>
-              {!arrangementAccepted && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setArrangementAccepted(true);
-                    setShowArrangementModal(false);
-                    onShowToast('success', 'Arrangement Duty Accepted', 'Principal Office notified');
-                  }}
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold"
-                >
-                  Accept Assignment
-                </button>
-              )}
+              {(() => {
+                const currentDuty = selectedArrangement || activePendingArrangement || acceptedArrangements[0];
+                if (currentDuty && currentDuty.status !== 'accepted') {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptArrangement(currentDuty.id)}
+                      className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold"
+                    >
+                      Accept Assignment
+                    </button>
+                  );
+                }
+                return null;
+              })()}
             </div>
           </div>
         </div>
