@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
+  Lock,
+  Unlock,
+  Edit3,
+  AlertCircle,
   Layers,
   Calendar,
   Clock,
@@ -134,6 +138,34 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   const [selectedClassForMarking, setSelectedClassForMarking] = useState<string>(profile.assignedClass || 'Class 10-A');
   const [workloadData, setWorkloadData] = useState<any>(null);
   const [showWorkloadModal, setShowWorkloadModal] = useState(false);
+
+  // Submitted classes registry & locking
+  const [submittedClasses, setSubmittedClasses] = useState<Record<string, {
+    submittedAt: string;
+    date: string;
+    present: number;
+    absent: number;
+    leave: number;
+    total: number;
+    markedBy: string;
+  }>>({});
+
+  // Edit mode for submitted attendance
+  const [isEditingAttendance, setIsEditingAttendance] = useState(false);
+
+  // Success confirmation modal state
+  const [showAttendanceSuccessModal, setShowAttendanceSuccessModal] = useState(false);
+  const [lastSubmissionSummary, setLastSubmissionSummary] = useState<{
+    className: string;
+    date: string;
+    submittedAt: string;
+    present: number;
+    absent: number;
+    leave: number;
+    total: number;
+    markedBy: string;
+    isUpdate?: boolean;
+  } | null>(null);
 
   // Classes & Live Rosters from Database
   const [unmarkedClasses, setUnmarkedClasses] = useState([
@@ -334,7 +366,7 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
               rollNo: s.rollNo ? parseInt(s.rollNo.replace(/\D/g, ''), 10) || (idx + 1) : (idx + 1),
               name: s.name || `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim() || 'Student',
               admissionNo: s.admissionNo || s.admission_number || `DKS-2026-${String(idx + 1).padStart(3, '0')}`,
-              status: idx === 4 ? 'absent' : idx === 3 ? 'late' : 'present'
+              status: idx === 4 ? 'absent' : idx === 3 ? 'leave' : 'present'
             })));
           }
         }
@@ -345,12 +377,22 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
     fetchClassStudents();
   }, [selectedClassForMarking]);
 
-  // Toggle student attendance
+  // Toggle student attendance (Present -> Absent -> Leave -> Present)
   const handleToggleAttendance = (id: string) => {
+    const isLocked = Boolean(submittedClasses[selectedClassForMarking]) && !isEditingAttendance;
+    if (isLocked) {
+      onShowToast(
+        'info',
+        'Attendance Register Locked 🔒',
+        'Daily roll call is already submitted. Click "Edit Attendance" to modify records.'
+      );
+      return;
+    }
+
     setClassRoster(prev =>
       prev.map(st => {
         if (st.id === id) {
-          const nextStatus = st.status === 'present' ? 'absent' : st.status === 'absent' ? 'late' : 'present';
+          const nextStatus = st.status === 'present' ? 'absent' : st.status === 'absent' ? 'leave' : 'present';
           return { ...st, status: nextStatus };
         }
         return st;
@@ -359,15 +401,81 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   };
 
   const handleMarkAllPresent = () => {
+    const isLocked = Boolean(submittedClasses[selectedClassForMarking]) && !isEditingAttendance;
+    if (isLocked) {
+      onShowToast('warning', 'Attendance Locked 🔒', 'Click "Edit Attendance" before modifying the roster.');
+      return;
+    }
     setClassRoster(prev => prev.map(st => ({ ...st, status: 'present' })));
     onShowToast('success', 'Roster Updated', `All ${classRoster.length} students marked present`);
   };
 
-  const handleSaveAttendance = () => {
+  const handleSaveAttendance = async () => {
     const presentCount = classRoster.filter(s => s.status === 'present').length;
-    onShowToast('success', 'Attendance Submitted ✓', `Saved ${presentCount}/${classRoster.length} present for ${selectedClassForMarking}`);
-    // remove from unmarked list
+    const absentCount = classRoster.filter(s => s.status === 'absent').length;
+    const leaveCount = classRoster.filter(s => s.status === 'leave').length;
+    const totalCount = classRoster.length;
+    const timeNow = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const isUpdate = Boolean(submittedClasses[selectedClassForMarking]);
+
+    const summary = {
+      className: selectedClassForMarking,
+      date: todayDate,
+      submittedAt: timeNow,
+      present: presentCount,
+      absent: absentCount,
+      leave: leaveCount,
+      total: totalCount,
+      markedBy: profile.name || 'Vikramaditya Singh (Class Teacher)',
+      isUpdate
+    };
+
+    setSubmittedClasses(prev => ({
+      ...prev,
+      [selectedClassForMarking]: summary
+    }));
+
+    setIsEditingAttendance(false);
+    setLastSubmissionSummary(summary);
+    setShowAttendanceSuccessModal(true);
+
+    // remove from unmarked list on dashboard
     setUnmarkedClasses(prev => prev.filter(c => c.grade !== selectedClassForMarking));
+
+    onShowToast(
+      'success',
+      isUpdate ? 'Attendance Updated Successfully ✓' : 'Attendance Submitted Successfully ✓',
+      `Saved for ${selectedClassForMarking}: ${presentCount} Present, ${absentCount} Absent, ${leaveCount} On Leave`
+    );
+
+    // Sync to backend API
+    try {
+      await fetch('/api/erp/teacher/attendance/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: new Date().toISOString().split('T')[0],
+          grade: selectedClassForMarking,
+          records: classRoster.map(s => ({
+            studentId: s.id,
+            name: s.name,
+            rollNo: s.rollNo,
+            status: s.status
+          }))
+        })
+      });
+    } catch (_err) {}
+  };
+
+  const handleStartEditing = () => {
+    setIsEditingAttendance(true);
+    onShowToast('info', 'Edit Mode Unlocked ✏️', 'You can now change student attendance. Click "Save Updated Attendance" when finished.');
+  };
+
+  const handleCancelEditing = () => {
+    setIsEditingAttendance(false);
+    onShowToast('info', 'Edit Cancelled', 'Restored locked state.');
   };
 
   // Structured Teaching Journal State
@@ -669,9 +777,20 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                           setSelectedClassForMarking(profile.assignedClass);
                           setActiveTab('attendance');
                         }}
-                        className="px-3.5 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+                        className={`px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 ${
+                          submittedClasses[profile.assignedClass]
+                            ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-purple-500 hover:bg-purple-400 text-slate-950'
+                        }`}
                       >
-                        Roll Call Now
+                        {submittedClasses[profile.assignedClass] ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Marked (Edit)</span>
+                          </>
+                        ) : (
+                          <span>Roll Call Now</span>
+                        )}
                       </button>
                       <button
                         type="button"
@@ -1336,103 +1455,266 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
         {/* ========================================================================= */}
         {/* TAB 2: FAST ATTENDANCE REGISTER */}
         {/* ========================================================================= */}
-        {activeTab === 'attendance' && (
-          <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300">
-            <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-400">
-                  FAST ROLL-CALL REGISTER
-                </span>
-                <h2 className="text-lg font-black text-white mt-0.5">
-                  Class: {selectedClassForMarking} • Session 2026–27
-                </h2>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Tap any student badge to toggle: Present (Green) → Absent (Red) → Late (Yellow)
-                </p>
-              </div>
+        {activeTab === 'attendance' && (() => {
+          const isSubmitted = Boolean(submittedClasses[selectedClassForMarking]);
+          const isLocked = isSubmitted && !isEditingAttendance;
+          const submissionInfo = submittedClasses[selectedClassForMarking];
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Dashboard</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleMarkAllPresent}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer"
-                >
-                  Mark All Present
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveAttendance}
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-md shadow-emerald-500/25 transition-all cursor-pointer"
-                >
-                  Submit & Sync Register
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Stats Pill */}
-            <div className="grid grid-cols-3 gap-3 font-mono text-center">
-              <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/30">
-                <span className="text-[10px] text-emerald-300 uppercase block">Present</span>
-                <span className="text-2xl font-black text-emerald-400">
-                  {classRoster.filter(s => s.status === 'present').length}
-                </span>
-              </div>
-              <div className="p-3 rounded-2xl bg-rose-950/40 border border-rose-500/30">
-                <span className="text-[10px] text-rose-300 uppercase block">Absent</span>
-                <span className="text-2xl font-black text-rose-400">
-                  {classRoster.filter(s => s.status === 'absent').length}
-                </span>
-              </div>
-              <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/30">
-                <span className="text-[10px] text-amber-300 uppercase block">Late</span>
-                <span className="text-2xl font-black text-amber-400">
-                  {classRoster.filter(s => s.status === 'late').length}
-                </span>
-              </div>
-            </div>
-
-            {/* Student Roster List */}
-            <div className="bg-slate-900/80 rounded-3xl border border-slate-800 overflow-hidden divide-y divide-slate-800/80 font-mono">
-              {classRoster.map((st: any) => (
-                <div
-                  key={st.id}
-                  onClick={() => handleToggleAttendance(st.id)}
-                  className="p-3.5 sm:p-4 flex items-center justify-between hover:bg-slate-850/60 transition-colors cursor-pointer select-none"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 font-bold flex items-center justify-center text-xs">
-                      #{st.rollNo}
+          return (
+            <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300">
+              {/* Header Card */}
+              <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-400">
+                      FAST ROLL-CALL REGISTER
                     </span>
+                    {isSubmitted && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <Check className="w-3 h-3" />
+                        <span>SUBMITTED TODAY</span>
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-lg font-black text-white mt-0.5">
+                    Class: {selectedClassForMarking} • Session 2026–27
+                  </h2>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    {isLocked 
+                      ? 'Attendance is locked. Click "Edit Attendance" to modify records.'
+                      : 'Tap any student badge to toggle: Present (Green) → Absent (Red) → On Leave (Amber)'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('pulse')}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back to Dashboard</span>
+                  </button>
+
+                  {/* If attendance is NOT submitted yet: Show Mark All Present and Submit Attendance */}
+                  {!isSubmitted && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleMarkAllPresent}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer"
+                      >
+                        Mark All Present
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveAttendance}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Submit Attendance</span>
+                      </button>
+                    </>
+                  )}
+
+                  {/* If attendance IS submitted and in LOCKED state: ONLY SHOW "Edit Attendance" */}
+                  {isSubmitted && !isEditingAttendance && (
+                    <button
+                      type="button"
+                      onClick={handleStartEditing}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-md shadow-indigo-600/25 transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                      <span>Edit Attendance</span>
+                    </button>
+                  )}
+
+                  {/* If attendance IS submitted and teacher clicked "Edit Attendance" (EDITING STATE) */}
+                  {isSubmitted && isEditingAttendance && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditing}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        Cancel Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleMarkAllPresent}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold border border-slate-700 transition-all cursor-pointer"
+                      >
+                        Mark All Present
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveAttendance}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-md shadow-emerald-500/25 transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Update Attendance</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Status Banner */}
+              {isSubmitted && !isEditingAttendance && submissionInfo && (
+                <div className="p-4 rounded-3xl bg-emerald-950/40 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shrink-0">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
                     <div>
-                      <div className="text-sm font-bold text-white">{st.name}</div>
-                      <div className="text-[11px] text-slate-400">Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-300">
+                          ATTENDANCE SUBMITTED & LOCKED
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {submissionInfo.submittedAt}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-white mt-0.5">
+                        Attendance for {selectedClassForMarking} was successfully submitted today.
+                      </h3>
+                      <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+                        Present: <b className="text-emerald-400">{submissionInfo.present}</b> • Absent: <b className="text-rose-400">{submissionInfo.absent}</b> • On Leave: <b className="text-amber-400">{submissionInfo.leave}</b> (Total: {submissionInfo.total})
+                      </p>
                     </div>
                   </div>
 
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all ${
-                      st.status === 'present'
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                        : st.status === 'absent'
-                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                    }`}
+                  <button
+                    type="button"
+                    onClick={handleStartEditing}
+                    className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs font-mono flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 transition-all shrink-0 cursor-pointer"
                   >
-                    {st.status}
+                    <Edit3 className="w-4 h-4" />
+                    <span>Edit Attendance</span>
+                  </button>
+                </div>
+              )}
+
+              {isSubmitted && isEditingAttendance && (
+                <div className="p-4 rounded-3xl bg-amber-950/40 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0">
+                      <AlertCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-mono font-bold uppercase tracking-wider text-amber-300">
+                        EDITING ATTENDANCE REGISTER
+                      </span>
+                      <h3 className="text-sm font-bold text-white mt-0.5">
+                        You are modifying attendance for {selectedClassForMarking}.
+                      </h3>
+                      <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+                        Tap any student row to change status between Present, Absent, and On Leave.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleCancelEditing}
+                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono font-bold border border-slate-700 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAttendance}
+                      className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs font-mono shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Update Attendance</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Stats Pill (Present / Absent / On Leave) */}
+              <div className="grid grid-cols-3 gap-3 font-mono text-center">
+                <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 shadow-sm">
+                  <span className="text-[10px] text-emerald-300 uppercase block font-bold">Present (उपस्थित)</span>
+                  <span className="text-2xl font-black text-emerald-400">
+                    {classRoster.filter(s => s.status === 'present').length}
                   </span>
                 </div>
-              ))}
+                <div className="p-3.5 rounded-2xl bg-rose-950/40 border border-rose-500/30 shadow-sm">
+                  <span className="text-[10px] text-rose-300 uppercase block font-bold">Absent (अनुपस्थित)</span>
+                  <span className="text-2xl font-black text-rose-400">
+                    {classRoster.filter(s => s.status === 'absent').length}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 shadow-sm">
+                  <span className="text-[10px] text-amber-300 uppercase block font-bold">On Leave (अवकाश)</span>
+                  <span className="text-2xl font-black text-amber-400">
+                    {classRoster.filter(s => s.status === 'leave').length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Student Roster List */}
+              <div className="bg-slate-900/80 rounded-3xl border border-slate-800 overflow-hidden divide-y divide-slate-800/80 font-mono shadow-xl">
+                {classRoster.map((st: any) => (
+                  <div
+                    key={st.id}
+                    onClick={() => handleToggleAttendance(st.id)}
+                    className={`p-3.5 sm:p-4 flex items-center justify-between transition-colors select-none ${
+                      isLocked 
+                        ? 'hover:bg-slate-900 cursor-not-allowed opacity-90' 
+                        : 'hover:bg-slate-850/60 cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 font-bold flex items-center justify-center text-xs border border-slate-700/80">
+                        #{st.rollNo}
+                      </span>
+                      <div>
+                        <div className="text-sm font-bold text-white flex items-center gap-2">
+                          <span>{st.name}</span>
+                          {st.status === 'leave' && (
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Leave
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isLocked && (
+                        <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                          <Lock className="w-3 h-3 text-slate-500" />
+                          <span>Locked</span>
+                        </span>
+                      )}
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all flex items-center gap-1.5 ${
+                          st.status === 'present'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : st.status === 'absent'
+                            ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                            : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          st.status === 'present' ? 'bg-emerald-400' : st.status === 'absent' ? 'bg-rose-400' : 'bg-amber-400'
+                        }`} />
+                        <span>{st.status === 'leave' ? 'On Leave' : st.status}</span>
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ========================================================================= */}
         {/* TAB 3: ATTENDANCE REPORTS */}
