@@ -29,8 +29,7 @@ import {
   HelpCircle,
   ExternalLink,
   Search,
-  CheckCircle2,
-  Palette
+  CheckCircle2
 } from 'lucide-react';
 import { ErpRole, ErpModule } from '../types';
 import { SchoolBrandProfile } from './SchoolBrandingModal';
@@ -557,18 +556,6 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
                 </span>
               </div>
             </div>
-          )}
-
-          {/* Quick Branding Trigger */}
-          {onShowBrandingModal && (!isCollapsed || isMobileView) && (
-            <button
-              type="button"
-              onClick={onShowBrandingModal}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-400 hover:bg-slate-800 transition-colors"
-              title="Customize School Branding"
-            >
-              <Palette className="w-3.5 h-3.5" />
-            </button>
           )}
         </div>
 

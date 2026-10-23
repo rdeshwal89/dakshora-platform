@@ -46,7 +46,7 @@ import {
   Code2,
   Rocket,
   Globe,
-  Palette,
+  ArrowLeft,
   MessageSquare,
   Grid,
   X,
@@ -120,7 +120,7 @@ import { TeacherPortalHub } from './TeacherPortalHub';
 import { TeachingJournalHub } from './TeachingJournalHub';
 import { RoboticsAcademyHub } from './RoboticsAcademyHub';
 import { GlobalSearchModal } from './GlobalSearchModal';
-import { SchoolBrandingModal, SchoolBrandProfile, PRESET_SCHOOLS } from './SchoolBrandingModal';
+import { SchoolBrandProfile, PRESET_SCHOOLS } from './SchoolBrandingModal';
 import { LanguageSelector, useTranslation } from '../i18n';
 import { ResponsiveSidebar } from './ResponsiveSidebar';
 
@@ -684,7 +684,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
     }
   }, [currentUser]);
 
-  const [showBrandingModal, setShowBrandingModal] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('dakshora_sidebar_collapsed') === 'true';
@@ -696,18 +695,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
   const [navCategory, setNavCategory] = useState<'all' | 'academics' | 'finance' | 'facilities' | 'innovation'>('all');
   const [showMobileAllModules, setShowMobileAllModules] = useState<boolean>(false);
   const [desktopViewMode, setDesktopViewMode] = useState<'cards' | 'compact'>('cards');
-
-  const handleApplyBrand = (newBrand: SchoolBrandProfile) => {
-    setSchoolBrand(newBrand);
-    setSettings((prev) => ({
-      ...prev,
-      schoolName: newBrand.schoolName,
-      affiliationNo: newBrand.affiliationNo,
-      schoolCode: newBrand.schoolCode,
-      board: newBrand.board,
-      principalName: newBrand.principalName || prev.principalName
-    }));
-  };
 
   const [settings, setSettings] = useState<ErpSchoolSettings>({
     schoolName: schoolBrand.schoolName || 'School Dashboard',
@@ -785,6 +772,20 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // ⌨️ Global Escape key listener: Pressing Esc returns from any feature back to Dashboard
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && activeModule !== 'dashboard') {
+        if (!showGlobalSearch && !showAddStudent && !selectedStudentForIdCard) {
+          setActiveModule('dashboard');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [activeModule, showGlobalSearch, showAddStudent, selectedStudentForIdCard]);
+
   // Ctrl+\ or Cmd+\ Sidebar Collapse Keyboard Shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -802,7 +803,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
-
 
   // Sync with backend on mount
   useEffect(() => {
@@ -1038,42 +1038,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
     }
   };
 
-
-  const themeGradients: Record<string, { banner: string; badge: string; accentBorder: string; crestBg: string }> = {
-    indigo: {
-      banner: 'from-slate-900 via-indigo-950 to-slate-900 text-white border-indigo-700/50 shadow-indigo-950/30',
-      badge: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
-      accentBorder: 'border-indigo-600',
-      crestBg: 'from-indigo-600 via-indigo-700 to-violet-700'
-    },
-    emerald: {
-      banner: 'from-slate-900 via-emerald-950 to-slate-900 text-white border-emerald-700/50 shadow-emerald-950/30',
-      badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-      accentBorder: 'border-emerald-600',
-      crestBg: 'from-emerald-600 via-teal-700 to-emerald-800'
-    },
-    crimson: {
-      banner: 'from-slate-900 via-rose-950 to-slate-900 text-white border-rose-700/50 shadow-rose-950/30',
-      badge: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
-      accentBorder: 'border-rose-600',
-      crestBg: 'from-rose-600 via-red-700 to-pink-800'
-    },
-    amber: {
-      banner: 'from-slate-900 via-amber-950 to-slate-900 text-white border-amber-700/50 shadow-amber-950/30',
-      badge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-      accentBorder: 'border-amber-600',
-      crestBg: 'from-amber-600 via-amber-700 to-yellow-800'
-    },
-    cyan: {
-      banner: 'from-slate-900 via-cyan-950 to-slate-900 text-white border-cyan-700/50 shadow-cyan-950/30',
-      badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
-      accentBorder: 'border-cyan-600',
-      crestBg: 'from-cyan-600 via-blue-700 to-indigo-800'
-    }
-  };
-
-  const activeTheme = themeGradients[schoolBrand.themeColor] || themeGradients.indigo;
-
   // 👩‍🏫 Dedicated Teacher Portal & Faculty Workspace (Responsive Hamburger & Collapsible Sidebar)
   const isTeacherSession = (role: string): boolean => {
     const r = (role || '').toLowerCase();
@@ -1118,7 +1082,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
           allowedModules={getModulesForRole(activeRole)}
           schoolBrand={schoolBrand}
           currentUser={currentUser}
-          onShowBrandingModal={() => setShowBrandingModal(true)}
           isMobileDrawerOpen={isMobileDrawerOpen}
           setIsMobileDrawerOpen={setIsMobileDrawerOpen}
           isDesktopCollapsed={isDesktopCollapsed}
@@ -1183,19 +1146,58 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
 
               {/* Breadcrumbs */}
               <div className="flex items-center gap-2 text-xs font-mono truncate">
-                <span className="text-slate-400 truncate max-w-[120px] sm:max-w-[200px]" title={schoolBrand.schoolName}>
+                <span className="text-slate-400 truncate max-w-[120px] sm:max-w-[180px]" title={schoolBrand.schoolName}>
                   {schoolBrand.schoolName}
                 </span>
                 <span className="text-slate-600">/</span>
-                <span className="text-white font-bold capitalize flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-pulse"></span>
-                  {activeModule.replace('_', ' ')}
-                </span>
+                {activeModule === 'dashboard' ? (
+                  <span className="text-white font-bold capitalize flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-pulse"></span>
+                    Dashboard
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5 truncate">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveModule('dashboard');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline cursor-pointer flex items-center gap-1 transition-colors"
+                      title="Return to Dashboard (Esc)"
+                    >
+                      <ArrowLeft className="w-3 h-3" />
+                      <span>Dashboard</span>
+                    </button>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-white font-bold capitalize flex items-center gap-1.5 truncate">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+                      {activeModule.replace('_', ' ')}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Right Controls */}
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              {/* ⬅️ Instant Back to Dashboard Button when in any feature */}
+              {activeModule !== 'dashboard' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveModule('dashboard');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-bold transition-all cursor-pointer shadow-md shadow-indigo-600/30 hover:scale-[1.02] active:scale-[0.98]"
+                  title="Back to Dashboard (Esc)"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-cyan-300" />
+                  <span className="hidden sm:inline">Back to Dashboard</span>
+                  <span className="sm:hidden">Dashboard</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setShowGlobalSearch(true)}
@@ -1222,15 +1224,29 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
                 </select>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowBrandingModal(true)}
-                className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-cyan-400 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                title="Customize School Branding"
-              >
-                <Palette className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Branding</span>
-              </button>
+              {!isRoleLocked && (
+                <div className="hidden xl:flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+                  {[
+                    { id: 'admin', label: 'Admin', icon: '👑' },
+                    { id: 'teacher', label: 'Teacher', icon: '👩‍🏫' },
+                    { id: 'parent', label: 'Parent', icon: '👨‍🎓' }
+                  ].map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => handleRoleChange(r.id as ErpRole)}
+                      className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
+                        (activeRole as string) === r.id || (r.id === 'parent' && ((activeRole as string) === 'parent' || (activeRole as string) === 'student'))
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                      title={`Switch Persona to ${r.label}`}
+                    >
+                      <span>{r.icon} {r.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <LanguageSelector variant="header" />
             </div>
@@ -1240,235 +1256,99 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
         {/* Workspace Inner View Container */}
         <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl w-full mx-auto pb-24 md:pb-8 flex-1">
           {/* ========================================================================= */}
-          {/* 👑 ERP HEADER & DYNAMIC BRAND MORPHING BAR */}
+          {/* ⬅️ ACTIVE MODULE RETURN & CLOSE BAR (INSTANT DASHBOARD NAVIGATION) */}
           {/* ========================================================================= */}
-          <div className={`p-6 rounded-3xl bg-gradient-to-r ${activeTheme.banner} border shadow-2xl space-y-5 relative overflow-hidden transition-all duration-300`}>
-            {/* Subtle background glow */}
-            <div className="absolute -top-24 -right-24 w-96 h-96 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
+          {activeModule !== 'dashboard' && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-sm animate-in fade-in duration-150">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveModule('dashboard');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer group"
+                  title="Return to Dashboard (Esc)"
+                >
+                  <ArrowLeft className="w-4 h-4 text-cyan-400 group-hover:-translate-x-1 transition-transform" />
+                  <span>← Back to Dashboard</span>
+                </button>
 
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
-              <div className="flex items-start sm:items-center gap-4">
-                <div className={`w-16 h-16 rounded-2xl bg-gradient-to-tr ${activeTheme.crestBg} p-0.5 shadow-xl shrink-0`}>
-                  <div className="w-full h-full bg-[#0B0F19] rounded-[14px] flex items-center justify-center overflow-hidden p-1.5">
-                    <img
-                      src={schoolBrand.logoUrl || "/assets/schools/new-ideal-logo.svg"}
-                      alt={schoolBrand.schoolName}
-                      className="w-full h-full object-contain"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        if (!target.src.includes('new-ideal-logo.svg')) {
-                          target.src = '/assets/schools/new-ideal-logo.svg';
-                        }
-                      }}
-                    />
-                  </div>
+                <div className="h-5 w-px bg-slate-200 hidden sm:block"></div>
+
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-pulse"></span>
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900 capitalize">
+                    {activeModule.replace('_', ' ')}
+                  </h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 font-semibold uppercase">
+                    Active Module
+                  </span>
                 </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                  {schoolBrand.schoolName}
-                </h1>
-                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${activeTheme.badge} uppercase tracking-wider font-mono`}>
-                  {schoolBrand.board.split(' ')[0]} 2.0
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-slate-500 hidden md:inline">
+                  Academic Session: <strong className="text-slate-800 font-bold">{activeSession}</strong>
                 </span>
                 <button
                   type="button"
-                  onClick={() => setShowBrandingModal(true)}
-                  className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 text-cyan-300 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 border border-white/20 cursor-pointer shadow-xs"
-                  title="Customize School Name, Logo & Brand Colors"
+                  onClick={() => {
+                    setActiveModule('dashboard');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 hover:text-slate-900 text-xs font-mono transition-all cursor-pointer font-bold"
+                  title="Close this module and return to dashboard (Esc)"
                 >
-                  <Palette className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>{t('action.customize_school', 'Customize School')}</span>
+                  <X className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Close</span>
+                  <kbd className="hidden sm:inline-block px-1.5 py-0.2 rounded bg-slate-100 text-[10px] text-slate-500 border border-slate-200 font-mono ml-1">Esc</kbd>
                 </button>
-                <LanguageSelector variant="header" />
-              </div>
-              <p className="text-xs text-slate-300 font-mono mt-1 flex flex-wrap items-center gap-2.5">
-                <span>Affiliation #{schoolBrand.affiliationNo}</span>
-                <span>•</span>
-                <span>Code: {schoolBrand.schoolCode}</span>
-                <span>•</span>
-                <span className="italic text-amber-300 font-sans">"{schoolBrand.motto}"</span>
-              </p>
-            </div>
-          </div>
-
-          {/* 3 Core Personas Bar: School Admin | School Teacher | Parent/Student */}
-          {isRoleLocked ? (
-            <div className="flex items-center gap-2.5 bg-slate-950/80 px-4 py-2.5 rounded-2xl border border-white/10 shadow-xs">
-              <Shield className="w-4 h-4 text-emerald-400 shrink-0" />
-              <div className="text-xs">
-                <span className="text-slate-400 font-mono">Authorized Role: </span>
-                <span className="font-bold text-white uppercase">{activeRole}</span>
-                <span className="text-slate-400 font-mono text-[11px] ml-1">({currentUser?.name || 'Staff User'})</span>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 ml-auto">
-                🔒 RBAC Bound
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-white/10 shrink-0">
-              <span className="text-[10px] font-mono text-slate-400 px-2 uppercase tracking-wider font-bold">
-                Persona:
-              </span>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'admin', label: t('role.admin', '👑 School Admin'), desc: 'Principal / Command', activeBg: 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' },
-                  { id: 'teacher', label: t('role.teacher', '👩‍🏫 School Teacher'), desc: 'Faculty Co-Pilot', activeBg: 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30' },
-                  { id: 'parent', label: t('role.parent', '👨‍🎓 Parent / Student'), desc: 'Ward View', activeBg: 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30' }
-                ].map((role) => {
-                  const isActive = activeRole === role.id || (role.id === 'parent' && (activeRole === 'parent' || activeRole === 'student'));
-                  return (
-                    <button
-                      key={role.id}
-                      onClick={() => handleRoleChange(role.id as ErpRole)}
-                      className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center cursor-pointer ${
-                        isActive
-                          ? `${role.activeBg} scale-[1.02]`
-                          : 'bg-slate-900/60 text-slate-400 hover:text-white hover:bg-slate-800/80'
-                      }`}
-                    >
-                      <span>{role.label}</span>
-                      <span className={`text-[9px] font-mono ${isActive ? 'text-white/80' : 'text-slate-500'}`}>
-                        {role.desc}
-                      </span>
-                    </button>
-                  );
-                })}
               </div>
             </div>
           )}
-        </div>
 
-        {/* 👩‍🏫 FACULTY CO-PILOT WORKSPACE STRIP (WHEN TEACHER PERSONA IS ACTIVE) */}
-        {activeRole === 'teacher' && (
-          <div className="pt-4 border-t border-white/10 bg-emerald-950/50 rounded-2xl p-4 border border-emerald-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/40">
-                <CheckCircle2 className="w-5 h-5" />
+          {/* 👩‍🏫 FACULTY CO-PILOT WORKSPACE STRIP (WHEN TEACHER PERSONA IS ACTIVE ON DASHBOARD) */}
+          {activeRole === 'teacher' && activeModule === 'dashboard' && (
+            <div className="bg-emerald-950/70 rounded-2xl p-4 border border-emerald-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/40">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-emerald-300 font-mono uppercase tracking-wider">
+                    Faculty Workspace Active • Assigned: Class 10-A
+                  </p>
+                  <p className="text-[11px] text-slate-300">
+                    Quick Co-Pilot: Mark attendance in 30 seconds or generate CBSE/State Board question papers with AI.
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-bold text-emerald-300 font-mono uppercase tracking-wider">
-                  {t('faculty.strip_title', 'Faculty Workspace Active')} • Assigned: Class 10-A
-                </p>
-                <p className="text-[11px] text-slate-300">
-                  {t('faculty.strip_desc', 'Quick Co-Pilot: Mark attendance in 30 seconds or generate CBSE/State Board question papers with AI.')}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveModule('attendance')}
-                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <span>{t('action.fast_attendance', '⏱️ Fast Attendance')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveModule('exams')}
-                className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <span>{t('action.ai_paper', '🤖 AI Question Paper')}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveModule('journal')}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 transition-all cursor-pointer"
-              >
-                <span>{t('nav.journal', '📝 Teaching Journal')}</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 👑 SCHOOL ADMIN KPI STRIP */}
-        {activeRole === 'admin' && (
-          <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="px-3 py-1 rounded-xl bg-white/10 text-white flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="text-slate-300">Trust:</span>
-                <span className="font-bold text-cyan-300">{schoolBrand.shortName} Trust</span>
-              </div>
-              <div className="px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
-                💰 {t('kpi.today_collection', "Today's Collection")}: ₹2,84,000
-              </div>
-              <div className="px-3 py-1 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold">
-                👨‍🏫 {t('kpi.staff_present', 'Staff Present')}: 42/44
-              </div>
-              <div className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                📜 {t('kpi.pending_tc', 'Pending TC')}: 2
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('attendance')}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <span>⏱️ Fast Attendance</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('exams')}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <span>🤖 AI Question Paper</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('journal')}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 transition-all cursor-pointer"
+                >
+                  <span>📝 Teaching Journal</span>
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">{t('kpi.active_session', 'Session')}:</span>
-              <span className="font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-lg border border-emerald-500/30">
-                2026–27 (Current Active)
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* 🌐 School Context & Session Capability Bar */}
-        <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-slate-300">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/10 border border-white/15 text-slate-200">
-              <Building2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-slate-400">Context:</span>
-              <span className="font-bold text-white">{schoolBrand.schoolName}</span>
-            </div>
-
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/10 border border-white/15 text-slate-200">
-              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-slate-400 font-bold">Session:</span>
-              <select
-                value={activeSession}
-                onChange={(e) => {
-                  setActiveSession(e.target.value);
-                  onShowToast('info', `Active Session: ${e.target.value}`, `Roster and records refreshed`);
-                }}
-                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer"
-              >
-                <option value="2026-27" className="bg-slate-900 text-white">2026–27 (Current Active)</option>
-                <option value="2025-26" className="bg-slate-900 text-white">2025–26 (Archived)</option>
-                <option value="2024-25" className="bg-slate-900 text-white">2024–25 (Historical)</option>
-              </select>
-            </div>
-
-            <span className="px-2.5 py-1 rounded-xl bg-white/10 text-cyan-300 border border-white/15 font-bold uppercase text-[11px]">
-              {activeRole === 'admin'
-                ? 'Full Access (All 15 ERP Modules)'
-                : activeRole === 'teacher'
-                ? 'Faculty & Classroom Management'
-                : activeRole === 'account'
-                ? 'Fee Ledgers & Financial Operations'
-                : activeRole === 'reception'
-                ? 'Front Desk Concierge & Admissions'
-                : activeRole === 'parent'
-                ? 'Student Ward View (Aarav Sharma - Class 10A)'
-                : 'Student Learning Workspace (Class 10A)'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setShowGlobalSearch(true)}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all text-xs font-mono cursor-pointer shadow-xs"
-            >
-              <Search className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Search Directory</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-black/40 text-[10px] text-cyan-300 font-bold border border-white/20">Ctrl+K</kbd>
-            </button>
-            <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
-              Fastify REST Connected
-            </span>
-            <span className="text-slate-500">•</span>
-            <span className="text-cyan-400 font-bold">⚡ Supabase Live</span>
-          </div>
-        </div>
-      </div>
+          )}
 
 
       {/* SaaS Entitlement Plan Lock Banner */}
@@ -2033,15 +1913,6 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
         isOpen={showGlobalSearch}
         onClose={() => setShowGlobalSearch(false)}
         onNavigate={(mod) => setActiveModule(mod as ErpModule)}
-      />
-
-      {/* 🎨 DYNAMIC SCHOOL BRANDING CUSTOMIZER MODAL */}
-      <SchoolBrandingModal
-        isOpen={showBrandingModal}
-        onClose={() => setShowBrandingModal(false)}
-        currentBrand={schoolBrand}
-        onApplyBrand={handleApplyBrand}
-        onShowToast={onShowToast}
       />
 
       {/* ========================================================================= */}
