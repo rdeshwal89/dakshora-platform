@@ -1672,8 +1672,17 @@ export async function fetchErpFeeDemands(params?: { session?: string; grade?: st
   return makeApiCall<{ demands: ErpFeeDemand[]; count: number }>(`/api/erp/fees/demands${qs ? `?${qs}` : ''}`);
 }
 
-export async function generateErpFeeDemands(payload: { session?: string; grade: string; section?: string; feeStructureId: string; dueDate?: string }) {
-  return makeApiCall<{ count: number; demands: ErpFeeDemand[] }>('/api/erp/fees/demands/generate', {
+export async function generateErpFeeDemands(payload: {
+  session?: string;
+  grade: string;
+  section?: string;
+  feeStructureId?: string;
+  feeStructureIds?: string[];
+  generateAllActive?: boolean;
+  installmentPeriod?: string;
+  dueDate?: string;
+}) {
+  return makeApiCall<{ count: number; skippedCount?: number; demands: ErpFeeDemand[]; message?: string }>('/api/erp/fees/demands/generate', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -1754,6 +1763,91 @@ export async function collectFeePayment(invoiceId: string, paymentMethod: string
     method: 'POST',
     body: JSON.stringify({ invoiceId, paymentMethod }),
   });
+}
+
+// 6-Policy. School Configurable Fee Engine & Ledger APIs
+export async function fetchErpFeePolicy() {
+  return makeApiCall<{ policy: any; organization_id: string }>('/api/erp/fees/policy');
+}
+
+export async function updateErpFeePolicy(payload: any) {
+  return makeApiCall<{ message: string; policy: any }>('/api/erp/fees/policy', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchErpFeeConcessions(params?: { session?: string; studentId?: string; type?: string }) {
+  const q = new URLSearchParams();
+  if (params?.session) q.set('session', params.session);
+  if (params?.studentId) q.set('studentId', params.studentId);
+  if (params?.type) q.set('type', params.type);
+  const qs = q.toString();
+  return makeApiCall<{ concessions: ErpFeeConcession[]; count: number }>(`/api/erp/fees/concessions${qs ? `?${qs}` : ''}`);
+}
+
+export async function createErpFeeConcession(payload: {
+  studentId: string;
+  concessionType: string;
+  discountPercentage?: number;
+  discountAmountINR?: number;
+  reason?: string;
+  approvedBy?: string;
+  academicSession?: string;
+}) {
+  return makeApiCall<{ message: string; concession: ErpFeeConcession }>('/api/erp/fees/concessions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteErpFeeConcession(id: string) {
+  return makeApiCall<{ message: string; revokedConcession: ErpFeeConcession }>(`/api/erp/fees/concessions/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function waiveDemandFine(demandId: string, payload: { reason: string; waivedBy?: string }) {
+  return makeApiCall<{ message: string; demand: ErpFeeDemand }>(`/api/erp/fees/demands/${demandId}/waive-fine`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchStudentFeeLedger(studentId: string) {
+  return makeApiCall<{
+    student: any;
+    accountingSummary: any;
+    demands: ErpFeeDemand[];
+    payments: ErpFeePayment[];
+    reversals: ErpPaymentReversal[];
+    concessions: ErpFeeConcession[];
+  }>(`/api/erp/fees/students/${studentId}/ledger`);
+}
+
+export async function fetchGlobalFeeLedger(params?: {
+  session?: string;
+  grade?: string;
+  section?: string;
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params?.session) q.set('session', params.session);
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.section) q.set('section', params.section);
+  if (params?.status) q.set('status', params.status);
+  if (params?.search) q.set('search', params.search);
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.limit) q.set('limit', String(params.limit));
+  const qs = q.toString();
+  return makeApiCall<{
+    summary: any;
+    ledgers: any[];
+    totalCount: number;
+  }>(`/api/erp/fees/ledger${qs ? `?${qs}` : ''}`);
 }
 
 // 7. Admissions & CRM Integration

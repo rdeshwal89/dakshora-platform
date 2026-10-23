@@ -286,7 +286,7 @@ interface DakshoraSchoolAppProps {
 type AppScreen = 'home' | 'login' | 'dashboard';
 
 export const DakshoraSchoolApp: React.FC<DakshoraSchoolAppProps> = ({
-  orgId = '87be8580-89af-4d9c-952b-73a02a9eae82',
+  orgId = 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e',
   onShowToast,
 }) => {
   const [screen, setScreen] = useState<AppScreen>('home');

@@ -90,8 +90,10 @@ import {
 } from '../types';
 
 interface SuperAdminHubProps {
-  onShowToast: (type: 'success' | 'error' | 'info', title: string, message?: string) => void;
+  onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
   onNavigateToTab?: (tab: string) => void;
+  onSwitchToSchool?: (school: any) => void;
+  onNavigateToSurface?: (surface: any) => void;
 }
 
 type PlatformTab =
@@ -108,7 +110,12 @@ type PlatformTab =
   | 'subscriptions'
   | 'organizations';
 
-export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNavigateToTab }) => {
+export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
+  onShowToast,
+  onNavigateToTab,
+  onSwitchToSchool,
+  onNavigateToSurface
+}) => {
   // Navigation
   const [activeTab, setActiveTab] = useState<PlatformTab>('overview');
 
@@ -504,11 +511,49 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNav
     }
   };
 
+  // 1-Click Launch School into ERP
+  const handleLaunchSchool = (schoolOrOrg: any) => {
+    const orgId = schoolOrOrg.organizationId || schoolOrOrg.organization_id || schoolOrOrg.id || 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+    const schoolName = schoolOrOrg.name || schoolOrOrg.schoolName || 'Dakshora Academy, New Delhi';
+    const brand = {
+      schoolName,
+      shortName: schoolOrOrg.shortName || (schoolName.split(' ')[0] || 'DAKSHORA'),
+      board: schoolOrOrg.board || 'CBSE (Central Board of Secondary Education)',
+      affiliationNo: schoolOrOrg.affiliationNo || schoolOrOrg.affiliation_no || 'CBSE-AFF-202601',
+      schoolCode: schoolOrOrg.schoolCode || schoolOrOrg.school_code || schoolOrOrg.code || 'DKS-DEL-01',
+      motto: schoolOrOrg.motto || 'Excellence in Education',
+      themeColor: schoolOrOrg.themeColor || 'indigo',
+      principalName: schoolOrOrg.principalName || 'Principal',
+      contactEmail: schoolOrOrg.contactEmail || schoolOrOrg.email || '',
+      contactPhone: schoolOrOrg.contactPhone || schoolOrOrg.phone || '',
+      address: schoolOrOrg.address || ''
+    };
+    try {
+      localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+      const savedUser = localStorage.getItem('dakshora_superadmin_user');
+      if (savedUser) {
+        const u = JSON.parse(savedUser);
+        u.organizationId = orgId;
+        u.organization_id = orgId;
+        u.org_id = orgId;
+        u.schoolName = schoolName;
+        localStorage.setItem('dakshora_superadmin_user', JSON.stringify(u));
+      }
+    } catch {}
+
+    if (onSwitchToSchool) {
+      onSwitchToSchool(schoolOrOrg);
+    } else if (onNavigateToSurface) {
+      onNavigateToSurface('school_erp');
+    }
+  };
+
   // Trigger loads based on active tab
   useEffect(() => {
     checkActiveSupportSession();
     loadDashboard();
     loadOrganizations();
+    loadSchools();
   }, []);
 
   useEffect(() => {
@@ -859,15 +904,17 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNav
         const row1Tabs = [
           { id: 'overview', label: 'Overview', icon: BarChart3, activeGradient: 'from-amber-500 via-orange-500 to-rose-500' },
           { id: 'schools', label: 'Schools Directory', icon: GraduationCap, activeGradient: 'from-purple-600 via-fuchsia-600 to-pink-600' },
+          { id: 'organizations', label: 'Organizations', icon: Building2, activeGradient: 'from-sky-500 via-blue-600 to-indigo-600' },
           { id: 'users', label: 'User Governance', icon: Users, activeGradient: 'from-emerald-600 via-teal-600 to-cyan-600' },
-          { id: 'telemetry', label: 'Usage Telemetry', icon: Activity, activeGradient: 'from-cyan-600 via-blue-600 to-indigo-600' },
-          { id: 'health', label: 'Subsystem Health', icon: Server, activeGradient: 'from-emerald-600 to-teal-600' }
+          { id: 'subscriptions', label: 'Subscriptions & MRR', icon: CreditCard, activeGradient: 'from-amber-500 to-orange-600' },
+          { id: 'telemetry', label: 'Usage Telemetry', icon: Activity, activeGradient: 'from-cyan-600 via-blue-600 to-indigo-600' }
         ];
 
         const row2Tabs = [
           { id: 'onboarding', label: 'Onboarding Monitor', icon: Layers, activeGradient: 'from-fuchsia-600 to-pink-600' },
           { id: 'support', label: 'Support & Impersonation', icon: LifeBuoy, activeGradient: 'from-rose-500 to-orange-500' },
           { id: 'broadcast', label: 'Broadcast Notices', icon: Radio, activeGradient: 'from-orange-500 to-amber-600' },
+          { id: 'health', label: 'Subsystem Health', icon: Server, activeGradient: 'from-emerald-600 to-teal-600' },
           { id: 'settings', label: 'Platform Settings', icon: SettingsIcon, activeGradient: 'from-indigo-600 to-purple-600' },
           { id: 'client_setup', label: 'Direct Provisioning', icon: Plus, activeGradient: 'from-purple-600 to-pink-600' }
         ];
@@ -1003,6 +1050,230 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNav
               </div>
             </div>
           </div>
+
+          {/* Managed Schools & Demo Campus Overview Section */}
+          {(() => {
+            const demoSchool = schools.find(s => s.organizationId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' || s.name?.toLowerCase().includes('dakshora')) || {
+              id: 'e078639d-f988-49bc-8dca-30ef652cf41f',
+              name: 'Dakshora Academy, New Delhi',
+              schoolCode: 'DKS-DEL-01',
+              organizationId: 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e',
+              organizationName: 'Dakshora Academy New Delhi',
+              board: 'CBSE',
+              city: 'New Delhi',
+              studentCount: dashboardData?.metrics?.platformRoster?.totalStudentsAcrossPlatform || 120,
+              staffCount: dashboardData?.metrics?.platformRoster?.totalStaffAcrossPlatform || 20,
+              campusesCount: dashboardData?.metrics?.schools?.totalCampuses || 3,
+              currentSession: '2026-27',
+              status: 'active'
+            };
+
+            return (
+              <div className="space-y-4">
+                {/* 1. Flagship Live Demo School Banner Card */}
+                <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 text-white p-6 sm:p-7 rounded-3xl border border-indigo-500/30 shadow-2xl relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-purple-500/15 via-indigo-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
+                  
+                  <div className="relative z-10 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <span className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 text-[11px] font-mono font-black tracking-wider uppercase shadow-md flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+                          <span>Flagship Demo School</span>
+                        </span>
+                        <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-mono font-bold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>PostgreSQL Database Active</span>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-indigo-300 bg-white/10 px-3 py-1 rounded-xl border border-white/10">
+                          Affiliation: <strong>CBSE-AFF-202601</strong>
+                        </span>
+                        <span className="text-xs font-mono text-purple-300 bg-white/10 px-3 py-1 rounded-xl border border-white/10">
+                          Code: <strong>{demoSchool.schoolCode || 'DKS-DEL-01'}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+                      <div>
+                        <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
+                          <span>{demoSchool.name || 'Dakshora Academy, New Delhi'}</span>
+                        </h2>
+                        <p className="text-xs font-mono text-slate-300 mt-1 max-w-2xl leading-relaxed">
+                          Primary multi-tenant demonstration institution loaded with authenticated class teacher attendance, 
+                          real-time student fee ledger, automated receipt numbering, and unified Parent/Student portal access.
+                        </p>
+                      </div>
+
+                      {/* Fast Action Buttons */}
+                      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <button
+                          onClick={() => handleLaunchSchool(demoSchool)}
+                          className="px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-white font-mono text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02] cursor-pointer"
+                        >
+                          <GraduationCap className="w-4 h-4" />
+                          <span>Launch School ERP 🚀</span>
+                        </button>
+
+                        {onNavigateToSurface && (
+                          <button
+                            onClick={() => onNavigateToSurface('parent_portal')}
+                            className="px-4 py-3 rounded-2xl bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:brightness-110 text-white font-mono text-xs font-bold flex items-center gap-2 shadow-lg shadow-fuchsia-600/25 transition-all hover:scale-[1.02] cursor-pointer"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                            <span>Ward Portal 👨‍👩‍👧</span>
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            setSupportTargetOrgId(demoSchool.organizationId);
+                            setShowSupportModal(true);
+                          }}
+                          className="px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold flex items-center gap-2 border border-white/20 transition-all cursor-pointer"
+                          title="Authorized Support Mode"
+                        >
+                          <Shield className="w-4 h-4 text-amber-400" />
+                          <span>Support Mode</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quick Metrics Bar inside Demo Card */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-white/10">
+                      <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="text-[10px] font-mono font-bold text-slate-400 uppercase">Enrolled Students</div>
+                        <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
+                          {demoSchool.studentCount || 120} <span className="text-xs text-slate-400 font-normal">Active</span>
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="text-[10px] font-mono font-bold text-slate-400 uppercase">Faculty & Staff</div>
+                        <div className="text-xl font-black font-mono text-purple-300 mt-0.5">
+                          {demoSchool.staffCount || 20} <span className="text-xs text-slate-400 font-normal">Staff</span>
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="text-[10px] font-mono font-bold text-slate-400 uppercase">Campus & Infrastructure</div>
+                        <div className="text-xl font-black font-mono text-sky-400 mt-0.5">
+                          {demoSchool.campusesCount || 3} <span className="text-xs text-slate-400 font-normal">Wings</span>
+                        </div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                        <div className="text-[10px] font-mono font-bold text-slate-400 uppercase">Fee Engine Mode</div>
+                        <div className="text-xl font-black font-mono text-amber-300 mt-0.5">
+                          Rule Engine <span className="text-xs text-slate-400 font-normal">Active</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Multi-Tenant Campus Live Directory Table */}
+                <div className="bg-white/95 p-6 rounded-3xl border border-slate-200/90 shadow-md space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-purple-600" />
+                        <span>Registered Multi-Tenant Institutions & Demo Campuses ({schools.length})</span>
+                      </h3>
+                      <p className="text-xs font-mono text-slate-500 mt-0.5">
+                        Direct 1-click launch into school ERP or support impersonation for any campus.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={loadSchools}
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSchools ? 'animate-spin text-purple-600' : ''}`} />
+                        <span>Refresh List</span>
+                      </button>
+
+                      <button
+                        onClick={() => setActiveTab('schools')}
+                        className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-mono font-bold border border-purple-200 flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <span>Full Directory →</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase text-[10px] font-bold">
+                        <tr>
+                          <th className="p-3">School Name</th>
+                          <th className="p-3">School Code</th>
+                          <th className="p-3">Board / City</th>
+                          <th className="p-3">Session</th>
+                          <th className="p-3">Students</th>
+                          <th className="p-3">Staff</th>
+                          <th className="p-3">Status</th>
+                          <th className="p-3 text-right">Quick Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {schools.map((sch) => {
+                          const isDemo = sch.organizationId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' || sch.name?.toLowerCase().includes('dakshora');
+                          return (
+                            <tr key={sch.id} className="hover:bg-purple-50/40 transition-colors">
+                              <td className="p-3 font-bold text-slate-900">
+                                <div className="flex items-center gap-2">
+                                  <GraduationCap className={`w-4 h-4 ${isDemo ? 'text-amber-500' : 'text-purple-600'}`} />
+                                  <span>{sch.name}</span>
+                                  {isDemo && (
+                                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-bold border border-amber-300">
+                                      Demo
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="p-3 text-slate-700 font-bold">{sch.schoolCode}</td>
+                              <td className="p-3 text-slate-600">{(sch as any).board || 'CBSE'} • {(sch as any).city || 'Delhi'}</td>
+                              <td className="p-3 text-slate-700">{sch.currentSession || '2026-27'}</td>
+                              <td className="p-3 font-bold text-emerald-700">{sch.studentCount || (isDemo ? 120 : 0)}</td>
+                              <td className="p-3 font-bold text-purple-700">{sch.staffCount || (isDemo ? 20 : 0)}</td>
+                              <td className="p-3">
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase border border-emerald-200">
+                                  {sch.status || 'Active'}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleLaunchSchool(sch)}
+                                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                                  >
+                                    <GraduationCap className="w-3.5 h-3.5" />
+                                    <span>Launch ERP</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setSupportTargetOrgId(sch.organizationId);
+                                      setShowSupportModal(true);
+                                    }}
+                                    className="p-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-all cursor-pointer"
+                                    title="Safe Support Impersonation"
+                                  >
+                                    <Shield className="w-3.5 h-3.5 text-amber-600" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Secondary Overview Row: Plan Distribution & Fast Operations */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1172,6 +1443,15 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNav
 
                 <div className="flex items-center gap-2 self-start md:self-center">
                   <button
+                    onClick={() => handleLaunchSchool(org)}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-105 text-white text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                    title="Launch School ERP"
+                  >
+                    <GraduationCap className="w-3.5 h-3.5" />
+                    <span>Launch ERP</span>
+                  </button>
+
+                  <button
                     onClick={() => {
                       setSupportTargetOrgId(org.id);
                       setShowSupportModal(true);
@@ -1254,6 +1534,27 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({ onShowToast, onNav
                 <div className="flex justify-between items-center text-xs font-mono pt-1 text-slate-600">
                   <span>Session: <strong className="text-slate-900">{sch.currentSession}</strong></span>
                   <span>Plan: <strong className="text-amber-700 font-bold uppercase">{sch.subscriptionPlan}</strong></span>
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => handleLaunchSchool(sch)}
+                    className="flex-1 px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  >
+                    <GraduationCap className="w-3.5 h-3.5" />
+                    <span>Launch School ERP</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSupportTargetOrgId(sch.organizationId);
+                      setShowSupportModal(true);
+                    }}
+                    className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-mono text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Safe Support Impersonation"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Support</span>
+                  </button>
                 </div>
               </div>
             ))}

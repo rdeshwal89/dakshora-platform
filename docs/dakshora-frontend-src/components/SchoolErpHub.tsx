@@ -638,7 +638,7 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
   }, []);
 
   // Step 4: Dynamic School Brand Morphing & 2026–27 Session
-  const effectiveOrgId = currentUser?.organization_id || currentUser?.organizationId || currentUser?.org_id || "87be8580-89af-4d9c-952b-73a02a9eae82";
+  const effectiveOrgId = currentUser?.organization_id || currentUser?.organizationId || currentUser?.org_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
   const [activeSession, setActiveSession] = useState<string>('2026-27');
   const [schoolBrand, setSchoolBrand] = useState<SchoolBrandProfile>(() => {
     try {

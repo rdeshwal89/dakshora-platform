@@ -1,0 +1,102 @@
+[
+  {
+    "id": "struct-1792740970863",
+    "academicSession": "2026-27",
+    "grade": "Class 12",
+    "feeHead": "Robotics & AI Innovation Lab Fee",
+    "amountINR": 3500,
+    "frequency": "annual",
+    "dueDay": 30,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "created_at": "2026-10-23T07:36:10.863Z"
+  },
+  {
+    "id": "struct-1792740969452",
+    "academicSession": "2026-27",
+    "grade": "Class 12",
+    "feeHead": "Half-Yearly Assessment Fee",
+    "amountINR": 1800,
+    "frequency": "half_yearly",
+    "dueDay": 15,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "created_at": "2026-10-23T07:36:09.452Z"
+  },
+  {
+    "id": "struct-1792740968066",
+    "academicSession": "2026-27",
+    "grade": "Class 12",
+    "feeHead": "Tuition Fee",
+    "amountINR": 14000,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "created_at": "2026-10-23T07:36:08.066Z"
+  },
+  {
+    "id": "struct-1792740966627",
+    "academicSession": "2026-27",
+    "grade": "Class 6",
+    "feeHead": "Monthly Tuition Fee",
+    "amountINR": 2800,
+    "frequency": "monthly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "created_at": "2026-10-23T07:36:06.627Z"
+  },
+  {
+    "id": "fc4f8cfb-e5a7-4c88-bb11-2adde9446c75",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "academic_session_id": "97bb2de7-1040-4483-97e4-f89fd9f81f1a",
+    "name": "Quarterly Tuition Fee (Primary Wing: Nur-5)",
+    "amount": 18000,
+    "frequency": "quarterly",
+    "due_date": "2026-05-15",
+    "created_at": "2026-10-22T11:40:07.420787+00:00",
+    "amountINR": 18000,
+    "feeHead": "Quarterly Tuition Fee (Primary Wing: Nur-5)"
+  },
+  {
+    "id": "521e6436-ceb9-4b91-b1be-7b83b442c63e",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "academic_session_id": "97bb2de7-1040-4483-97e4-f89fd9f81f1a",
+    "name": "Quarterly Tuition Fee (Middle & Secondary: 6-10)",
+    "amount": 24000,
+    "frequency": "quarterly",
+    "due_date": "2026-05-15",
+    "created_at": "2026-10-22T11:40:07.639794+00:00",
+    "amountINR": 24000,
+    "feeHead": "Quarterly Tuition Fee (Middle & Secondary: 6-10)"
+  },
+  {
+    "id": "d0f2c213-9a78-417f-a65b-3bc522231f1b",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "academic_session_id": "97bb2de7-1040-4483-97e4-f89fd9f81f1a",
+    "name": "Quarterly Tuition Fee (Senior Secondary: 11-12)",
+    "amount": 30000,
+    "frequency": "quarterly",
+    "due_date": "2026-05-15",
+    "created_at": "2026-10-22T11:40:07.918026+00:00",
+    "amountINR": 30000,
+    "feeHead": "Quarterly Tuition Fee (Senior Secondary: 11-12)"
+  },
+  {
+    "id": "a79cc97d-e437-4774-93b3-8caae908c58f",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "academic_session_id": "97bb2de7-1040-4483-97e4-f89fd9f81f1a",
+    "name": "Annual Development & Smart Campus Lab Fee",
+    "amount": 6000,
+    "frequency": "annual",
+    "due_date": "2026-06-30",
+    "created_at": "2026-10-22T11:40:08.131327+00:00",
+    "amountINR": 6000,
+    "feeHead": "Annual Development & Smart Campus Lab Fee"
+  }
+]

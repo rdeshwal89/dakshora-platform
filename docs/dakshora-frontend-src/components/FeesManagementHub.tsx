@@ -62,8 +62,15 @@ import {
   fetchErpFeeOutstandingReport,
   fetchErpClassFeeSummary,
   fetchErpFeeReversals,
-  fetchErpStudents
+  fetchErpStudents,
+  fetchErpFeePolicy,
+  updateErpFeePolicy,
+  fetchErpFeeConcessions,
+  createErpFeeConcession,
+  deleteErpFeeConcession,
+  waiveDemandFine
 } from '../services/api';
+import { ErpFeeConcession } from '../types';
 
 export type BoardType = 'rbse' | 'upmsp' | 'hbse' | 'cbse' | 'state';
 export type MediumType = 'hindi' | 'bilingual' | 'english';
@@ -253,7 +260,7 @@ interface FeesManagementHubProps {
   onShowToast?: (type: 'success' | 'error' | 'info', message: string) => void;
 }
 
-type FeeTab = 'overview' | 'structures' | 'collection' | 'ledger' | 'reports';
+type FeeTab = 'overview' | 'structures' | 'collection' | 'ledger' | 'concessions' | 'policy' | 'reports';
 
 export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
   activeRole,
@@ -327,9 +334,37 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
   // Batch Generation Modal
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [batchGrade, setBatchGrade] = useState('Class 10');
-  const [batchStructureId, setBatchStructureId] = useState('');
+  const [batchStructureId, setBatchStructureId] = useState('all');
+  const [batchInstallmentPeriod, setBatchInstallmentPeriod] = useState('Q1');
   const [batchDueDate, setBatchDueDate] = useState('');
   const [generatingBatch, setGeneratingBatch] = useState(false);
+  // Concessions & Scholarships Data
+  const [concessionsList, setConcessionsList] = useState<ErpFeeConcession[]>([]);
+  const [loadingConcessions, setLoadingConcessions] = useState(false);
+  const [showAddConcessionModal, setShowAddConcessionModal] = useState(false);
+  const [concessionForm, setConcessionForm] = useState({
+    studentId: '',
+    concessionType: 'sibling',
+    discountPercentage: 15,
+    discountAmountINR: 0,
+    reason: '',
+    approvedBy: 'Principal'
+  });
+
+  // Policy & Rule Engine Data
+  const [feePolicy, setFeePolicy] = useState<any>(null);
+  const [loadingPolicy, setLoadingPolicy] = useState(false);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [newHeadName, setNewHeadName] = useState('');
+  const [newHeadCategory, setNewHeadCategory] = useState('academic');
+  const [newHeadFreq, setNewHeadFreq] = useState('quarterly');
+
+  // Fine Waiver Modal
+  const [showWaiveModal, setShowWaiveModal] = useState(false);
+  const [waiveDemandItem, setWaiveDemandItem] = useState<ErpFeeDemand | null>(null);
+  const [waiveReason, setWaiveReason] = useState('Principal Authorized Waiver');
+  const [waivingFine, setWaivingFine] = useState(false);
+
   // Multi-Board & Bilingual Customization States
   const [selectedFeeBoard, setSelectedFeeBoard] = useState<BoardType>('rbse');
   const [selectedFeeMedium, setSelectedFeeMedium] = useState<MediumType>('bilingual');
@@ -452,11 +487,97 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
     loadStudents();
   }, [activeSession]);
 
+  const loadPolicy = async () => {
+    setLoadingPolicy(true);
+    try {
+      const res = await fetchErpFeePolicy();
+      if (res.data?.policy) setFeePolicy(res.data.policy);
+    } catch (_) {}
+    finally { setLoadingPolicy(false); }
+  };
+
+  const loadConcessions = async () => {
+    setLoadingConcessions(true);
+    try {
+      const res = await fetchErpFeeConcessions();
+      if (res.data?.concessions) setConcessionsList(res.data.concessions);
+    } catch (_) {}
+    finally { setLoadingConcessions(false); }
+  };
+
+  const handleSavePolicy = async () => {
+    if (!feePolicy) return;
+    setSavingPolicy(true);
+    try {
+      const res = await updateErpFeePolicy(feePolicy);
+      if (res.data?.policy) {
+        setFeePolicy(res.data.policy);
+        onShowToast?.('success', 'Fee Policy Saved! ⚙️ School late fee rules and heads updated in real-time.');
+      }
+    } catch (err: any) {
+      onShowToast?.('error', `Save Policy Error: ${err.message}`);
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  const handleCreateConcession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!concessionForm.studentId) {
+      onShowToast?.('error', 'Please select a student');
+      return;
+    }
+    try {
+      const res = await createErpFeeConcession(concessionForm);
+      if (res.data?.concession) {
+        onShowToast?.('success', `Concession Approved! 🎓 ${res.data.message}`);
+        setShowAddConcessionModal(false);
+        loadConcessions();
+        loadDemands();
+      }
+    } catch (err: any) {
+      onShowToast?.('error', `Concession Error: ${err.message}`);
+    }
+  };
+
+  const handleDeleteConcession = async (id: string) => {
+    try {
+      const res = await deleteErpFeeConcession(id);
+      if (res.data?.revokedConcession) {
+        onShowToast?.('info', `Concession Revoked: ${res.data.message}`);
+        loadConcessions();
+        loadDemands();
+      }
+    } catch (err: any) {
+      onShowToast?.('error', `Revocation Error: ${err.message}`);
+    }
+  };
+
+  const handleConfirmWaiveFine = async () => {
+    if (!waiveDemandItem) return;
+    setWaivingFine(true);
+    try {
+      const res = await waiveDemandFine(waiveDemandItem.id, { reason: waiveReason, waivedBy: 'Principal' });
+      if (res.data?.demand) {
+        onShowToast?.('success', `Late Fee Fine Waived! ✅ ${res.data.message}`);
+        setShowWaiveModal(false);
+        setWaiveDemandItem(null);
+        loadDemands();
+      }
+    } catch (err: any) {
+      onShowToast?.('error', `Fine Waiver Error: ${err.message}`);
+    } finally {
+      setWaivingFine(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'structures') loadStructures();
     if (activeTab === 'ledger') loadDemands();
     if (activeTab === 'overview') loadOverview();
     if (activeTab === 'reports') loadReports();
+    if (activeTab === 'concessions') loadConcessions();
+    if (activeTab === 'policy') loadPolicy();
   }, [activeTab, structureGradeFilter, demandGradeFilter, demandStatusFilter, reportSubTab, reportModeFilter, agingFilter]);
 
   // Handle student selection in terminal
@@ -624,7 +745,7 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
   const handleBatchGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!batchStructureId) {
-      onShowToast?.('error', 'Please select a fee structure');
+      onShowToast?.('error', 'Please select a fee structure or choose Multi-Head Batch');
       return;
     }
     setGeneratingBatch(true);
@@ -632,7 +753,9 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
       const res = await generateErpFeeDemands({
         session: activeSession,
         grade: batchGrade,
-        feeStructureId: batchStructureId,
+        feeStructureId: batchStructureId === 'all' ? undefined : batchStructureId,
+        generateAllActive: batchStructureId === 'all',
+        installmentPeriod: batchInstallmentPeriod,
         dueDate: batchDueDate || undefined
       });
       if (res.data) {
@@ -882,6 +1005,37 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
             </span>
             <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
               {structures.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('concessions')}
+            className={`px-4 py-2.5 rounded-t-xl text-xs font-bold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
+              activeTab === 'concessions'
+                ? 'border-emerald-500 text-emerald-400 bg-emerald-950/20'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>
+              {selectedFeeMedium === 'hindi' ? 'छात्रवृत्ति व छूट' : 'Concessions & Scholarships'}
+            </span>
+            <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+              {concessionsList.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('policy')}
+            className={`px-4 py-2.5 rounded-t-xl text-xs font-bold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap ${
+              activeTab === 'policy'
+                ? 'border-emerald-500 text-emerald-400 bg-emerald-950/20'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>
+              {selectedFeeMedium === 'hindi' ? 'शुल्क नीति व नियम' : 'Fee Policy & Late Rules'}
             </span>
           </button>
 
@@ -1726,18 +1880,32 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
                         <td className="p-3.5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             {d.balanceAmount > 0 ? (
-                              <button
-                                onClick={() => {
-                                  const st = allStudents.find(s => s.id === d.studentId);
-                                  if (st) handleSelectStudentForPayment(st);
-                                  setSelectedDemand(d);
-                                  setCollectionAmount(d.balanceAmount);
-                                  setActiveTab('collection');
-                                }}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm cursor-pointer"
-                              >
-                                Collect
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    const st = allStudents.find(s => s.id === d.studentId);
+                                    if (st) handleSelectStudentForPayment(st);
+                                    setSelectedDemand(d);
+                                    setCollectionAmount(d.balanceAmount);
+                                    setActiveTab('collection');
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm cursor-pointer"
+                                >
+                                  Collect
+                                </button>
+                                {Number(d.fineAmount || 0) > 0 && !d.fineWaived && (
+                                  <button
+                                    onClick={() => {
+                                      setWaiveDemandItem(d);
+                                      setShowWaiveModal(true);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold text-[10px] cursor-pointer"
+                                    title="Waive Late Fee Fine"
+                                  >
+                                    Waive Fine
+                                  </button>
+                                )}
+                              </div>
                             ) : (
                               d.receiptNo && (
                                 <button
@@ -2206,6 +2374,354 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🎓 TAB: CONCESSIONS & SCHOLARSHIPS */}
+      {/* ========================================================================= */}
+      {activeTab === 'concessions' && (
+        <div className="space-y-6">
+          <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-400" />
+                <span>Approved Concessions & Scholarships Register</span>
+              </h3>
+              <p className="text-xs text-slate-400 font-mono mt-1">
+                Transparent student-linked fee waivers, sibling discounts, and academic scholarships
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAddConcessionModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-110 text-slate-950 text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Apply Concession</span>
+            </button>
+          </div>
+
+          <div className="glass-panel rounded-3xl border border-slate-800 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider">
+                  <tr>
+                    <th className="p-3.5">Student</th>
+                    <th className="p-3.5">Class</th>
+                    <th className="p-3.5">Concession Type</th>
+                    <th className="p-3.5">Discount</th>
+                    <th className="p-3.5">Reason</th>
+                    <th className="p-3.5">Approved By</th>
+                    <th className="p-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                  {concessionsList.length > 0 ? (
+                    concessionsList.map((c) => (
+                      <tr key={c.id} className="hover:bg-slate-800/20 transition-all">
+                        <td className="p-3.5 font-bold text-white">
+                          <div>{c.studentName}</div>
+                          <div className="text-[10px] text-slate-500">{c.admissionNo}</div>
+                        </td>
+                        <td className="p-3.5 text-cyan-300">{c.grade}-{c.section}</td>
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+                            {c.concessionType.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="p-3.5 font-black text-emerald-400">
+                          {c.discountPercentage > 0 ? `${c.discountPercentage}%` : `₹${c.discountAmountINR}`}
+                        </td>
+                        <td className="p-3.5 text-slate-400 max-w-xs truncate">{c.reason}</td>
+                        <td className="p-3.5 text-indigo-300">{c.approvedBy}</td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            onClick={() => handleDeleteConcession(c.id)}
+                            className="px-2 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[10px] font-bold cursor-pointer"
+                          >
+                            Revoke
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-slate-500">
+                        No active fee concessions recorded. Click 'Apply Concession' to add one.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ⚙️ TAB: FEE POLICY & RULES ENGINE */}
+      {/* ========================================================================= */}
+      {activeTab === 'policy' && feePolicy && (
+        <div className="space-y-6">
+          <div className="glass-panel p-6 rounded-3xl border border-slate-800 flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                <span>Configurable School Fee Policy Engine</span>
+              </h3>
+              <p className="text-xs text-slate-400 font-mono mt-1">
+                Configure automated late fee rules, grace periods, custom fee heads, and receipt parameters
+              </p>
+            </div>
+            <button
+              onClick={handleSavePolicy}
+              disabled={savingPolicy}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/20 cursor-pointer"
+            >
+              {savingPolicy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              <span>Save Policy Rules</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Late Fee Card */}
+            <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
+              <h4 className="text-sm font-bold text-amber-400 flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                <span>Late Fee & Grace Period Calculation</span>
+              </h4>
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <label className="text-slate-400 block mb-1">Grace Period (Days from Due Date)</label>
+                  <input
+                    type="number"
+                    value={feePolicy.lateFeePolicy?.gracePeriodDays || 5}
+                    onChange={(e) => setFeePolicy({
+                      ...feePolicy,
+                      lateFeePolicy: { ...feePolicy.lateFeePolicy, gracePeriodDays: Number(e.target.value) }
+                    })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Per Day Fine (₹)</label>
+                    <input
+                      type="number"
+                      value={feePolicy.lateFeePolicy?.perDayFineINR || 10}
+                      onChange={(e) => setFeePolicy({
+                        ...feePolicy,
+                        lateFeePolicy: { ...feePolicy.lateFeePolicy, perDayFineINR: Number(e.target.value) }
+                      })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">Max Fine Cap (₹)</label>
+                    <input
+                      type="number"
+                      value={feePolicy.lateFeePolicy?.maxFineCapINR || 500}
+                      onChange={(e) => setFeePolicy({
+                        ...feePolicy,
+                        lateFeePolicy: { ...feePolicy.lateFeePolicy, maxFineCapINR: Number(e.target.value) }
+                      })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Custom School Fee Heads */}
+            <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
+              <h4 className="text-sm font-bold text-cyan-400 flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                <span>School-Defined Fee Heads</span>
+              </h4>
+              <div className="max-h-52 overflow-y-auto space-y-2 pr-1 font-mono text-xs">
+                {feePolicy.feeHeads?.map((head: any) => (
+                  <div key={head.id} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-white block">{head.name}</span>
+                      <span className="text-[10px] text-slate-500 uppercase">{head.category} &bull; {head.defaultFrequency}</span>
+                    </div>
+                    {head.isMandatory && (
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-semibold">
+                        Mandatory
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="New Fee Head Name"
+                  value={newHeadName}
+                  onChange={(e) => setNewHeadName(e.target.value)}
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-2 text-xs text-white font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newHeadName.trim()) return;
+                    const newHead = {
+                      id: `head-${Date.now()}`,
+                      name: newHeadName.trim(),
+                      category: newHeadCategory,
+                      isMandatory: false,
+                      defaultFrequency: newHeadFreq
+                    };
+                    setFeePolicy({
+                      ...feePolicy,
+                      feeHeads: [...(feePolicy.feeHeads || []), newHead]
+                    });
+                    setNewHeadName('');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs"
+                >
+                  Add Head
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ⚠️ MODAL: WAIVE FINE */}
+      {/* ========================================================================= */}
+      {showWaiveModal && waiveDemandItem && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              <span>Waive Late Fee Fine</span>
+            </h3>
+            <p className="text-xs text-slate-300 font-mono">
+              Are you sure you want to waive the late fee fine of <strong className="text-white">₹{waiveDemandItem.fineAmount}</strong> for invoice <strong className="text-cyan-300">{waiveDemandItem.invoiceNo}</strong> ({waiveDemandItem.studentName})?
+            </p>
+            <div>
+              <label className="text-[11px] text-slate-400 font-mono block mb-1">Administrative Reason for Waiver</label>
+              <textarea
+                value={waiveReason}
+                onChange={(e) => setWaiveReason(e.target.value)}
+                rows={3}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-mono"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowWaiveModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmWaiveFine}
+                disabled={waivingFine}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs flex items-center gap-2"
+              >
+                {waivingFine && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>Authorize & Waive Fine</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🎓 MODAL: ADD CONCESSION */}
+      {/* ========================================================================= */}
+      {showAddConcessionModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-amber-400 flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                <span>Apply Student Concession / Scholarship</span>
+              </h3>
+              <button onClick={() => setShowAddConcessionModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateConcession} className="space-y-4 font-mono text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Select Student</label>
+                <select
+                  value={concessionForm.studentId}
+                  onChange={(e) => setConcessionForm({ ...concessionForm, studentId: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                  required
+                >
+                  <option value="">-- Choose Student --</option>
+                  {allStudents.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.admissionNo}) - {s.grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1">Category</label>
+                  <select
+                    value={concessionForm.concessionType}
+                    onChange={(e) => setConcessionForm({ ...concessionForm, concessionType: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                  >
+                    <option value="sibling">Sibling Discount</option>
+                    <option value="merit_scholarship">Merit Scholarship</option>
+                    <option value="staff_child">Staff Child Concession</option>
+                    <option value="ews_rte">EWS / RTE Exemption</option>
+                    <option value="special_hardship">Special Hardship Waiver</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Discount %</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={concessionForm.discountPercentage}
+                    onChange={(e) => setConcessionForm({ ...concessionForm, discountPercentage: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">Reason / Order Reference</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Academic Excellence Award / Second Sibling"
+                  value={concessionForm.reason}
+                  onChange={(e) => setConcessionForm({ ...concessionForm, reason: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddConcessionModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 font-bold text-slate-950"
+                >
+                  Save Concession
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -2732,12 +3248,24 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
 
             <form onSubmit={handleCreateStructure} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 font-mono">Class / Grade:</label>
+                <label className="text-xs font-bold text-slate-300 font-mono">Class / Grade Applicability:</label>
                 <select
                   value={structureForm.grade}
                   onChange={(e) => setStructureForm({ ...structureForm, grade: e.target.value })}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
                 >
+                  <option value="All Classes">All Classes (Universal)</option>
+                  <option value="Nursery">Nursery</option>
+                  <option value="LKG">LKG</option>
+                  <option value="UKG">UKG</option>
+                  <option value="Class 1">Class 1</option>
+                  <option value="Class 2">Class 2</option>
+                  <option value="Class 3">Class 3</option>
+                  <option value="Class 4">Class 4</option>
+                  <option value="Class 5">Class 5</option>
+                  <option value="Class 6">Class 6</option>
+                  <option value="Class 7">Class 7</option>
+                  <option value="Class 8">Class 8</option>
                   <option value="Class 9">Class 9</option>
                   <option value="Class 10">Class 10</option>
                   <option value="Class 11">Class 11</option>
@@ -2746,10 +3274,26 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 font-mono">Fee Head Name:</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 font-mono">Fee Head Name:</label>
+                  {feePolicy?.feeHeads && feePolicy.feeHeads.length > 0 && (
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) setStructureForm({ ...structureForm, feeHead: e.target.value });
+                      }}
+                      className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700 focus:outline-none"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>Choose Preset Head...</option>
+                      {feePolicy.feeHeads.map((h: any) => (
+                        <option key={h.id || h.name} value={h.name}>{h.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
                 <input
                   type="text"
-                  placeholder="e.g. Computer Science & AI Lab Fee"
+                  placeholder="e.g. Tuition Fee, Transport Fee, Lab & STEM Fee"
                   value={structureForm.feeHead}
                   onChange={(e) => setStructureForm({ ...structureForm, feeHead: e.target.value })}
                   required
@@ -2776,10 +3320,11 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
                     onChange={(e) => setStructureForm({ ...structureForm, frequency: e.target.value as any })}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
                   >
-                    <option value="quarterly">Quarterly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="annual">Annual</option>
-                    <option value="one-time">One-time</option>
+                    <option value="quarterly">Quarterly (Q1-Q4)</option>
+                    <option value="monthly">Monthly (12 Mo)</option>
+                    <option value="half_yearly">Half-Yearly (Sem)</option>
+                    <option value="annual">Annual (Session)</option>
+                    <option value="one-time">One-Time / Admission</option>
                   </select>
                 </div>
               </div>
@@ -2834,6 +3379,17 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
                   onChange={(e) => setBatchGrade(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
                 >
+                  <option value="Nursery">Nursery</option>
+                  <option value="LKG">LKG</option>
+                  <option value="UKG">UKG</option>
+                  <option value="Class 1">Class 1</option>
+                  <option value="Class 2">Class 2</option>
+                  <option value="Class 3">Class 3</option>
+                  <option value="Class 4">Class 4</option>
+                  <option value="Class 5">Class 5</option>
+                  <option value="Class 6">Class 6</option>
+                  <option value="Class 7">Class 7</option>
+                  <option value="Class 8">Class 8</option>
                   <option value="Class 9">Class 9</option>
                   <option value="Class 10">Class 10</option>
                   <option value="Class 11">Class 11</option>
@@ -2842,23 +3398,56 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 font-mono">Fee Head / Structure:</label>
+                <label className="text-xs font-bold text-slate-300 font-mono">Fee Head / Mode:</label>
                 <select
                   value={batchStructureId}
                   onChange={(e) => setBatchStructureId(e.target.value)}
                   required
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
                 >
-                  {structures.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.grade} - {s.feeHead} (₹{s.amountINR.toLocaleString()} &bull; {s.frequency})
-                    </option>
-                  ))}
+                  <option value="all">⚡ Multi-Head Batch: All Active Heads for Selected Class</option>
+                  {structures
+                    .filter((s) => (s.grade || 'all').toLowerCase() === batchGrade.toLowerCase() || (s.grade || '').toLowerCase() === 'all' || (s.grade || '').toLowerCase() === 'all classes')
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.feeHead} (₹{s.amountINR.toLocaleString()} &bull; {s.frequency})
+                      </option>
+                    ))}
                 </select>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 font-mono">Invoice Due Date:</label>
+                <label className="text-xs font-bold text-slate-300 font-mono">Installment Period:</label>
+                <select
+                  value={batchInstallmentPeriod}
+                  onChange={(e) => setBatchInstallmentPeriod(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="Q1">Quarter 1 (Apr - Jun)</option>
+                  <option value="Q2">Quarter 2 (Jul - Sep)</option>
+                  <option value="Q3">Quarter 3 (Oct - Dec)</option>
+                  <option value="Q4">Quarter 4 (Jan - Mar)</option>
+                  <option value="HY1">Half-Yearly Term 1 (Apr - Sep)</option>
+                  <option value="HY2">Half-Yearly Term 2 (Oct - Mar)</option>
+                  <option value="ANNUAL">Full Academic Year (Annual)</option>
+                  <option value="ONE_TIME">One-Time / Admission Charge</option>
+                  <option value="M04">Month: April</option>
+                  <option value="M05">Month: May</option>
+                  <option value="M06">Month: June</option>
+                  <option value="M07">Month: July</option>
+                  <option value="M08">Month: August</option>
+                  <option value="M09">Month: September</option>
+                  <option value="M10">Month: October</option>
+                  <option value="M11">Month: November</option>
+                  <option value="M12">Month: December</option>
+                  <option value="M01">Month: January</option>
+                  <option value="M02">Month: February</option>
+                  <option value="M03">Month: March</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 font-mono">Invoice Due Date (Optional):</label>
                 <input
                   type="date"
                   value={batchDueDate}

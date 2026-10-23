@@ -202,6 +202,51 @@ export function App() {
     }
   };
 
+  const handleSwitchToSchool = (school: any) => {
+    const orgId = school.organizationId || school.organization_id || school.id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    const schoolName = school.name || school.schoolName || "Dakshora Academy, New Delhi";
+    const brand = {
+      schoolName,
+      shortName: school.shortName || schoolName.split(' ')[0],
+      board: school.board || 'CBSE (Central Board of Secondary Education)',
+      affiliationNo: school.affiliationNo || school.affiliation_no || 'CBSE-AFF-202601',
+      schoolCode: school.schoolCode || school.school_code || school.code || 'DKS-DEL-01',
+      motto: school.motto || 'Excellence in Education',
+      themeColor: school.themeColor || 'indigo',
+      principalName: school.principalName || 'Principal',
+      contactEmail: school.contactEmail || school.email || '',
+      contactPhone: school.contactPhone || school.phone || '',
+      address: school.address || ''
+    };
+    try {
+      localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+    } catch {}
+
+    const updatedUser = {
+      ...(currentUser || {}),
+      organizationId: orgId,
+      organization_id: orgId,
+      org_id: orgId,
+      schoolName: brand.schoolName,
+      school: {
+        id: school.id || orgId,
+        name: brand.schoolName,
+        schoolName: brand.schoolName,
+        shortName: brand.shortName,
+        board: brand.board,
+        affiliationNo: brand.affiliationNo,
+        schoolCode: brand.schoolCode
+      }
+    };
+    setCurrentUser(updatedUser);
+    try {
+      localStorage.setItem('dakshora_superadmin_user', JSON.stringify(updatedUser));
+    } catch {}
+
+    handleSetSurface('school_erp', updatedUser);
+    showToast('success', 'School Loaded! 🏫', `Switched active school to ${brand.schoolName}`);
+  };
+
   const handleSignOut = () => {
     localStorage.removeItem('dakshora_auth_token');
     localStorage.removeItem('dakshora_superadmin_user');
@@ -501,7 +546,7 @@ export function App() {
                   </button>
                 </div>
                 <DakshoraSchoolApp
-                  orgId={currentUser?.organization_id || currentUser?.org_id || "87be8580-89af-4d9c-952b-73a02a9eae82"}
+                  orgId={currentUser?.organization_id || currentUser?.org_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"}
                   onShowToast={showToast}
                 />
               </div>
@@ -516,6 +561,8 @@ export function App() {
                     <SuperAdminHub
                       onShowToast={showToast}
                       onNavigateToTab={(tab) => handleSetAdminTab(tab as any)}
+                      onSwitchToSchool={handleSwitchToSchool}
+                      onNavigateToSurface={handleSetSurface}
                     />
                   )}
                   {adminTab === 'organizations' && (

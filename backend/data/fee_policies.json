@@ -1,0 +1,249 @@
+{
+  "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e": {
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    "academicSession": "2026-27",
+    "currency": "INR",
+    "feeHeads": [
+      {
+        "id": "head-tuition",
+        "name": "Tuition Fee",
+        "category": "academic",
+        "isMandatory": true,
+        "defaultFrequency": "quarterly"
+      },
+      {
+        "id": "head-transport",
+        "name": "Transport Fee",
+        "category": "transport",
+        "isMandatory": false,
+        "defaultFrequency": "quarterly"
+      },
+      {
+        "id": "head-stem",
+        "name": "Lab & STEM Fee",
+        "category": "academic",
+        "isMandatory": true,
+        "defaultFrequency": "annual"
+      },
+      {
+        "id": "head-annual",
+        "name": "Annual Development Fee",
+        "category": "development",
+        "isMandatory": true,
+        "defaultFrequency": "annual"
+      },
+      {
+        "id": "head-exam",
+        "name": "Examination & Assessment Fee",
+        "category": "examination",
+        "isMandatory": true,
+        "defaultFrequency": "half_yearly"
+      },
+      {
+        "id": "head-admission",
+        "name": "Admission & Registration Fee",
+        "category": "one_time",
+        "isMandatory": true,
+        "defaultFrequency": "one_time"
+      },
+      {
+        "id": "head-robotics-ai",
+        "name": "Robotics & AI Innovation Lab Fee",
+        "category": "academic",
+        "isMandatory": true,
+        "defaultFrequency": "annual"
+      }
+    ],
+    "lateFeePolicy": {
+      "enabled": true,
+      "gracePeriodDays": 7,
+      "calculationType": "per_day",
+      "fineAmountINR": 50,
+      "perDayFineINR": 15,
+      "maxFineCapINR": 750,
+      "applicableFrequency": "per_demand"
+    },
+    "concessionRules": [
+      {
+        "type": "sibling",
+        "name": "Sibling Discount",
+        "defaultPercentage": 15,
+        "appliesTo": [
+          "Tuition Fee"
+        ]
+      },
+      {
+        "type": "merit_scholarship",
+        "name": "Academic Merit Scholarship",
+        "defaultPercentage": 50,
+        "appliesTo": [
+          "Tuition Fee"
+        ]
+      },
+      {
+        "type": "staff_child",
+        "name": "Faculty Ward Concession",
+        "defaultPercentage": 75,
+        "appliesTo": [
+          "Tuition Fee"
+        ]
+      },
+      {
+        "type": "ews_rte",
+        "name": "EWS / RTE Exemption",
+        "defaultPercentage": 100,
+        "appliesTo": [
+          "all"
+        ]
+      },
+      {
+        "type": "special_hardship",
+        "name": "Special Humanitarian Waiver",
+        "defaultPercentage": 25,
+        "appliesTo": [
+          "Tuition Fee"
+        ]
+      }
+    ],
+    "installmentSchedules": {
+      "quarterly": [
+        {
+          "period": "Q1",
+          "label": "Quarter 1 (Apr - Jun)",
+          "dueMonth": 4,
+          "dueDay": 10
+        },
+        {
+          "period": "Q2",
+          "label": "Quarter 2 (Jul - Sep)",
+          "dueMonth": 7,
+          "dueDay": 10
+        },
+        {
+          "period": "Q3",
+          "label": "Quarter 3 (Oct - Dec)",
+          "dueMonth": 10,
+          "dueDay": 10
+        },
+        {
+          "period": "Q4",
+          "label": "Quarter 4 (Jan - Mar)",
+          "dueMonth": 1,
+          "dueDay": 10
+        }
+      ],
+      "monthly": [
+        {
+          "period": "M04",
+          "label": "April",
+          "dueMonth": 4,
+          "dueDay": 10
+        },
+        {
+          "period": "M05",
+          "label": "May",
+          "dueMonth": 5,
+          "dueDay": 10
+        },
+        {
+          "period": "M06",
+          "label": "June",
+          "dueMonth": 6,
+          "dueDay": 10
+        },
+        {
+          "period": "M07",
+          "label": "July",
+          "dueMonth": 7,
+          "dueDay": 10
+        },
+        {
+          "period": "M08",
+          "label": "August",
+          "dueMonth": 8,
+          "dueDay": 10
+        },
+        {
+          "period": "M09",
+          "label": "September",
+          "dueMonth": 9,
+          "dueDay": 10
+        },
+        {
+          "period": "M10",
+          "label": "October",
+          "dueMonth": 10,
+          "dueDay": 10
+        },
+        {
+          "period": "M11",
+          "label": "November",
+          "dueMonth": 11,
+          "dueDay": 10
+        },
+        {
+          "period": "M12",
+          "label": "December",
+          "dueMonth": 12,
+          "dueDay": 10
+        },
+        {
+          "period": "M01",
+          "label": "January",
+          "dueMonth": 1,
+          "dueDay": 10
+        },
+        {
+          "period": "M02",
+          "label": "February",
+          "dueMonth": 2,
+          "dueDay": 10
+        },
+        {
+          "period": "M03",
+          "label": "March",
+          "dueMonth": 3,
+          "dueDay": 10
+        }
+      ],
+      "half_yearly": [
+        {
+          "period": "HY1",
+          "label": "Half-Yearly Term 1 (Apr - Sep)",
+          "dueMonth": 4,
+          "dueDay": 15
+        },
+        {
+          "period": "HY2",
+          "label": "Half-Yearly Term 2 (Oct - Mar)",
+          "dueMonth": 10,
+          "dueDay": 15
+        }
+      ],
+      "annual": [
+        {
+          "period": "ANNUAL",
+          "label": "Full Academic Year (Apr - Mar)",
+          "dueMonth": 4,
+          "dueDay": 30
+        }
+      ],
+      "one_time": [
+        {
+          "period": "ONE_TIME",
+          "label": "One-Time Admission / Registration",
+          "dueMonth": 4,
+          "dueDay": 1
+        }
+      ]
+    },
+    "receiptBranding": {
+      "receiptPrefix": "REC",
+      "includeSchoolLogo": true,
+      "includeAffiliationNo": true,
+      "authorizedSignatory": "Accounts Officer / Bursar",
+      "terms": "1. Fees once paid are non-refundable.\n2. Late payment attracts fine as per school policy.\n3. Cheque payment subject to realization."
+    },
+    "updated_at": "2026-10-23T07:36:06.047Z"
+  }
+}

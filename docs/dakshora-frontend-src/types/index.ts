@@ -1007,7 +1007,10 @@ export interface ErpFeeConcession {
   id: string;
   studentId: string;
   studentName: string;
-  concessionType: 'sibling' | 'merit_scholarship' | 'staff_child' | 'special_hardship';
+  admissionNo?: string;
+  grade?: string;
+  section?: string;
+  concessionType: 'sibling' | 'merit_scholarship' | 'staff_child' | 'special_hardship' | 'ews_rte' | string;
   discountPercentage: number;
   discountAmountINR: number;
   reason: string;
@@ -1032,6 +1035,9 @@ export interface ErpFeeDemand {
   baseAmount: number;
   discountAmount: number;
   fineAmount: number;
+  fineWaived?: boolean;
+  fineWaivedBy?: string;
+  fineWaivedReason?: string;
   netAmount: number;
   paidAmount: number;
   balanceAmount: number;
@@ -3616,6 +3622,8 @@ export interface PlatformSchool {
   staffCount: number;
   subscriptionPlan: string;
   status: string;
+  board?: string;
+  city?: string;
   createdAt?: string;
 }
 

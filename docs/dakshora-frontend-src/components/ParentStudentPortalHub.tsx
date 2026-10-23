@@ -2624,7 +2624,7 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                   className="w-2/3 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-extrabold text-sm transition-all shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   {payingFee ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
-                  <span>{t('portal.modal_pay_submit', 'Authorize Simulated Settlement')}</span>
+                  <span>{payingFee ? (isHindi ? 'भुगतान प्रक्रियाधीन...' : 'Processing Payment...') : (isHindi ? 'ऑनलाइन फीस जमा करें (Pay Online)' : 'Pay Online (Razorpay / Instant UPI)')}</span>
                 </button>
               </div>
             </div>

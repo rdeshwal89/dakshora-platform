@@ -1,0 +1,74 @@
+[
+  {
+    "id": "rev-1792740792596",
+    "paymentId": "pay-1792740790609",
+    "receiptNo": "REC/2026-27/0106",
+    "studentId": "22162249-6b63-4f59-a7a4-65bdacb25651",
+    "studentName": "Mira Pandey",
+    "reversalAmount": 500,
+    "reason": "Accidental double entry corrected by accountant",
+    "reversedBy": "Senior Auditor",
+    "reversedAt": "2026-10-23T07:33:12.596Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    "id": "rev-1792740674943",
+    "paymentId": "pay-1792740672944",
+    "receiptNo": "REC/2026-27/0106",
+    "studentId": "22162249-6b63-4f59-a7a4-65bdacb25651",
+    "studentName": "Mira Pandey",
+    "reversalAmount": 500,
+    "reason": "Accidental double entry corrected by accountant",
+    "reversedBy": "Senior Auditor",
+    "reversedAt": "2026-10-23T07:31:14.943Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    "id": "rev-1792740600392",
+    "paymentId": "pay-1792740598363",
+    "receiptNo": "REC/2026-27/0106",
+    "studentId": "22162249-6b63-4f59-a7a4-65bdacb25651",
+    "studentName": "Mira Pandey",
+    "reversalAmount": 500,
+    "reason": "Accidental double entry corrected by accountant",
+    "reversedBy": "Senior Auditor",
+    "reversedAt": "2026-10-23T07:30:00.392Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    "id": "rev-1792739680777",
+    "paymentId": "pay-1792739678864",
+    "receiptNo": "REC/2026-27/0112",
+    "studentId": "22162249-6b63-4f59-a7a4-65bdacb25651",
+    "studentName": "Mira Pandey",
+    "reversalAmount": 500,
+    "reason": "Accidental double entry corrected by accountant",
+    "reversedBy": "Senior Auditor",
+    "reversedAt": "2026-10-23T07:14:40.777Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    "id": "rev-1792739383987",
+    "paymentId": "pay-1792739382241",
+    "receiptNo": "REC/2026-27/0111",
+    "studentId": "22162249-6b63-4f59-a7a4-65bdacb25651",
+    "studentName": "Mira Pandey",
+    "reversalAmount": 500,
+    "reason": "Accidental double entry corrected by accountant",
+    "reversedBy": "Senior Auditor",
+    "reversedAt": "2026-10-23T07:09:43.987Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    "id": "rev-01",
+    "paymentId": "pay-demo-old",
+    "receiptNo": "REC/2026-27/09B/000088",
+    "studentId": "std-103",
+    "studentName": "Rohan Gupta",
+    "reversalAmount": 2000,
+    "reason": "Cheque returned unpaid by bank due to signature mismatch",
+    "reversedBy": "Principal Dr. Vandana Sen",
+    "reversedAt": "2026-09-02T10:30:00Z",
+    "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  }
+]
