@@ -29,7 +29,11 @@ import {
   HelpCircle,
   ExternalLink,
   Search,
-  CheckCircle2
+  CheckCircle2,
+  Info,
+  LogOut,
+  Sliders,
+  Rocket
 } from 'lucide-react';
 import { ErpRole, ErpModule } from '../types';
 import { SchoolBrandProfile } from './SchoolBrandingModal';
@@ -61,6 +65,9 @@ interface ResponsiveSidebarProps {
   schoolBrand: SchoolBrandProfile;
   currentUser?: any;
   onShowBrandingModal?: () => void;
+  onShowSchoolInfo?: () => void;
+  onShowPrincipalProfile?: () => void;
+  onSignOut?: () => void;
   isMobileDrawerOpen: boolean;
   setIsMobileDrawerOpen: (open: boolean) => void;
   isDesktopCollapsed: boolean;
@@ -85,6 +92,9 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
   schoolBrand,
   currentUser,
   onShowBrandingModal,
+  onShowSchoolInfo,
+  onShowPrincipalProfile,
+  onSignOut,
   isMobileDrawerOpen,
   setIsMobileDrawerOpen,
   isDesktopCollapsed,
@@ -149,13 +159,6 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
           label: t('nav.dashboard', 'Command Cockpit'),
           icon: LayoutDashboard,
           description: 'Live Institutional KPIs & Real-Time Operations'
-        },
-        {
-          id: 'ai',
-          label: t('nav.ai', 'DAKSHORA AI Co-Pilot'),
-          icon: Sparkles,
-          description: 'Autonomous Assistant & Question Paper Generator',
-          badge: 'Gemini'
         }
       ]
     },
@@ -228,13 +231,6 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
           label: t('nav.exams', 'Examinations & Results'),
           icon: Award,
           description: 'Exam Schedules, Marksheets & Report Cards'
-        },
-        {
-          id: 'robotics',
-          label: t('nav.robotics', 'Robotics & ATAL Lab'),
-          icon: Cpu,
-          badge: 'ATAL',
-          description: 'STEM Curriculum, IoT Kits & Project Tracker'
         }
       ]
     },
@@ -298,6 +294,27 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
       ]
     },
     {
+      id: 'advanced_features',
+      title: 'Advanced Features',
+      hindiTitle: 'उन्नत फीचर्स (AI व रोबोटिक्स)',
+      items: [
+        {
+          id: 'ai',
+          label: t('nav.ai', 'DAKSHORA AI Co-Pilot'),
+          icon: Sparkles,
+          description: 'Autonomous Assistant & AI Lesson Planner',
+          badge: 'Gemini AI'
+        },
+        {
+          id: 'robotics',
+          label: t('nav.robotics', 'Robotics & ATAL Lab'),
+          icon: Cpu,
+          badge: 'ATAL Tinkering',
+          description: 'STEM Curriculum, IoT Kits & Robotics Lab'
+        }
+      ]
+    },
+    {
       id: 'administration',
       title: 'System Settings',
       hindiTitle: 'सिस्टम सेटिंग्स',
@@ -349,12 +366,17 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
     <div className="flex flex-col h-full select-none">
       {/* 1. Header: School Identity & Brand Crest */}
       <div className={`p-4 border-b border-slate-800/80 flex items-center justify-between gap-3 ${isCollapsed && !isMobileView ? 'px-2 flex-col justify-center' : ''}`}>
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-white p-1 border border-slate-700 shadow-md flex items-center justify-center shrink-0 overflow-hidden group">
+        <button
+          type="button"
+          onClick={onShowSchoolInfo}
+          className="flex items-center gap-3 min-w-0 text-left group cursor-pointer transition-transform hover:scale-[1.02] focus:outline-none flex-1"
+          title="Click to view full School Information, Affiliation & UDISE Profile"
+        >
+          <div className="w-10 h-10 rounded-xl bg-white p-1 border border-slate-700 shadow-md flex items-center justify-center shrink-0 overflow-hidden group-hover:ring-2 group-hover:ring-indigo-400 transition-all">
             <img
               src={schoolLogo}
               alt={schoolBrand.schoolName}
-              className="w-full h-full object-contain transition-transform group-hover:scale-105"
+              className="w-full h-full object-contain transition-transform group-hover:scale-110"
               onError={(e) => {
                 const img = e.currentTarget as HTMLImageElement;
                 if (!img.src.includes('new-ideal-logo.svg')) {
@@ -365,9 +387,12 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
           </div>
           {(!isCollapsed || isMobileView) && (
             <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-black text-white truncate tracking-tight" title={schoolBrand.schoolName}>
-                {schoolBrand.schoolName}
-              </h2>
+              <div className="flex items-center gap-1.5">
+                <h2 className="text-sm font-black text-white truncate tracking-tight group-hover:text-cyan-300 transition-colors" title={schoolBrand.schoolName}>
+                  {schoolBrand.schoolName}
+                </h2>
+                <Info className="w-3 h-3 text-cyan-400 opacity-60 group-hover:opacity-100 transition-opacity shrink-0" />
+              </div>
               <p className="text-[11px] font-mono font-bold text-indigo-400 truncate flex items-center gap-1.5">
                 <span>{schoolBrand.board.split(' ')[0]}</span>
                 <span>•</span>
@@ -375,7 +400,7 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
               </p>
             </div>
           )}
-        </div>
+        </button>
 
         {/* Toggle Button */}
         {isMobileView ? (
@@ -536,20 +561,28 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
 
       {/* 4. Footer: User Profile, Active Session & Quick Actions */}
       <div className={`p-3 border-t border-slate-800/80 bg-slate-950/60 flex flex-col gap-2 ${isCollapsed && !isMobileView ? 'items-center px-1' : ''}`}>
-        {/* User Card */}
-        <div className={`flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/80 border border-slate-800 ${isCollapsed && !isMobileView ? 'justify-center p-1.5' : ''}`}>
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
-            {(currentUser?.name || 'Admin').charAt(0).toUpperCase()}
+        {/* User Card - Clickable to open Principal Executive Profile */}
+        <button
+          type="button"
+          onClick={onShowPrincipalProfile}
+          className={`w-full flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800 hover:border-slate-700 text-left transition-all cursor-pointer group ${isCollapsed && !isMobileView ? 'justify-center p-1.5' : ''}`}
+          title="Click to view Principal & Head of Institution Profile"
+        >
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm group-hover:ring-2 group-hover:ring-indigo-400 transition-all">
+            {(schoolBrand.principalName || currentUser?.name || 'P').charAt(0).toUpperCase()}
           </div>
 
           {(!isCollapsed || isMobileView) && (
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-white truncate leading-none">
-                {currentUser?.name || 'School Administrator'}
-              </p>
+              <div className="flex items-center gap-1">
+                <p className="text-xs font-bold text-white truncate leading-none group-hover:text-cyan-300 transition-colors">
+                  {schoolBrand.principalName || currentUser?.name || 'School Principal'}
+                </p>
+                <Info className="w-2.5 h-2.5 text-cyan-400 opacity-60 group-hover:opacity-100 transition-opacity shrink-0" />
+              </div>
               <div className="flex items-center gap-1.5 mt-1">
                 <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  {activeRole}
+                  Principal Desk
                 </span>
                 <span className="text-[10px] font-mono text-slate-400">
                   {activeSession}
@@ -557,27 +590,34 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </button>
 
-        {/* Quick Surface Nav Links */}
-        {(!isCollapsed || isMobileView) && onNavigateSurface && (
-          <div className="grid grid-cols-2 gap-1.5 pt-1 text-[11px] font-mono">
-            <button
-              type="button"
-              onClick={() => onNavigateSurface('school_app')}
-              className="px-2 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 hover:text-cyan-200 border border-slate-800 text-center font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-            >
-              <Building2 className="w-3 h-3" />
-              <span>School App</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigateSurface('parent_portal')}
-              className="px-2 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-purple-300 hover:text-purple-200 border border-slate-800 text-center font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>Ward Portal</span>
-            </button>
+        {/* Quick Surface Nav Links: Setup Wizard replaces Ward Portal */}
+        {(!isCollapsed || isMobileView) && (
+          <div className="space-y-1.5 pt-1 text-[11px] font-mono">
+            {onNavigateSurface && (
+              <button
+                type="button"
+                onClick={() => onNavigateSurface('school_onboarding')}
+                className="w-full px-2.5 py-2 rounded-xl bg-gradient-to-r from-indigo-900/60 via-purple-900/60 to-blue-900/60 hover:from-indigo-800 hover:to-purple-800 text-indigo-200 hover:text-white border border-indigo-500/30 text-center font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Launch 16-Step SaaS School Onboarding & Setup Wizard"
+              >
+                <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                <span>⚙️ Setup Wizard (16 Steps)</span>
+              </button>
+            )}
+
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="w-full px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-100 border border-rose-500/25 text-center font-bold flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
+                title="Secure Sign Out / Logout from ERP"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                <span>Logout</span>
+              </button>
+            )}
           </div>
         )}
       </div>

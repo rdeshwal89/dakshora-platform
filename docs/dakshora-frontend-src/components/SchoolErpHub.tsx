@@ -53,7 +53,8 @@ import {
   Layers,
   Menu,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  LogOut
 } from 'lucide-react';
 import {
   ErpRole,
@@ -123,10 +124,14 @@ import { GlobalSearchModal } from './GlobalSearchModal';
 import { SchoolBrandProfile, PRESET_SCHOOLS } from './SchoolBrandingModal';
 import { LanguageSelector, useTranslation } from '../i18n';
 import { ResponsiveSidebar } from './ResponsiveSidebar';
+import { SchoolInfoModal } from './SchoolInfoModal';
+import { PrincipalProfileModal } from './PrincipalProfileModal';
 
 interface SchoolErpHubProps {
   currentUser?: any;
   onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
+  onSignOut?: () => void;
+  onNavigateSurface?: (surface: any) => void;
 }
 
 // =========================================================================
@@ -598,7 +603,7 @@ const DEFAULT_PAYROLL: ErpPayrollRecord[] = [
   }
 ];
 
-export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowToast }) => {
+export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowToast, onSignOut, onNavigateSurface }) => {
   const { t } = useTranslation();
   // Step 3: 6 Active Persona Roles (including Reception) - Initialized from authenticated role
   const [activeRole, setActiveRole] = useState<ErpRole>(() => {
@@ -759,6 +764,10 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
 
   // Global Search Modal State
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+
+  // School Full Info Flash Modal & Principal Executive Profile State
+  const [showSchoolInfoModal, setShowSchoolInfoModal] = useState(false);
+  const [showPrincipalProfileModal, setShowPrincipalProfileModal] = useState(false);
 
   // Ctrl+K / Cmd+K Global Search Keyboard Shortcut
   useEffect(() => {
@@ -1095,8 +1104,13 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
             library: library.length
           }}
           activeSession={activeSession}
+          onShowSchoolInfo={() => setShowSchoolInfoModal(true)}
+          onShowPrincipalProfile={() => setShowPrincipalProfileModal(true)}
+          onSignOut={onSignOut}
           onNavigateSurface={(surf) => {
-            if (surf === 'school_app') {
+            if (onNavigateSurface) {
+              onNavigateSurface(surf);
+            } else if (surf === 'school_app') {
               window.location.hash = '#school_app';
             }
           }}
@@ -1146,9 +1160,15 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
 
               {/* Breadcrumbs */}
               <div className="flex items-center gap-2 text-xs font-mono truncate">
-                <span className="text-slate-400 truncate max-w-[120px] sm:max-w-[180px]" title={schoolBrand.schoolName}>
-                  {schoolBrand.schoolName}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowSchoolInfoModal(true)}
+                  className="text-slate-300 hover:text-white font-medium hover:underline truncate max-w-[120px] sm:max-w-[200px] cursor-pointer flex items-center gap-1.5 transition-colors group text-left"
+                  title="Click to view full School Information card"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
+                  <span className="truncate">{schoolBrand.schoolName}</span>
+                </button>
                 <span className="text-slate-600">/</span>
                 {activeModule === 'dashboard' ? (
                   <span className="text-white font-bold capitalize flex items-center gap-1.5">
@@ -1224,28 +1244,17 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
                 </select>
               </div>
 
-              {!isRoleLocked && (
-                <div className="hidden xl:flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
-                  {[
-                    { id: 'admin', label: 'Admin', icon: '👑' },
-                    { id: 'teacher', label: 'Teacher', icon: '👩‍🏫' },
-                    { id: 'parent', label: 'Parent', icon: '👨‍🎓' }
-                  ].map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => handleRoleChange(r.id as ErpRole)}
-                      className={`px-2 py-1 rounded-lg font-bold text-[11px] transition-all cursor-pointer ${
-                        (activeRole as string) === r.id || (r.id === 'parent' && ((activeRole as string) === 'parent' || (activeRole as string) === 'student'))
-                          ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                      title={`Switch Persona to ${r.label}`}
-                    >
-                      <span>{r.icon} {r.label}</span>
-                    </button>
-                  ))}
-                </div>
+              {/* Prominent Admin Logout Action */}
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-100 border border-rose-500/30 transition-all text-xs font-semibold cursor-pointer shadow-xs active:scale-95"
+                  title="Sign out of School ERP"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
               )}
 
               <LanguageSelector variant="header" />
@@ -1403,6 +1412,7 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
               if (extra?.showAddStudent) setShowAddStudent(true);
             }}
             onShowToast={onShowToast}
+            onShowPrincipalProfile={() => setShowPrincipalProfileModal(true)}
           />
         </div>
       )}
@@ -1913,6 +1923,25 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
         isOpen={showGlobalSearch}
         onClose={() => setShowGlobalSearch(false)}
         onNavigate={(mod) => setActiveModule(mod as ErpModule)}
+      />
+
+      {/* 🏫 FULL SCHOOL INFORMATION DISPLAY FLASH CARD MODAL */}
+      <SchoolInfoModal
+        isOpen={showSchoolInfoModal}
+        onClose={() => setShowSchoolInfoModal(false)}
+        schoolBrand={schoolBrand}
+        totalStudents={students.length}
+        totalStaff={staff.length}
+        onShowToast={(type, title, msg) => onShowToast(type, title, msg)}
+      />
+
+      {/* 👨‍💼 PRINCIPAL EXECUTIVE PROFILE MODAL */}
+      <PrincipalProfileModal
+        isOpen={showPrincipalProfileModal}
+        onClose={() => setShowPrincipalProfileModal(false)}
+        schoolBrand={schoolBrand}
+        currentUser={currentUser}
+        onShowToast={(type, title, msg) => onShowToast(type, title, msg)}
       />
 
       {/* ========================================================================= */}

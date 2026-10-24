@@ -382,7 +382,7 @@ export function App() {
   const isPublicWebsite = surface === 'public_website';
   const isWardPortalSurface = surface === 'parent_portal' || (isAuthenticated && (currentUser?.role === 'parent' || currentUser?.role === 'student'));
   const isTeacherPortalSurface = isAuthenticated && (currentUser?.role === 'teacher' || ['teacher', 'faculty', 'lecturer'].includes((currentUser?.role || '').toLowerCase()));
-  const isStandalonePortal = isWardPortalSurface || isTeacherPortalSurface || surface === 'school_app';
+  const isStandalonePortal = isWardPortalSurface || isTeacherPortalSurface || surface === 'school_app' || surface === 'school_erp';
 
   return (
     <div
@@ -391,12 +391,14 @@ export function App() {
           ? 'bg-[#070A12] text-slate-100 selection:bg-cyan-500 selection:text-white'
           : isWardPortalSurface
           ? 'bg-[#070B14] text-slate-100 selection:bg-cyan-500 selection:text-white'
+          : surface === 'school_erp'
+          ? 'bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white'
           : 'bg-[#EDF2F7] text-slate-950 selection:bg-purple-600 selection:text-white'
       }`}
     >
       {/* Ambient Background Mesh */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        {isPublicWebsite || isWardPortalSurface ? (
+        {isPublicWebsite || isWardPortalSurface || surface === 'school_erp' ? (
           <>
             <div className="absolute -top-40 -right-40 w-[650px] h-[650px] bg-indigo-600/15 rounded-full blur-[140px]" />
             <div className="absolute top-1/3 -left-40 w-[650px] h-[650px] bg-cyan-500/10 rounded-full blur-[140px]" />
@@ -513,7 +515,12 @@ export function App() {
 
             {/* Surface 4: School ERP Engine (5 Roles & 13 Modules) */}
             {surface === 'school_erp' && (
-              <SchoolErpHub currentUser={currentUser} onShowToast={showToast} />
+              <SchoolErpHub
+                currentUser={currentUser}
+                onShowToast={showToast}
+                onSignOut={handleSignOut}
+                onNavigateSurface={handleSetSurface}
+              />
             )}
 
             {/* Surface 5: Parent & Student Self-Service Portal Experience */}

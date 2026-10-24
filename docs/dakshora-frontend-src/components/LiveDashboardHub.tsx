@@ -26,7 +26,13 @@ import {
   Check,
   Building,
   UserCheck,
-  UserX
+  UserX,
+  Send,
+  Megaphone,
+  Trash2,
+  MessageSquare,
+  Radio,
+  Info
 } from 'lucide-react';
 import {
   ErpRole,
@@ -44,6 +50,7 @@ interface LiveDashboardHubProps {
   currentStaffId?: string;
   onNavigateModule: (module: ErpModule, extraState?: any) => void;
   onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
+  onShowPrincipalProfile?: () => void;
 }
 
 export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
@@ -52,7 +59,8 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
   organizationId: propOrgId,
   currentStaffId,
   onNavigateModule,
-  onShowToast
+  onShowToast,
+  onShowPrincipalProfile
 }) => {
   const organizationId = propOrgId || (() => {
     try {
@@ -82,6 +90,111 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
     auditStream: true,
     quickActions: true
   });
+
+  // 📢 Principal Quick Broadcast & Notice Center State
+  const [quickNotices, setQuickNotices] = useState<Array<{
+    id: string;
+    title: string;
+    content: string;
+    category: 'urgent' | 'academic' | 'event' | 'general';
+    targetAudience: 'all' | 'teachers' | 'parents';
+    postedAt: string;
+    postedBy: string;
+    channels: string[];
+  }>>(() => {
+    try {
+      const saved = localStorage.getItem('dakshora_erp_notices');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      {
+        id: 'not-01',
+        title: 'Upcoming Parent-Teacher Interactive Meeting (PTM)',
+        content: 'Parents of Classes 9 to 12 are cordially invited for the comprehensive academic progress review this Saturday from 09:30 AM to 01:00 PM.',
+        category: 'academic',
+        targetAudience: 'parents',
+        postedAt: 'Today, 09:30 AM',
+        postedBy: 'Principal Desk',
+        channels: ['Push Notification', 'SMS Broadcast', 'Notice Board']
+      },
+      {
+        id: 'not-02',
+        title: 'Staff Academic Council Meeting on NEP 2020 Lesson Plans',
+        content: 'All faculty members are requested to convene in the Conference Hall today at 02:30 PM for lesson review.',
+        category: 'urgent',
+        targetAudience: 'teachers',
+        postedAt: 'Yesterday, 03:15 PM',
+        postedBy: 'Principal Desk',
+        channels: ['Push Notification', 'Staff Portal']
+      }
+    ];
+  });
+
+  const [broadcastForm, setBroadcastForm] = useState({
+    title: '',
+    content: '',
+    targetAudience: 'all' as 'all' | 'teachers' | 'parents',
+    category: 'urgent' as 'urgent' | 'academic' | 'event' | 'general',
+    sendSms: true,
+    sendPush: true
+  });
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+  const handleDispatchNotice = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastForm.title.trim() || !broadcastForm.content.trim()) {
+      onShowToast('warning', 'Incomplete Form', 'Please enter both Notice Title and Message content.');
+      return;
+    }
+
+    setIsBroadcasting(true);
+    const newNotice = {
+      id: `not-${Date.now()}`,
+      title: broadcastForm.title.trim(),
+      content: broadcastForm.content.trim(),
+      category: broadcastForm.category,
+      targetAudience: broadcastForm.targetAudience,
+      postedAt: 'Just Now',
+      postedBy: 'Principal Desk',
+      channels: [
+        broadcastForm.sendPush ? 'Push Notification' : null,
+        broadcastForm.sendSms ? 'SMS Broadcast' : null,
+        'Notice Board'
+      ].filter(Boolean) as string[]
+    };
+
+    const updated = [newNotice, ...quickNotices];
+    setQuickNotices(updated);
+    try {
+      localStorage.setItem('dakshora_erp_notices', JSON.stringify(updated));
+    } catch {}
+
+    const targetLabel = broadcastForm.targetAudience === 'all'
+      ? 'All Campus (Teachers & Parents)'
+      : broadcastForm.targetAudience === 'teachers'
+      ? 'Faculty & Teachers'
+      : 'Parents & Students';
+
+    onShowToast('success', 'Circular Broadcasted! 📢', `Notice sent to ${targetLabel} via SMS & Mobile App.`);
+    setBroadcastForm({
+      title: '',
+      content: '',
+      targetAudience: 'all',
+      category: 'general',
+      sendSms: true,
+      sendPush: true
+    });
+    setIsBroadcasting(false);
+  };
+
+  const handleDeleteNotice = (id: string) => {
+    const updated = quickNotices.filter(n => n.id !== id);
+    setQuickNotices(updated);
+    try {
+      localStorage.setItem('dakshora_erp_notices', JSON.stringify(updated));
+    } catch {}
+    onShowToast('info', 'Notice Retracted', 'The circular has been removed from the active notice feed.');
+  };
 
   // Load Dashboard Data from Aggregate API
   const loadDashboard = useCallback(async (isSilent = false) => {
@@ -274,10 +387,25 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
 
           <h2 className="text-xl font-extrabold text-slate-900 mt-1.5 flex items-center gap-2">
             <span>
-              {activeRole === 'admin' && 'Principal & Management Command Cockpit 👋'}
-              {activeRole === 'teacher' && 'Faculty Classroom Workspace 👋'}
-              {activeRole === 'reception' && 'Front Desk & Reception Concierge 👋'}
-              {activeRole === 'account' && 'Bursar & Accounts Overview Desk 👋'}
+              {activeRole === 'admin' ? (
+                <button
+                  type="button"
+                  onClick={onShowPrincipalProfile}
+                  className="hover:text-indigo-600 transition-colors cursor-pointer text-left flex flex-wrap items-center gap-2 group focus:outline-none"
+                  title="Click to view Principal & Head of Institution Executive Profile"
+                >
+                  <span>Principal & Management Command Cockpit 👋</span>
+                  <span className="text-xs font-mono font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/90 px-2.5 py-0.5 rounded-full transition-all flex items-center gap-1 shadow-xs">
+                    Principal Profile ↗
+                  </span>
+                </button>
+              ) : (
+                <>
+                  {activeRole === 'teacher' && 'Faculty Classroom Workspace 👋'}
+                  {activeRole === 'reception' && 'Front Desk & Reception Concierge 👋'}
+                  {activeRole === 'account' && 'Bursar & Accounts Overview Desk 👋'}
+                </>
+              )}
             </span>
           </h2>
 
@@ -672,6 +800,302 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
           </div>
         </div>
       </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2B. 📢 PRINCIPAL QUICK BROADCAST & NOTICES DISPATCH CENTER */}
+      {/* ========================================================================= */}
+      {activeRole === 'admin' && (
+        <div className="bg-white/95 p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-md space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-600 text-white flex items-center justify-center shadow-md shadow-amber-500/25 shrink-0">
+                <Megaphone className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <span>Principal Quick Circular & Broadcast Center</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">
+                    SMS & App Live
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  Instant campus announcement dispatch to Teachers, Staff, and Parents with SMS delivery.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-slate-500 hidden md:inline">
+                Active Notices: <strong className="text-slate-800 font-bold">{quickNotices.length}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => onNavigateModule('communication')}
+                className="text-xs font-mono font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1"
+              >
+                <span>Full Notice Board</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Compose Form (7 cols) */}
+            <form onSubmit={handleDispatchNotice} className="lg:col-span-7 space-y-4">
+              {/* Quick Template Short-Cuts */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-mono font-bold text-slate-600 uppercase tracking-wider">
+                    Quick 1-Click Notice Templates:
+                  </label>
+                  <span className="text-[10px] text-indigo-600 font-mono">Autofill</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-xs font-mono">
+                  {[
+                    {
+                      label: '🌧️ Weather Holiday',
+                      title: 'School Closed Tomorrow Due to Inclement Weather',
+                      content: 'In compliance with district administrative alerts, all classes will remain suspended tomorrow. Online study material is available in the portal.',
+                      cat: 'urgent',
+                      aud: 'all'
+                    },
+                    {
+                      label: '👨‍👩‍👧 PTM Meeting',
+                      title: 'Parent-Teacher Meeting (PTM) This Saturday',
+                      content: 'Parents are cordially invited for the quarterly student assessment review this Saturday from 09:30 AM to 01:00 PM in respective classrooms.',
+                      cat: 'academic',
+                      aud: 'parents'
+                    },
+                    {
+                      label: '💰 Fee Due Reminder',
+                      title: 'Quarterly Term Fee Submission Due Date',
+                      content: 'Dear Parents, please ensure payment of quarterly fee dues before the 10th of this month to avoid late fee penalties. UPI QR available on the portal.',
+                      cat: 'general',
+                      aud: 'parents'
+                    },
+                    {
+                      label: '👩‍🏫 Faculty Council',
+                      title: 'Staff Council Meeting on NEP 2020 Lesson Review',
+                      content: 'All faculty members are requested to convene in the Seminar Room today at 02:30 PM for the periodic curriculum progress review.',
+                      cat: 'academic',
+                      aud: 'teachers'
+                    }
+                  ].map((tpl, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        setBroadcastForm(prev => ({
+                          ...prev,
+                          title: tpl.title,
+                          content: tpl.content,
+                          category: tpl.cat as any,
+                          targetAudience: tpl.aud as any
+                        }));
+                        onShowToast('info', 'Template Loaded', tpl.label);
+                      }}
+                      className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 text-slate-700 text-[11px] font-semibold transition-all cursor-pointer"
+                    >
+                      {tpl.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Target Audience & Category Selectors */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Target Audience:
+                  </label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[
+                      { id: 'all', label: '👥 All' },
+                      { id: 'teachers', label: '👩‍🏫 Teachers' },
+                      { id: 'parents', label: '👨‍👩‍👧 Parents' }
+                    ].map(aud => (
+                      <button
+                        key={aud.id}
+                        type="button"
+                        onClick={() => setBroadcastForm(prev => ({ ...prev, targetAudience: aud.id as any }))}
+                        className={`py-1.5 px-2 rounded-xl border text-center font-bold text-[11px] transition-all cursor-pointer ${
+                          broadcastForm.targetAudience === aud.id
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {aud.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Priority / Category:
+                  </label>
+                  <div className="grid grid-cols-2 gap-1">
+                    {[
+                      { id: 'urgent', label: '🚨 Urgent Alert' },
+                      { id: 'academic', label: '📚 Academic' },
+                      { id: 'event', label: '🎉 Holiday / Event' },
+                      { id: 'general', label: '🔔 General Notice' }
+                    ].map(cat => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setBroadcastForm(prev => ({ ...prev, category: cat.id as any }))}
+                        className={`py-1.5 px-2 rounded-xl border text-center font-bold text-[10px] transition-all cursor-pointer truncate ${
+                          broadcastForm.category === cat.id
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Title & Message Inputs */}
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Circular / Notice Subject *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Schedule for Annual Sports Meet / Revision Tests..."
+                    value={broadcastForm.title}
+                    onChange={(e) => setBroadcastForm(prev => ({ ...prev, title: e.target.value }))}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-sans text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Detailed Announcement / Instructions for Recipients *
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    placeholder="Type official circular message, date, timings and any specific instructions..."
+                    value={broadcastForm.content}
+                    onChange={(e) => setBroadcastForm(prev => ({ ...prev, content: e.target.value }))}
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-sans text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Dispatch Controls & Delivery Channels */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center gap-3 text-xs font-mono text-slate-600">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={broadcastForm.sendSms}
+                      onChange={(e) => setBroadcastForm(prev => ({ ...prev, sendSms: e.target.checked }))}
+                      className="rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>SMS Gateway</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={broadcastForm.sendPush}
+                      onChange={(e) => setBroadcastForm(prev => ({ ...prev, sendPush: e.target.checked }))}
+                      className="rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Mobile App Push</span>
+                  </label>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isBroadcasting}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold text-xs font-mono shadow-md shadow-amber-500/25 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>Dispatch Circular Now</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Right: Live Notice Feed (5 cols) */}
+            <div className="lg:col-span-5 space-y-3 flex flex-col">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Active Circulars Feed
+                </span>
+                <span className="text-[11px] font-mono text-slate-400">Live Campus Board</span>
+              </div>
+
+              <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 flex-1">
+                {quickNotices.length === 0 ? (
+                  <div className="p-8 text-center border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                    <Bell className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                    <p className="text-xs text-slate-500 font-mono">No circulars posted yet today.</p>
+                  </div>
+                ) : (
+                  quickNotices.map((not) => (
+                    <div
+                      key={not.id}
+                      className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200/90 space-y-2 hover:border-indigo-300 transition-all text-xs"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
+                              not.category === 'urgent'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : not.category === 'academic'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : not.category === 'event'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : 'bg-slate-200 text-slate-800'
+                            }`}>
+                              {not.category}
+                            </span>
+                            <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200/60 font-semibold">
+                              {not.targetAudience === 'all' ? 'All Campus' : not.targetAudience === 'teachers' ? 'Teachers' : 'Parents'}
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-slate-900 text-xs mt-1 leading-snug">
+                            {not.title}
+                          </h4>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteNotice(not.id)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="Retract / Delete Notice"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
+                        {not.content}
+                      </p>
+
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1.5 border-t border-slate-200/60">
+                        <span>{not.postedAt} • {not.postedBy}</span>
+                        <span className="text-emerald-600 font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Broadcast Active
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ========================================================================= */}
