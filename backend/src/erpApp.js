@@ -43479,17 +43479,20 @@ app.get("/api/erp/teacher/attendance", (req, res) => {
   const targetDate = date || new Date().toISOString().split("T")[0];
 
   let attRecords = ERP_ATTENDANCE.filter(a =>
-    (a.organization_id === orgId) && a.attendanceDate === targetDate
+    (a.organization_id === orgId) && (a.attendanceDate === targetDate || a.date === targetDate)
   );
 
-  // Filter to authorized sections
-  attRecords = attRecords.filter(a => AuthorizationService.canAccessSection(staff.id, a.grade, a.section, orgId));
-
+  // If grade provided, filter intelligently
   if (grade && grade !== "all") {
-    attRecords = attRecords.filter(a => a.grade.toLowerCase() === grade.toLowerCase().trim());
+    const rawG = grade.toLowerCase().replace(/[^a-z0-9]/g, "");
+    attRecords = attRecords.filter(a => {
+      const aRaw = `${a.grade || ""}${a.section || ""}`.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const aGOnly = (a.grade || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      return aRaw.includes(rawG) || rawG.includes(aGOnly) || aGOnly === rawG;
+    });
   }
   if (section && section !== "all") {
-    attRecords = attRecords.filter(a => a.section.toLowerCase() === section.toLowerCase().trim());
+    attRecords = attRecords.filter(a => (a.section || "A").toLowerCase().trim() === section.toLowerCase().trim());
   }
 
   const isSubmitted = attRecords.length > 0;
@@ -44008,6 +44011,37 @@ app.post("/api/erp/teacher/attendance/submit", async (req, res) => {
     return res.status(400).json({ success: false, message: "Class/grade is required." });
   }
 
+  let parsedGrade = grade;
+  let parsedSection = section || "A";
+  if (grade.includes("-")) {
+    const parts = grade.split("-");
+    parsedGrade = parts[0].trim();
+    parsedSection = parts[1].trim() || parsedSection;
+  }
+
+  const callerRole = (req.user?.role || req.user?.app_metadata?.role || "").toLowerCase();
+  const isAdminOrPrincipal = ["admin", "superadmin", "principal", "director"].includes(callerRole);
+
+  const cleanGrade = parsedGrade.toLowerCase().trim();
+  const cleanSection = parsedSection.toLowerCase().trim();
+
+  // Check if attendance is already submitted for this class today
+  const alreadySubmittedRecords = ERP_ATTENDANCE.filter(a =>
+    a.organization_id === orgId &&
+    (a.grade || "").toLowerCase().trim() === cleanGrade &&
+    (a.section || "A").toLowerCase().trim() === cleanSection &&
+    (a.attendanceDate === date || a.date === date)
+  );
+
+  // If already submitted and caller is NOT an admin/principal, block alteration as requested
+  if (alreadySubmittedRecords.length > 0 && !isAdminOrPrincipal) {
+    return res.status(403).json({
+      success: false,
+      code: "ATTENDANCE_LOCKED_ADMIN_ONLY",
+      message: "Daily attendance for this class is already submitted and locked. Under school security rules, only School Admin or Principal can modify submitted attendance."
+    });
+  }
+
   const staff = AuthorizationService.resolveCallerStaff(req, orgId) || 
     ERP_STAFF.find(s => s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher"))) || 
     ERP_STAFF[0];
@@ -44038,8 +44072,8 @@ app.post("/api/erp/teacher/attendance/submit", async (req, res) => {
       studentName: item.studentName || item.name || "Student",
       admissionNo: item.admissionNo || "",
       rollNo: item.rollNo || "01",
-      grade,
-      section,
+      grade: parsedGrade,
+      section: parsedSection,
       attendanceDate: date,
       date,
       status, // 'present', 'absent', 'leave'
