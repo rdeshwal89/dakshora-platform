@@ -887,7 +887,7 @@ export async function fetchErpStudentById(id: string) {
 }
 
 export async function fetchErpStudentProfile(id: string) {
-  return makeApiCall<ErpStudentProfile>(`/api/erp/students/${id}/profile`);
+  return makeApiCall<ErpStudentProfile>(`/api/erp/students/${encodeURIComponent(id)}/profile`);
 }
 
 export async function createErpStudent(data: Partial<ErpStudentRecord>) {

@@ -154,6 +154,8 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
     hasBirthCert: true,
     hasTransferCert: false
   });
+  const [selectedDocType, setSelectedDocType] = useState('Aadhaar Card');
+  const [selectedDocNumber, setSelectedDocNumber] = useState('');
   const [addFormErrors, setAddFormErrors] = useState<Record<string, string>>({});
   const [submittingAdd, setSubmittingAdd] = useState(false);
 
@@ -260,7 +262,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
   const validateAddForm = () => {
     const errors: Record<string, string> = {};
     if (!addForm.firstName.trim()) errors.firstName = 'First name is required';
-    if (!addForm.lastName.trim()) errors.lastName = 'Last name is required';
+    // Note: Last name is optional (complying with modern Indian student identity & CBSE guidelines)
     if (!addForm.dob) errors.dob = 'Date of birth is required';
     if (!addForm.parentName.trim()) errors.parentName = 'Parent / Guardian name is required';
     if (!addForm.parentPhone.trim()) {
@@ -292,12 +294,26 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
       if (addForm.hasAadhaar) docs.push({ id: `doc-${Date.now()}-1`, name: 'Aadhaar Card', type: 'aadhaar', verified: true, uploadedAt: new Date().toISOString().split('T')[0] });
       if (addForm.hasBirthCert) docs.push({ id: `doc-${Date.now()}-2`, name: 'Birth Certificate', type: 'birth_certificate', verified: true, uploadedAt: new Date().toISOString().split('T')[0] });
       if (addForm.hasTransferCert) docs.push({ id: `doc-${Date.now()}-3`, name: 'Transfer Certificate', type: 'transfer_certificate', verified: false, uploadedAt: new Date().toISOString().split('T')[0] });
+      if (selectedDocNumber.trim()) {
+        docs.push({
+          id: `doc-${Date.now()}-custom`,
+          name: `${selectedDocType}: ${selectedDocNumber.trim()}`,
+          type: selectedDocType.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+          verified: true,
+          uploadedAt: new Date().toISOString().split('T')[0]
+        });
+      }
+
+      const firstNameClean = addForm.firstName.trim();
+      const middleNameClean = addForm.middleName.trim();
+      const lastNameClean = addForm.lastName.trim();
+      const fullName = [firstNameClean, middleNameClean, lastNameClean].filter(Boolean).join(' ') || firstNameClean;
 
       const newStudentPayload = {
-        firstName: addForm.firstName.trim(),
-        middleName: addForm.middleName.trim(),
-        lastName: addForm.lastName.trim(),
-        name: `${addForm.firstName.trim()} ${addForm.middleName.trim()} ${addForm.lastName.trim()}`.replace(/\s+/g, ' ').trim(),
+        firstName: firstNameClean,
+        middleName: middleNameClean,
+        lastName: lastNameClean,
+        name: fullName,
         admissionNo: addForm.admissionNo.trim() || undefined,
         penNo: addForm.penNo.trim() || undefined,
         rollNo: addForm.rollNo.trim() || undefined,
@@ -328,7 +344,13 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
 
       const res = await createErpStudent(newStudentPayload);
       if (res.data?.student) {
-        onShowToast('success', 'Student Enrolled Successfully! 🎉', `${res.data.student.name} (Adm: ${res.data.student.admissionNo})`);
+        const enrolledStudent = res.data.student;
+        const assignedStudentId = enrolledStudent.studentId || enrolledStudent.admissionNo;
+        onShowToast(
+          'success',
+          'Student Enrolled Successfully! 🎉',
+          `${enrolledStudent.name} • 8-Digit Student ID: ${assignedStudentId} (Adm: ${enrolledStudent.admissionNo})`
+        );
         // Reset form
         setAddForm({
           firstName: '',
@@ -696,7 +718,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by Name, Admission No, PEN, Roll No, Parent, Phone..."
+                placeholder="Search by Name, Student ID (8-digit), Admission No, PEN, Roll No, Parent, Phone..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -800,7 +822,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                     className="p-3.5 cursor-pointer hover:text-cyan-300 transition-colors"
                   >
                     <div className="flex items-center gap-1.5">
-                      <span>Admission / PEN</span>
+                      <span>Student ID / Adm / PEN</span>
                       <ArrowUpDown className="w-3 h-3" />
                     </div>
                   </th>
@@ -878,9 +900,14 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                 ) : (
                   students.map((std) => (
                     <tr key={std.id} className="hover:bg-slate-900/50 transition-colors group">
-                      {/* Admission & PEN */}
+                      {/* Student ID & Admission & PEN */}
                       <td className="p-3.5">
-                        <div className="font-bold text-cyan-300">{std.admissionNo || 'N/A'}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-cyan-300 font-mono">
+                            ID: {std.studentId || std.admissionNo || 'N/A'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono">Adm: {std.admissionNo || 'N/A'}</div>
                         <div className="text-[10px] text-slate-500 font-mono">PEN: {std.penNo || 'Pending'}</div>
                       </td>
 
@@ -1106,20 +1133,26 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
       {/* 3. SUB-TAB: ENROLL NEW STUDENT (MULTI-SECTION WIZARD) */}
       {/* ========================================================================= */}
       {activeSubTab === 'add' && (
-        <div className="glass-panel p-6 rounded-3xl border border-cyan-500/30 space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8 space-y-6 text-slate-900 animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-4">
             <div>
-              <h2 className="text-lg font-black text-white flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-cyan-400" />
-                <span>New Student Enrollment Wizard</span>
-              </h2>
-              <p className="text-xs text-slate-400 font-mono">
-                Official CBSE & UDISE+ compliant registration dossier.
-              </p>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-cyan-100 text-cyan-800">
+                  <UserPlus className="w-5 h-5 text-cyan-700" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-slate-950 tracking-tight">
+                    New Student Admission & Enrollment Wizard
+                  </h2>
+                  <p className="text-xs text-slate-600 font-medium">
+                    UDISE+ & CBSE compliant registration dossier • Auto-generates unique 8-digit Student ID (2026XXXX).
+                  </p>
+                </div>
+              </div>
             </div>
             <button
               onClick={() => { setActiveSubTab('directory'); if (onCloseInitialAdd) onCloseInitialAdd(); }}
-              className="text-xs font-mono text-slate-400 hover:text-white flex items-center gap-1"
+              className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
             >
               <X className="w-4 h-4" />
               <span>Cancel & Back</span>
@@ -1127,7 +1160,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
           </div>
 
           {/* Form Step Nav */}
-          <div className="flex flex-wrap gap-2 border-b border-slate-800/80 pb-3 font-mono text-xs">
+          <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
             {[
               { id: 'basic', label: '1. Basic Details' },
               { id: 'admission', label: '2. Academic Info' },
@@ -1139,10 +1172,10 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                 key={s.id}
                 type="button"
                 onClick={() => setAddFormSection(s.id as any)}
-                className={`px-3 py-1.5 rounded-xl font-bold transition-colors ${
+                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all ${
                   addFormSection === s.id
-                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                    ? 'bg-slate-950 text-white shadow-md'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                 }`}
               >
                 {s.label}
@@ -1153,251 +1186,266 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
           <form onSubmit={handleAddStudentSubmit} className="space-y-6">
             {/* Step 1: Basic Information */}
             {addFormSection === 'basic' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in fade-in">
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    First Name <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={addForm.firstName}
-                    onChange={(e) => setAddForm({ ...addForm, firstName: e.target.value })}
-                    placeholder="e.g. Aarav"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                  {addFormErrors.firstName && (
-                    <p className="text-[10px] text-rose-400 mt-1 font-mono">{addFormErrors.firstName}</p>
-                  )}
+              <div className="bg-slate-50/60 border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 animate-in fade-in">
+                <div className="text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
+                  Student Identity Details
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      First Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={addForm.firstName}
+                      onChange={(e) => setAddForm({ ...addForm, firstName: e.target.value })}
+                      placeholder="e.g. Aarav"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                    {addFormErrors.firstName && (
+                      <p className="text-[11px] text-rose-500 mt-1 font-bold">{addFormErrors.firstName}</p>
+                    )}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Middle Name</label>
-                  <input
-                    type="text"
-                    value={addForm.middleName}
-                    onChange={(e) => setAddForm({ ...addForm, middleName: e.target.value })}
-                    placeholder="Optional"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Middle Name <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.middleName}
+                      onChange={(e) => setAddForm({ ...addForm, middleName: e.target.value })}
+                      placeholder="Optional"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Last Name <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={addForm.lastName}
-                    onChange={(e) => setAddForm({ ...addForm, lastName: e.target.value })}
-                    placeholder="e.g. Sharma"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                  {addFormErrors.lastName && (
-                    <p className="text-[10px] text-rose-400 mt-1 font-mono">{addFormErrors.lastName}</p>
-                  )}
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Last Name <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.lastName}
+                      onChange={(e) => setAddForm({ ...addForm, lastName: e.target.value })}
+                      placeholder="e.g. Sharma (Optional)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Gender <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    value={addForm.gender}
-                    onChange={(e) => setAddForm({ ...addForm, gender: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  >
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Gender <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={addForm.gender}
+                      onChange={(e) => setAddForm({ ...addForm, gender: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Date of Birth <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={addForm.dob}
-                    onChange={(e) => setAddForm({ ...addForm, dob: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Date of Birth <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={addForm.dob}
+                      onChange={(e) => setAddForm({ ...addForm, dob: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Blood Group</label>
-                  <select
-                    value={addForm.bloodGroup}
-                    onChange={(e) => setAddForm({ ...addForm, bloodGroup: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  >
-                    <option value="A+">A+</option>
-                    <option value="A-">A-</option>
-                    <option value="B+">B+</option>
-                    <option value="B-">B-</option>
-                    <option value="AB+">AB+</option>
-                    <option value="AB-">AB-</option>
-                    <option value="O+">O+</option>
-                    <option value="O-">O-</option>
-                  </select>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Blood Group</label>
+                    <select
+                      value={addForm.bloodGroup}
+                      onChange={(e) => setAddForm({ ...addForm, bloodGroup: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    >
+                      <option value="A+">A+</option>
+                      <option value="A-">A-</option>
+                      <option value="B+">B+</option>
+                      <option value="B-">B-</option>
+                      <option value="AB+">AB+</option>
+                      <option value="AB-">AB-</option>
+                      <option value="O+">O+</option>
+                      <option value="O-">O-</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Step 2: Academic Info */}
             {addFormSection === 'admission' && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in fade-in">
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Admission Number
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.admissionNo}
-                    onChange={(e) => setAddForm({ ...addForm, admissionNo: e.target.value })}
-                    placeholder="Leave blank for auto-generation"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1 font-mono">Format: DPS-ADM-2026-XXX</p>
+              <div className="bg-slate-50/60 border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 animate-in fade-in">
+                <div className="text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
+                  Academic Enrollment & Statutory Identifiers
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Admission Number <span className="text-slate-400 font-normal">(Auto-Generated)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.admissionNo}
+                      onChange={(e) => setAddForm({ ...addForm, admissionNo: e.target.value })}
+                      placeholder="Leave blank for 8-digit Student ID"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                    <p className="text-[11px] text-cyan-700 mt-1 font-medium">
+                      💡 Leave blank to auto-generate unique 8-digit Student ID (e.g. 20260107)
+                    </p>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Permanent Education Number (PEN)
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.penNo}
-                    onChange={(e) => setAddForm({ ...addForm, penNo: e.target.value })}
-                    placeholder="11-digit national UDISE+ PEN"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Permanent Education Number (PEN)
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.penNo}
+                      onChange={(e) => setAddForm({ ...addForm, penNo: e.target.value })}
+                      placeholder="11-digit national UDISE+ PEN"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Roll Number
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.rollNo}
-                    onChange={(e) => setAddForm({ ...addForm, rollNo: e.target.value })}
-                    placeholder="e.g. DPS-2026-108"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Roll Number
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.rollNo}
+                      onChange={(e) => setAddForm({ ...addForm, rollNo: e.target.value })}
+                      placeholder="e.g. DPS-2026-108"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Class / Grade <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    value={addForm.grade}
-                    onChange={(e) => setAddForm({ ...addForm, grade: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  >
-                    {[...Array(12)].map((_, i) => (
-                      <option key={i + 1} value={`Class ${i + 1}`}>Class {i + 1}</option>
-                    ))}
-                  </select>
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Class / Grade <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={addForm.grade}
+                      onChange={(e) => setAddForm({ ...addForm, grade: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    >
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i + 1} value={`Class ${i + 1}`}>Class {i + 1}</option>
+                      ))}
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Section <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    value={addForm.section}
-                    onChange={(e) => setAddForm({ ...addForm, section: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  >
-                    <option value="A">Section A</option>
-                    <option value="B">Section B</option>
-                    <option value="C">Section C</option>
-                    <option value="D">Section D</option>
-                  </select>
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Section <span className="text-rose-500">*</span>
+                    </label>
+                    <select
+                      value={addForm.section}
+                      onChange={(e) => setAddForm({ ...addForm, section: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    >
+                      <option value="A">Section A</option>
+                      <option value="B">Section B</option>
+                      <option value="C">Section C</option>
+                      <option value="D">Section D</option>
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Academic Session
-                  </label>
-                  <input
-                    type="text"
-                    value={addForm.academicSession}
-                    onChange={(e) => setAddForm({ ...addForm, academicSession: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Academic Session
+                    </label>
+                    <input
+                      type="text"
+                      value={addForm.academicSession}
+                      onChange={(e) => setAddForm({ ...addForm, academicSession: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Step 3: Contact & Address */}
             {addFormSection === 'contact' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in">
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Student Phone</label>
-                  <input
-                    type="tel"
-                    value={addForm.phone}
-                    onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
-                    placeholder="+91 98765 00000"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
+              <div className="bg-slate-50/60 border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 animate-in fade-in">
+                <div className="text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
+                  Student Residential Address & Direct Contact
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Student Mobile Phone</label>
+                    <input
+                      type="tel"
+                      value={addForm.phone}
+                      onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
+                      placeholder="+91 98765 00000"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Student Email</label>
-                  <input
-                    type="email"
-                    value={addForm.email}
-                    onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
-                    placeholder="student@school.edu.in"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Student Official Email</label>
+                    <input
+                      type="email"
+                      value={addForm.email}
+                      onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                      placeholder="student@school.edu.in"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Residential Street Address</label>
-                  <input
-                    type="text"
-                    value={addForm.address}
-                    onChange={(e) => setAddForm({ ...addForm, address: e.target.value })}
-                    placeholder="House / Flat No, Sector, Landmark"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">City</label>
-                  <input
-                    type="text"
-                    value={addForm.city}
-                    onChange={(e) => setAddForm({ ...addForm, city: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">State & PIN Code</label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Residential Street Address</label>
                     <input
                       type="text"
-                      value={addForm.state}
-                      onChange={(e) => setAddForm({ ...addForm, state: e.target.value })}
-                      placeholder="Haryana"
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
+                      value={addForm.address}
+                      onChange={(e) => setAddForm({ ...addForm, address: e.target.value })}
+                      placeholder="House / Flat No, Sector, Landmark"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">City</label>
                     <input
                       type="text"
-                      value={addForm.pinCode}
-                      onChange={(e) => setAddForm({ ...addForm, pinCode: e.target.value })}
-                      placeholder="122001"
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
+                      value={addForm.city}
+                      onChange={(e) => setAddForm({ ...addForm, city: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">State & PIN Code</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={addForm.state}
+                        onChange={(e) => setAddForm({ ...addForm, state: e.target.value })}
+                        placeholder="State"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                      />
+                      <input
+                        type="text"
+                        value={addForm.pinCode}
+                        onChange={(e) => setAddForm({ ...addForm, pinCode: e.target.value })}
+                        placeholder="PIN Code"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1405,140 +1453,238 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
 
             {/* Step 4: Parent / Guardian */}
             {addFormSection === 'parent' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in">
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Parent / Guardian Full Name <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={addForm.parentName}
-                    onChange={(e) => setAddForm({ ...addForm, parentName: e.target.value })}
-                    placeholder="e.g. Vikram Sharma"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                  {addFormErrors.parentName && (
-                    <p className="text-[10px] text-rose-400 mt-1 font-mono">{addFormErrors.parentName}</p>
-                  )}
+              <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 animate-in fade-in">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="text-sm font-black text-slate-950">
+                      Parent / Guardian Master Contact Dossier
+                    </div>
+                    <p className="text-xs text-slate-600 font-medium">
+                      Official contact record for emergency broadcasts, daily attendance SMS, and parent portal authentication.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-800 text-xs font-black border border-cyan-200">
+                    Parent Contact Hub
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Relation</label>
-                  <select
-                    value={addForm.parentRelation}
-                    onChange={(e) => setAddForm({ ...addForm, parentRelation: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  >
-                    <option value="Father">Father</option>
-                    <option value="Mother">Mother</option>
-                    <option value="Guardian">Legal Guardian</option>
-                  </select>
-                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Parent / Guardian Full Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={addForm.parentName}
+                      onChange={(e) => setAddForm({ ...addForm, parentName: e.target.value })}
+                      placeholder="e.g. Vikram Sharma"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                    {addFormErrors.parentName && (
+                      <p className="text-[11px] text-rose-500 mt-1 font-bold">{addFormErrors.parentName}</p>
+                    )}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">
-                    Primary Mobile Phone <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    value={addForm.parentPhone}
-                    onChange={(e) => setAddForm({ ...addForm, parentPhone: e.target.value })}
-                    placeholder="+91 98765 43210"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                  {addFormErrors.parentPhone && (
-                    <p className="text-[10px] text-rose-400 mt-1 font-mono">{addFormErrors.parentPhone}</p>
-                  )}
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Relation</label>
+                    <select
+                      value={addForm.parentRelation}
+                      onChange={(e) => setAddForm({ ...addForm, parentRelation: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    >
+                      <option value="Father">Father</option>
+                      <option value="Mother">Mother</option>
+                      <option value="Guardian">Legal Guardian</option>
+                    </select>
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Alternate Phone</label>
-                  <input
-                    type="tel"
-                    value={addForm.parentAltPhone}
-                    onChange={(e) => setAddForm({ ...addForm, parentAltPhone: e.target.value })}
-                    placeholder="Emergency backup number"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">
+                      Primary Mobile Phone <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="flex rounded-xl border-2 border-slate-300 focus-within:border-cyan-600 focus-within:ring-2 focus-within:ring-cyan-500/20 overflow-hidden shadow-sm bg-white">
+                      <span className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-100 border-r-2 border-slate-300 text-slate-900 font-black text-xs select-none">
+                        <span>🇮🇳</span>
+                        <span>+91</span>
+                      </span>
+                      <input
+                        type="tel"
+                        required
+                        value={addForm.parentPhone}
+                        onChange={(e) => setAddForm({ ...addForm, parentPhone: e.target.value })}
+                        placeholder="98765 43210"
+                        className="w-full px-3.5 py-2.5 bg-white text-slate-950 font-black text-sm focus:outline-none placeholder:text-slate-400"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                      Primary contact number for instant SMS alerts, OTP authentication & attendance broadcast.
+                    </p>
+                    {addFormErrors.parentPhone && (
+                      <p className="text-[11px] text-rose-500 mt-1 font-bold">{addFormErrors.parentPhone}</p>
+                    )}
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Parent Email</label>
-                  <input
-                    type="email"
-                    value={addForm.parentEmail}
-                    onChange={(e) => setAddForm({ ...addForm, parentEmail: e.target.value })}
-                    placeholder="parent@example.com"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
-                </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Alternate Phone (Emergency)</label>
+                    <input
+                      type="tel"
+                      value={addForm.parentAltPhone}
+                      onChange={(e) => setAddForm({ ...addForm, parentAltPhone: e.target.value })}
+                      placeholder="Emergency backup number"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-xs font-mono text-slate-300 mb-1">Occupation</label>
-                  <input
-                    type="text"
-                    value={addForm.parentOccupation}
-                    onChange={(e) => setAddForm({ ...addForm, parentOccupation: e.target.value })}
-                    placeholder="e.g. Software Engineer, Doctor, Business"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
-                  />
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Parent Email</label>
+                    <input
+                      type="email"
+                      value={addForm.parentEmail}
+                      onChange={(e) => setAddForm({ ...addForm, parentEmail: e.target.value })}
+                      placeholder="parent@example.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800 mb-1">Occupation</label>
+                    <input
+                      type="text"
+                      value={addForm.parentOccupation}
+                      onChange={(e) => setAddForm({ ...addForm, parentOccupation: e.target.value })}
+                      placeholder="e.g. Software Engineer, Doctor, Business"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                    />
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Step 5: Document Check */}
             {addFormSection === 'docs' && (
-              <div className="space-y-3 animate-in fade-in">
-                <p className="text-xs text-slate-400 font-mono">
-                  Select documents verified and submitted during admission:
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-cyan-500/40 transition-colors">
+              <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-sm space-y-5 animate-in fade-in">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="text-sm font-black text-slate-950 flex items-center gap-2">
+                      <FolderLock className="w-4 h-4 text-cyan-600" />
+                      <span>Student Admission Document Verification Vault</span>
+                    </div>
+                    <p className="text-xs text-slate-600 font-medium">
+                      Select documents verified and submitted during admission for CBSE & UDISE+ enrollment compliance.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-black border border-emerald-300">
+                    Statutory Checklist
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all shadow-sm ${
+                    addForm.hasAadhaar ? 'border-cyan-600 bg-cyan-50/70' : 'border-slate-300 hover:border-slate-400 bg-white'
+                  }`}>
                     <input
                       type="checkbox"
                       checked={addForm.hasAadhaar}
                       onChange={(e) => setAddForm({ ...addForm, hasAadhaar: e.target.checked })}
-                      className="rounded border-slate-700 text-cyan-500 focus:ring-0"
+                      className="mt-0.5 rounded border-slate-400 text-cyan-600 focus:ring-0 w-4 h-4"
                     />
-                    <div className="text-xs font-mono">
-                      <div className="text-white font-bold">Aadhaar Card</div>
-                      <div className="text-[10px] text-slate-500">Identity & Address proof</div>
+                    <div>
+                      <div className="text-slate-950 font-black text-xs">Aadhaar Card</div>
+                      <div className="text-[11px] text-slate-600 font-medium">UIDAI identity & address proof</div>
                     </div>
                   </label>
 
-                  <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all shadow-sm ${
+                    addForm.hasBirthCert ? 'border-cyan-600 bg-cyan-50/70' : 'border-slate-300 hover:border-slate-400 bg-white'
+                  }`}>
                     <input
                       type="checkbox"
                       checked={addForm.hasBirthCert}
                       onChange={(e) => setAddForm({ ...addForm, hasBirthCert: e.target.checked })}
-                      className="rounded border-slate-700 text-cyan-500 focus:ring-0"
+                      className="mt-0.5 rounded border-slate-400 text-cyan-600 focus:ring-0 w-4 h-4"
                     />
-                    <div className="text-xs font-mono">
-                      <div className="text-white font-bold">Birth Certificate</div>
-                      <div className="text-[10px] text-slate-500">Municipal age verification</div>
+                    <div>
+                      <div className="text-slate-950 font-black text-xs">Birth Certificate</div>
+                      <div className="text-[11px] text-slate-600 font-medium">Municipal DOB & age verification</div>
                     </div>
                   </label>
 
-                  <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-cyan-500/40 transition-colors">
+                  <label className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all shadow-sm ${
+                    addForm.hasTransferCert ? 'border-cyan-600 bg-cyan-50/70' : 'border-slate-300 hover:border-slate-400 bg-white'
+                  }`}>
                     <input
                       type="checkbox"
                       checked={addForm.hasTransferCert}
                       onChange={(e) => setAddForm({ ...addForm, hasTransferCert: e.target.checked })}
-                      className="rounded border-slate-700 text-cyan-500 focus:ring-0"
+                      className="mt-0.5 rounded border-slate-400 text-cyan-600 focus:ring-0 w-4 h-4"
                     />
-                    <div className="text-xs font-mono">
-                      <div className="text-white font-bold">Transfer Certificate</div>
-                      <div className="text-[10px] text-slate-500">From previous school</div>
+                    <div>
+                      <div className="text-slate-950 font-black text-xs">Transfer Certificate (TC)</div>
+                      <div className="text-[11px] text-slate-600 font-medium">Counter-signed from previous school</div>
                     </div>
                   </label>
+                </div>
+
+                {/* Additional Document Selector with White Background & Black Font */}
+                <div className="bg-slate-50 border-2 border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-cyan-600" />
+                      <span>Select Document to Attach & Verify (दस्तावेज़ चयन)</span>
+                    </div>
+                    <span className="text-[11px] font-mono font-bold text-slate-500">Document Registration</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 mb-1">
+                        Select Document Type <span className="text-rose-500">*</span>
+                      </label>
+                      <select
+                        value={selectedDocType}
+                        onChange={(e) => setSelectedDocType(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                      >
+                        <option value="Aadhaar Card">Aadhaar Card (12-Digit UIDAI Proof)</option>
+                        <option value="Birth Certificate">Birth Certificate (Municipal Form 5)</option>
+                        <option value="Transfer Certificate">Transfer Certificate (TC - Counter Signed)</option>
+                        <option value="Previous Marksheet">Previous Class Marksheet / Progress Card</option>
+                        <option value="Character Certificate">Character & Conduct Certificate</option>
+                        <option value="Caste Certificate">Caste / Category Certificate (SC/ST/OBC/EWS)</option>
+                        <option value="Migration Certificate">Migration Certificate (Inter-State / Board)</option>
+                        <option value="Medical Certificate">Medical Fitness & Blood Group Record</option>
+                        <option value="Income Certificate">Income Certificate (RTE / Scholarship Proof)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800 mb-1">
+                        Document / Certificate Reference Number
+                      </label>
+                      <input
+                        type="text"
+                        value={selectedDocNumber}
+                        onChange={(e) => setSelectedDocNumber(e.target.value)}
+                        placeholder="e.g. 5421-9876-0123 / TC-2026-90"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white border-2 border-slate-300 text-slate-950 font-bold text-xs focus:border-cyan-600 focus:outline-none shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-700">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span className="font-bold text-slate-900">Original Physical Documents Verified</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-medium">Digital copy stored in Document Vault</span>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Form Nav & Submit Buttons */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
               <div className="flex gap-2">
                 {addFormSection !== 'basic' && (
                   <button
@@ -1549,9 +1695,9 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                       const cur = steps.indexOf(addFormSection as FormSection);
                       if (cur > 0) setAddFormSection(steps[cur - 1]);
                     }}
-                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-mono"
+                    className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold text-xs transition-colors"
                   >
-                    ← Previous
+                    ← Previous Step
                   </button>
                 )}
                 {addFormSection !== 'docs' && (
@@ -1563,7 +1709,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                       const cur = steps.indexOf(addFormSection as FormSection);
                       if (cur < steps.length - 1) setAddFormSection(steps[cur + 1]);
                     }}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-mono"
+                    className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-white font-bold text-xs transition-colors shadow"
                   >
                     Next Step →
                   </button>
@@ -1573,17 +1719,17 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
               <button
                 type="submit"
                 disabled={submittingAdd}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white font-bold text-xs font-mono flex items-center gap-2 shadow-lg shadow-cyan-500/20 hover:brightness-110 disabled:opacity-50 transition-all"
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-black text-xs flex items-center gap-2 shadow-lg shadow-cyan-600/30 hover:brightness-105 disabled:opacity-50 transition-all"
               >
                 {submittingAdd ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Enrolling Student...</span>
+                    <span>Enrolling Student into ERP...</span>
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Confirm & Complete Enrollment</span>
+                    <span>Confirm & Enroll Student (Generate 8-Digit ID)</span>
                   </>
                 )}
               </button>
@@ -1676,16 +1822,19 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                       )}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-lg font-black text-white">{studentProfileData.student.name}</h3>
+                        <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-xs font-mono font-black">
+                          ID: {studentProfileData.student.studentId || studentProfileData.student.admissionNo}
+                        </span>
                         <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono font-bold uppercase">
                           {studentProfileData.student.status}
                         </span>
                       </div>
-                      <div className="text-xs font-mono text-cyan-300 flex flex-wrap gap-2 mt-0.5">
-                        <span>Adm: {studentProfileData.student.admissionNo}</span>
+                      <div className="text-xs font-mono text-cyan-300 flex flex-wrap gap-2 mt-1">
+                        <span>Adm: <strong className="text-white">{studentProfileData.student.admissionNo}</strong></span>
                         <span>•</span>
-                        <span>PEN: {studentProfileData.student.penNo || 'N/A'}</span>
+                        <span>PEN: <strong className="text-white">{studentProfileData.student.penNo || 'N/A'}</strong></span>
                         <span>•</span>
                         <span>{studentProfileData.student.grade} ({studentProfileData.student.section})</span>
                       </div>
@@ -1802,6 +1951,8 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
                       <div className="grid grid-cols-2 gap-3 text-slate-300">
                         <div>Grade / Class: <span className="text-white font-bold">{studentProfileData.academic.grade}</span></div>
                         <div>Section: <span className="text-white font-bold">{studentProfileData.academic.section}</span></div>
+                        <div>Student ID: <span className="text-cyan-300 font-bold">{studentProfileData.academic.studentId || studentProfileData.student.studentId || studentProfileData.student.admissionNo}</span></div>
+                        <div>Admission Number: <span className="text-white font-bold">{studentProfileData.academic.admissionNo}</span></div>
                         <div>Roll Number: <span className="text-cyan-300 font-bold">{studentProfileData.academic.rollNo}</span></div>
                         <div>Academic Session: <span className="text-white">{studentProfileData.academic.session}</span></div>
                         <div>Admission Date: <span className="text-white">{studentProfileData.academic.admissionDate || '2026-04-01'}</span></div>

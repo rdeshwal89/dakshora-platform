@@ -530,6 +530,7 @@ export interface ErpStudentDocument {
 
 export interface ErpStudentRecord {
   id: string;
+  studentId?: string; // 8-digit unique Student ID starting with current year (e.g. 20260001)
   admissionNo?: string;
   penNo?: string;
   rollNo: string;
@@ -604,6 +605,7 @@ export interface ErpStudentProfile {
     section: string;
     rollNo: string;
     session: string;
+    studentId?: string;
     admissionNo: string;
     penNo?: string;
     admissionDate?: string;

@@ -3109,6 +3109,28 @@ async function generateUniqueTenantCode(supabaseClient) {
   return `${Date.now().toString().slice(-10)}`;
 }
 
+// Phase 8: Generate unique collision-resistant 8-digit student ID starting with current year (e.g. 20260001, 20260002)
+function generate8DigitStudentId(orgId) {
+  const currentYear = new Date().getFullYear().toString(); // e.g. "2026"
+  let maxSeq = 0;
+  if (typeof ERP_STUDENTS !== "undefined" && Array.isArray(ERP_STUDENTS)) {
+    for (const s of ERP_STUDENTS) {
+      const sid = String(s.studentId || "");
+      const adm = String(s.admissionNo || "");
+      if (sid.startsWith(currentYear) && /^\d{8}$/.test(sid)) {
+        const seq = parseInt(sid.slice(4), 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      }
+      if (adm.startsWith(currentYear) && /^\d{8}$/.test(adm)) {
+        const seq = parseInt(adm.slice(4), 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    }
+  }
+  const nextSeq = maxSeq > 0 ? maxSeq + 1 : 101;
+  return `${currentYear}${String(nextSeq).padStart(4, "0")}`;
+}
+
 // Phase 8: Generate unique, collision-resistant student ID / admission number
 async function generateUniqueStudentId(supabaseClient, orgId) {
   const currentYear = new Date().getFullYear();
@@ -8316,8 +8338,11 @@ let ERP_STUDENTS = [
     updated_at: new Date().toISOString()
   }
 ];
-ERP_STUDENTS.forEach(s => {
+ERP_STUDENTS.forEach((s, idx) => {
   if (!s.organization_id) s.organization_id = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  if (!s.studentId) {
+    s.studentId = `2026${String(101 + idx).padStart(4, "0")}`;
+  }
 });
 
 let ERP_STAFF = [
@@ -14052,6 +14077,7 @@ app.get("/api/erp/students", async (req, res) => {
     filtered = filtered.filter(s => {
       const name = (s.name || `${s.firstName || ""} ${s.lastName || ""}`).toLowerCase();
       const admNo = (s.admissionNo || "").toLowerCase();
+      const stdId = (s.studentId || "").toLowerCase();
       const pen = (s.penNo || "").toLowerCase();
       const roll = (s.rollNo || "").toLowerCase();
       const parent = (s.parentName || "").toLowerCase();
@@ -14060,6 +14086,7 @@ app.get("/api/erp/students", async (req, res) => {
       return (
         name.includes(searchQuery) ||
         admNo.includes(searchQuery) ||
+        stdId.includes(searchQuery) ||
         pen.includes(searchQuery) ||
         roll.includes(searchQuery) ||
         parent.includes(searchQuery) ||
@@ -14191,9 +14218,15 @@ app.get("/api/erp/students/export", (req, res) => {
 app.get("/api/erp/students/:id/profile", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
+  const searchKey = String(id).trim().toLowerCase();
   let student = ERP_STUDENTS.find(s => 
     (s.organization_id === orgId) && 
-    (s.id === id || s.admissionNo === id)
+    (
+      String(s.id).toLowerCase() === searchKey ||
+      String(s.admissionNo || "").toLowerCase() === searchKey ||
+      String(s.studentId || "").toLowerCase() === searchKey ||
+      String(s.rollNo || "").toLowerCase() === searchKey
+    )
   );
 
   if (!student && supabase && orgId) {
@@ -14203,7 +14236,7 @@ app.get("/api/erp/students/:id/profile", async (req, res) => {
       if (isUuid) {
         query = query.or(`id.eq.${id},admission_no.eq.${id}`);
       } else {
-        query = query.eq("admission_no", id);
+        query = query.or(`admission_no.eq.${id},student_id.eq.${id}`);
       }
       const { data: dbStd } = await query.maybeSingle();
       if (dbStd) {
@@ -14301,9 +14334,15 @@ app.get("/api/erp/students/:id/profile", async (req, res) => {
 app.get("/api/erp/students/:id", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
+  const searchKey = String(id).trim().toLowerCase();
   let student = ERP_STUDENTS.find(s => 
     (s.organization_id === orgId) && 
-    (s.id === id || s.admissionNo === id || s.rollNo === id)
+    (
+      String(s.id).toLowerCase() === searchKey ||
+      String(s.admissionNo || "").toLowerCase() === searchKey ||
+      String(s.studentId || "").toLowerCase() === searchKey ||
+      String(s.rollNo || "").toLowerCase() === searchKey
+    )
   );
 
   if (!student && supabase && orgId) {
@@ -14313,7 +14352,7 @@ app.get("/api/erp/students/:id", async (req, res) => {
       if (isUuid) {
         query = query.or(`id.eq.${id},admission_no.eq.${id}`);
       } else {
-        query = query.eq("admission_no", id);
+        query = query.or(`admission_no.eq.${id},student_id.eq.${id}`);
       }
       const { data: dbStd } = await query.maybeSingle();
       if (dbStd) {
@@ -14391,10 +14430,14 @@ app.post("/api/erp/students", async (req, res) => {
     : (std.lastName || (std.name && String(std.name).trim().split(/\s+/).length > 1 ? String(std.name).trim().split(/\s+/).slice(1).join(" ") : "")).trim();
   const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ") || (std.name || "").trim();
 
-  // Phase 8: Automatic Database-Backed Student ID / Admission Number Generation
-  let admissionNo = (std.admissionNo || std.studentId || "").trim();
+  // Phase 8: Generate 8-digit Student ID starting with current year (e.g. 20260001, 20260107)
+  const generatedStudentId = generate8DigitStudentId(orgId);
+  const studentId = (std.studentId && /^\d{8}$/.test(String(std.studentId))) ? String(std.studentId) : generatedStudentId;
+
+  // Admission Number: if left blank, use the 8-digit Student ID
+  let admissionNo = (std.admissionNo || "").trim();
   if (!admissionNo) {
-    admissionNo = await generateUniqueStudentId(supabase, orgId);
+    admissionNo = studentId;
   } else {
     let isDuplicate = false;
     if (supabase) {
@@ -14439,6 +14482,7 @@ app.post("/api/erp/students", async (req, res) => {
 
   const newStd = {
     id: std.id || `std-${Date.now()}`,
+    studentId: studentId,
     admissionNo,
     penNo: penNo || `2026${Math.floor(1000000 + Math.random() * 9000000)}`,
     rollNo: std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`,
@@ -14592,10 +14636,10 @@ app.post("/api/erp/students", async (req, res) => {
 
   res.status(201).json({
     success: true,
-    message: `Student '${newStd.name}' registered successfully with Admission No ${newStd.admissionNo}`,
+    message: `Student '${newStd.name}' registered successfully with 8-digit Student ID: ${newStd.studentId} (Adm: ${newStd.admissionNo})`,
     student: {
       ...newStd,
-      studentId: newStd.admissionNo,
+      studentId: newStd.studentId,
       admissionNo: newStd.admissionNo
     }
   });
@@ -15153,8 +15197,12 @@ const handleStudentBulkImport = async (req, res) => {
     seenAdmissionNos.add(admNo.toLowerCase());
     if (penNo) seenPens.add(penNo);
 
+    const currentYear = new Date().getFullYear();
+    const impStudentId = row.studentId || `${currentYear}${String(100 + ERP_STUDENTS.length + index + 1).padStart(4, "0")}`;
+
     validRecords.push({
       id: `std-imp-${Date.now()}-${index}`,
+      studentId: impStudentId,
       admissionNo: admNo,
       penNo: penNo || `2026${Math.floor(1000000 + Math.random() * 9000000)}`,
       rollNo: (row.rollNo || `DPS-2026-IMP-${index + 1}`).trim(),
@@ -25130,8 +25178,10 @@ const handleConfirmAdmission = async (req, res) => {
       uploadedAt: d.uploadedAt
     }));
 
+  const newStudentId = generate8DigitStudentId(orgId);
   const newStudent = {
     id: `std-${nextStdSeq}`,
+    studentId: newStudentId,
     admissionNo: newAdmissionNo,
     penNo: `202689${String(nextStdSeq).padStart(3, "0")}${uniqueSuffix}`,
     rollNo: newRollNo,
