@@ -3173,11 +3173,13 @@ export interface ErpRoomResource {
   totalWeeklyBookings?: number;
   utilizationPercent?: number;
   isAvailableNow?: boolean;
+  facilities?: string[];
 }
 
 export interface ErpTimetableSlot {
   id: string;
   session: string;
+  academicSession?: string;
   grade: string;
   section: string;
   dayOfWeek: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday';
@@ -3243,14 +3245,20 @@ export interface ErpSubstitutionRecommendation {
   absentTeacherName: string;
   availableCandidatesCount: number;
   candidates: ErpSubstitutionCandidate[];
+  recommendedSubstituteId?: string;
+  recommendedSubstituteName?: string;
+  rationale?: string;
+  slotId?: string;
 }
 
 export interface ErpSubstitutionRecord {
   id: string;
+  slotId?: string;
   date: string;
   dayOfWeek: string;
   periodNumber: number;
   absentTeacherId: string;
+  originalTeacherId?: string;
   absentTeacherName: string;
   substituteTeacherId: string;
   substituteTeacherName: string;

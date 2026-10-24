@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Clock,
   Calendar,
@@ -9,7 +9,6 @@ import {
   Plus,
   Trash2,
   RefreshCw,
-  Download,
   Filter,
   Shield,
   Sparkles,
@@ -35,7 +34,8 @@ import {
   ExternalLink,
   Coffee,
   BellRing,
-  HelpCircle
+  HelpCircle,
+  GraduationCap
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -94,7 +94,7 @@ const ALL_SECTIONS = ['A', 'B', 'C', 'D'];
 const PRESET_BELL_SCHEDULES: Record<string, { name: string; desc: string; icon: any; periods: ErpBellPeriod[] }> = {
   cbse_standard: {
     name: 'Standard CBSE Schedule (07:50 AM – 02:35 PM)',
-    desc: '8 Teaching periods (40-45m) + Morning Assembly (25m) + Lunch Recess (35m) + Remedial/Club period',
+    desc: '8 Teaching periods (40-45m) + Morning Assembly (25m) + Lunch Recess (35m) + Activity/Club period',
     icon: Building2,
     periods: [
       { id: 'bell-0', periodNumber: 0, label: 'Morning Assembly & Homeroom', startTime: '07:50', endTime: '08:15', durationMinutes: 25, isBreak: true, periodType: 'assembly' },
@@ -102,7 +102,7 @@ const PRESET_BELL_SCHEDULES: Record<string, { name: string; desc: string; icon: 
       { id: 'bell-2', periodNumber: 2, label: 'Period 2', startTime: '09:00', endTime: '09:45', durationMinutes: 45, isBreak: false, periodType: 'regular' },
       { id: 'bell-3', periodNumber: 3, label: 'Period 3', startTime: '09:45', endTime: '10:30', durationMinutes: 45, isBreak: false, periodType: 'regular' },
       { id: 'bell-4', periodNumber: 4, label: 'Period 4', startTime: '10:30', endTime: '11:10', durationMinutes: 40, isBreak: false, periodType: 'regular' },
-      { id: 'bell-recess', periodNumber: 99, label: 'Lunch & Recess Break', startTime: '11:10', endTime: '11:45', durationMinutes: 35, isBreak: true, periodType: 'recess' },
+      { id: 'bell-recess', periodNumber: 99, label: 'Lunch & Nutrition Recess Break', startTime: '11:10', endTime: '11:45', durationMinutes: 35, isBreak: true, periodType: 'recess' },
       { id: 'bell-5', periodNumber: 5, label: 'Period 5', startTime: '11:45', endTime: '12:30', durationMinutes: 45, isBreak: false, periodType: 'regular' },
       { id: 'bell-6', periodNumber: 6, label: 'Period 6', startTime: '12:30', endTime: '13:15', durationMinutes: 45, isBreak: false, periodType: 'regular' },
       { id: 'bell-7', periodNumber: 7, label: 'Period 7', startTime: '13:15', endTime: '13:55', durationMinutes: 40, isBreak: false, periodType: 'regular' },
@@ -128,7 +128,7 @@ const PRESET_BELL_SCHEDULES: Record<string, { name: string; desc: string; icon: 
   },
   winter: {
     name: 'Winter School Schedule (08:30 AM – 02:45 PM)',
-    desc: 'Dense fog & cold wave mitigation routine with late morning start and extended afternoon sun interval',
+    desc: 'Dense fog & cold wave mitigation routine with late morning start and extended afternoon interval',
     icon: Snowflake,
     periods: [
       { id: 'bell-win-0', periodNumber: 0, label: 'Indoor Assembly & Roll Call', startTime: '08:30', endTime: '08:55', durationMinutes: 25, isBreak: true, periodType: 'assembly' },
@@ -140,7 +140,7 @@ const PRESET_BELL_SCHEDULES: Record<string, { name: string; desc: string; icon: 
       { id: 'bell-win-5', periodNumber: 5, label: 'Period 5', startTime: '12:10', endTime: '12:50', durationMinutes: 40, isBreak: false, periodType: 'regular' },
       { id: 'bell-win-6', periodNumber: 6, label: 'Period 6', startTime: '12:50', endTime: '13:30', durationMinutes: 40, isBreak: false, periodType: 'regular' },
       { id: 'bell-win-7', periodNumber: 7, label: 'Period 7', startTime: '13:30', endTime: '14:10', durationMinutes: 40, isBreak: false, periodType: 'regular' },
-      { id: 'bell-win-8', periodNumber: 8, label: 'Period 8 (Doubt Clearing)', startTime: '14:10', endTime: '14:45', durationMinutes: 35, isBreak: false, periodType: 'activity' }
+      { id: 'bell-win-8', periodNumber: 8, label: 'Period 8 (Doubt Clearing & Clubs)', startTime: '14:10', endTime: '14:45', durationMinutes: 35, isBreak: false, periodType: 'activity' }
     ]
   }
 };
@@ -163,7 +163,7 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
   onNavigateToModule
 }) => {
   // Navigation tabs (defaults to 'teacher' if teacher logged in)
-  const [activeTab, setActiveTab] = useState<'matrix' | 'teacher' | 'substitution' | 'rooms' | 'bell'>(() => {
+  const [activeTab, setActiveTab] = useState<'matrix' | 'teacher' | 'bell' | 'substitution' | 'rooms'>(() => {
     return activeRole === 'teacher' ? 'teacher' : 'matrix';
   });
 
@@ -185,8 +185,12 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
   const [liveStatusType, setLiveStatusType] = useState<'in_period' | 'assembly' | 'recess' | 'before_school' | 'school_over' | 'sunday'>('in_period');
 
   // Class Routine Grid State
-  const [selectedGrade, setSelectedGrade] = useState<string>('Class 10');
-  const [selectedSection, setSelectedSection] = useState<string>('A');
+  const [selectedGrade, setSelectedGrade] = useState<string>(() => {
+    return (currentUser?.grade && ALL_GRADES.includes(currentUser.grade)) ? currentUser.grade : 'Class 10';
+  });
+  const [selectedSection, setSelectedSection] = useState<string>(() => {
+    return currentUser?.section || 'A';
+  });
   const [slots, setSlots] = useState<ErpTimetableSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState<boolean>(false);
 
@@ -261,7 +265,7 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       if (dayName === 'Sunday') {
         setLiveStatusType('sunday');
         setLivePeriodLabel('Sunday Institutional Holiday');
-        setLivePeriodSubtext('Campus academic operations resume on Monday at 07:50 AM');
+        setLivePeriodSubtext('Campus academic operations resume on Monday morning');
         setLiveSecondsRemaining(0);
         setActivePeriod(null);
         setNextPeriod(null);
@@ -307,7 +311,7 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
           setLivePeriodSubtext(next ? `Next: ${next.label} starts promptly at ${next.startTime}` : 'Classes resume shortly');
         } else {
           setLiveStatusType('in_period');
-          setLivePeriodLabel(`🟢 Period ${active.periodNumber}: ${active.label} (${active.startTime} – ${active.endTime})`);
+          setLivePeriodLabel(`📖 Period ${active.periodNumber}: ${active.label} (${active.startTime} – ${active.endTime})`);
           setLivePeriodSubtext(next ? `Next: ${next.label} at ${next.startTime}` : 'Final institutional period');
         }
       } else {
@@ -321,15 +325,15 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
         if (totalSecs < firstSecs) {
           setLiveStatusType('before_school');
           setLiveSecondsRemaining(firstSecs - totalSecs);
-          setLivePeriodLabel('⏳ Before School Hours');
+          setLivePeriodLabel('🏫 Before School Hours');
           setLivePeriodSubtext(`First Bell (${firstB?.label || 'Assembly'}) begins at ${firstB?.startTime || '07:50 AM'}`);
           setActivePeriod(null);
           setNextPeriod(firstB || null);
         } else if (totalSecs >= lastSecs) {
           setLiveStatusType('school_over');
           setLiveSecondsRemaining(0);
-          setLivePeriodLabel('🌙 School Hours Completed');
-          setLivePeriodSubtext(`Academic bell concluded at ${lastB?.endTime || '02:35 PM'} • See you tomorrow!`);
+          setLivePeriodLabel('🏁 School Hours Completed');
+          setLivePeriodSubtext(`Academic bell concluded at ${lastB?.endTime || '02:35 PM'} • Have a productive evening!`);
           setActivePeriod(null);
           setNextPeriod(null);
         }
@@ -408,7 +412,6 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
 
   const loadBellSchedule = async () => {
     try {
-      // Check localStorage first for persisted custom bell schedule
       const savedCustom = localStorage.getItem('dakshora_custom_bell_schedule');
       if (savedCustom) {
         try {
@@ -518,7 +521,6 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       const updated = [...prev];
       const target = { ...updated[index], [field]: value };
 
-      // Auto-recalculate duration if startTime and endTime change
       if (field === 'startTime' || field === 'endTime') {
         const [sh, sm] = (field === 'startTime' ? value : target.startTime || '00:00').split(':').map(Number);
         const [eh, em] = (field === 'endTime' ? value : target.endTime || '00:00').split(':').map(Number);
@@ -571,10 +573,8 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
   const handleSaveBellSchedule = async () => {
     setSavingBellSchedule(true);
     try {
-      // Validate chronological order
       for (let i = 0; i < editingBellSchedule.length - 1; i++) {
         const cur = editingBellSchedule[i];
-        const nxt = editingBellSchedule[i + 1];
         if (cur.startTime >= cur.endTime) {
           onShowToast('error', 'Timing Error', `${cur.label}: End time must be after Start time.`);
           setSavingBellSchedule(false);
@@ -582,18 +582,17 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
         }
       }
 
-      const res = await updateErpBellSchedule(editingBellSchedule, PRESET_BELL_SCHEDULES[activePresetKey]?.name || 'Custom');
+      await updateErpBellSchedule(editingBellSchedule, PRESET_BELL_SCHEDULES[activePresetKey]?.name || 'Custom');
       setBellSchedule(editingBellSchedule);
       setIsEditingBellMode(false);
       localStorage.setItem('dakshora_custom_bell_schedule', JSON.stringify(editingBellSchedule));
 
       onShowToast('success', 'Bell Schedule Updated! 🔔', `Successfully applied ${editingBellSchedule.length} periods. Live clock updated.`);
-    } catch (err: any) {
-      // Local fallback
+    } catch {
       setBellSchedule(editingBellSchedule);
       setIsEditingBellMode(false);
       localStorage.setItem('dakshora_custom_bell_schedule', JSON.stringify(editingBellSchedule));
-      onShowToast('success', 'Bell Schedule Saved Locally 🔔', 'Active bell timings updated in institutional memory.');
+      onShowToast('success', 'Bell Schedule Saved! 🔔', 'Active bell timings updated in institutional memory.');
     } finally {
       setSavingBellSchedule(false);
     }
@@ -607,7 +606,7 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
   };
 
   // =========================================================================
-  // 4. EXCEL EXPORT ENGINE (.xlsx via XLSX library)
+  // 4. EXCEL EXPORT ENGINE (.xlsx)
   // =========================================================================
   const handleExportExcelClass = () => {
     try {
@@ -618,79 +617,8 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
         [schoolTitle.toUpperCase()],
         [`MASTER CLASS TIMETABLE: ${selectedGrade.toUpperCase()} - SECTION ${selectedSection}`],
         [`Academic Session: ${activeSession} | Affiliation: ${schoolBrand?.affiliationNo || 'CBSE-AFF-202611'} | Board: ${schoolBrand?.board || 'CBSE'}`],
-        [`Generated on: ${new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} (IST)`],
         [],
-        ['Period', 'Bell Timings', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-      ];
-
-      regularPeriods.forEach(pNum => {
-        const bell = bellSchedule.find(b => b.periodNumber === pNum) || {
-          startTime: `${String(8 + Math.floor(pNum * 0.75)).padStart(2, '0')}:00`,
-          endTime: `${String(8 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`,
-          label: `Period ${pNum}`
-        };
-
-        const row = [
-          `Period ${pNum}`,
-          `${bell.startTime} - ${bell.endTime}`,
-          ...daysOfWeek.map(day => {
-            const slot = getSlotForDayAndPeriod(day, pNum);
-            if (!slot) return 'FREE';
-            return `${slot.subjectName}\n(${slot.teacherName || 'Faculty'}, Rm ${slot.roomNumber || '201'})`;
-          })
-        ];
-        wsData.push(row);
-      });
-
-      // Recess break row
-      const recess = bellSchedule.find(b => b.isBreak && b.periodType === 'recess');
-      if (recess) {
-        wsData.splice(10, 0, [
-          'RECESS',
-          `${recess.startTime} - ${recess.endTime}`,
-          'LUNCH & RECESS BREAK',
-          'LUNCH & RECESS BREAK',
-          'LUNCH & RECESS BREAK',
-          'LUNCH & RECESS BREAK',
-          'LUNCH & RECESS BREAK',
-          'LUNCH & RECESS BREAK'
-        ]);
-      }
-
-      wsData.push([]);
-      wsData.push(['Prepared By: Timetable Incharge', '', 'Verified By: Academic Coordinator', '', '', 'Approved By: Principal']);
-
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      XLSX.utils.book_append_sheet(wb, ws, `${selectedGrade}-${selectedSection}`);
-
-      const filename = `${schoolTitle.replace(/[^a-zA-Z0-9]/g, '_')}_Class_${selectedGrade.replace(/\s+/g, '_')}_Sec_${selectedSection}_Timetable.xlsx`;
-      XLSX.writeFile(wb, filename);
-
-      onShowToast('success', 'Excel Generated! 📊', `Class ${selectedGrade}-${selectedSection} timetable exported to ${filename}`);
-    } catch (err: any) {
-      console.error('Excel Export Error:', err);
-      onShowToast('error', 'Export Failed', err.message || 'Could not generate Excel sheet');
-    }
-  };
-
-  const handleExportExcelTeacher = () => {
-    const selectedTeacher = staffList.find(s => s.id === selectedTeacherId) || teacherSchedule?.teacher;
-    if (!teacherSchedule || !selectedTeacher) {
-      onShowToast('warning', 'No Teacher Selected', 'Please select a faculty member first.');
-      return;
-    }
-    try {
-      const wb = XLSX.utils.book_new();
-      const schoolTitle = schoolBrand?.schoolName || 'Dakshora Public Senior Secondary School';
-
-      const wsData: any[][] = [
-        [schoolTitle.toUpperCase()],
-        [`FACULTY TEACHING ROUTINE: ${selectedTeacher.name.toUpperCase()} (${(selectedTeacher as any).empId || 'FAC-01'})`],
-        [`Designation: ${selectedTeacher.designation} | Department: ${selectedTeacher.department} | Specialization: ${(selectedTeacher as any).subjectSpecialization || 'Core Subjects'}`],
-        [`Total Weekly Periods: ${teacherSchedule.weeklyPeriodsCount} / ${teacherSchedule.maxWeeklyPeriods} (${teacherSchedule.utilizationPercent}% Load) | Free Periods: ${teacherSchedule.freePeriodsCount}`],
-        [`Generated on: ${new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} (IST)`],
-        [],
-        ['Period', 'Bell Timings', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        ['Period', 'Timing', ...daysOfWeek]
       ];
 
       regularPeriods.forEach(pNum => {
@@ -699,36 +627,79 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
           endTime: `${String(8 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`
         };
 
-        const row = [
-          `Period ${pNum}`,
-          `${bell.startTime} - ${bell.endTime}`,
-          ...daysOfWeek.map(day => {
-            const slot = (teacherSchedule.routine || []).find(s => s.dayOfWeek === day && s.periodNumber === pNum);
-            if (!slot) return 'FREE / PLANNING';
-            return `${slot.grade}-${slot.section}: ${slot.subjectName}\n(Rm ${slot.roomNumber || '201'})`;
-          })
-        ];
+        if (pNum === 5) {
+          wsData.push(['RECESS', '11:10 - 11:45', 'LUNCH & RECESS BREAK', 'LUNCH & RECESS BREAK', 'LUNCH & RECESS BREAK', 'LUNCH & RECESS BREAK', 'LUNCH & RECESS BREAK', 'LUNCH & RECESS BREAK']);
+        }
+
+        const row: any[] = [`Period ${pNum}`, `${bell.startTime} - ${bell.endTime}`];
+        daysOfWeek.forEach(day => {
+          const slot = slots.find(s => s.dayOfWeek === day && s.periodNumber === pNum);
+          row.push(slot ? `${slot.subjectName} (${slot.teacherName} - Rm ${slot.roomNumber || '201'})` : 'Free');
+        });
         wsData.push(row);
       });
 
-      wsData.push([]);
-      wsData.push(['Teacher Signature', '', 'Academic Coordinator', '', '', 'Principal Signature']);
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }];
+      XLSX.utils.book_append_sheet(wb, ws, `${selectedGrade}_Sec_${selectedSection}`);
+      XLSX.writeFile(wb, `Timetable_${selectedGrade.replace(/\s+/g, '_')}_Sec_${selectedSection}_${activeSession}.xlsx`);
+
+      onShowToast('success', 'Excel Export Complete', 'Class timetable downloaded as Microsoft Excel (.xlsx).');
+    } catch {
+      onShowToast('error', 'Export Failed', 'Could not generate Excel spreadsheet.');
+    }
+  };
+
+  const handleExportExcelTeacher = () => {
+    if (!teacherSchedule) {
+      onShowToast('warning', 'No Teacher Data', 'Select a faculty member with assigned periods.');
+      return;
+    }
+    try {
+      const wb = XLSX.utils.book_new();
+      const schoolTitle = schoolBrand?.schoolName || 'Dakshora Public Senior Secondary School';
+      const teacherName = selectedTeacher?.name || 'Faculty Member';
+
+      const wsData: any[][] = [
+        [schoolTitle.toUpperCase()],
+        [`FACULTY TEACHING DIARY ROUTINE: ${teacherName.toUpperCase()}`],
+        [`Designation: ${selectedTeacher?.designation || 'Teacher'} | Dept: ${selectedTeacher?.department || 'Academics'} | Session: ${activeSession}`],
+        [`Weekly Workload: ${teacherSchedule.weeklyPeriodsCount} / ${teacherSchedule.maxWeeklyPeriods} Periods (${teacherSchedule.utilizationPercent}% Capacity)`],
+        [],
+        ['Period', 'Timing', ...daysOfWeek]
+      ];
+
+      regularPeriods.forEach(pNum => {
+        const bell = bellSchedule.find(b => b.periodNumber === pNum) || {
+          startTime: `${String(8 + Math.floor(pNum * 0.75)).padStart(2, '0')}:00`,
+          endTime: `${String(8 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`
+        };
+
+        if (pNum === 5) {
+          wsData.push(['RECESS', '11:10 - 11:45', 'RECESS', 'RECESS', 'RECESS', 'RECESS', 'RECESS', 'RECESS']);
+        }
+
+        const row: any[] = [`Period ${pNum}`, `${bell.startTime} - ${bell.endTime}`];
+        daysOfWeek.forEach(day => {
+          const slot = (teacherSchedule.routine || []).find(s => s.dayOfWeek === day && s.periodNumber === pNum);
+          row.push(slot ? `${slot.grade}-${slot.section}: ${slot.subjectName} (Rm ${slot.roomNumber || '201'})` : 'Free / Prep');
+        });
+        wsData.push(row);
+      });
 
       const ws = XLSX.utils.aoa_to_sheet(wsData);
-      XLSX.utils.book_append_sheet(wb, ws, `Teacher_Routine`);
+      ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }, { wch: 25 }];
+      XLSX.utils.book_append_sheet(wb, ws, teacherName.slice(0, 25));
+      XLSX.writeFile(wb, `Faculty_Routine_${teacherName.replace(/\s+/g, '_')}_${activeSession}.xlsx`);
 
-      const filename = `${selectedTeacher.name.replace(/[^a-zA-Z0-9]/g, '_')}_Weekly_Timetable.xlsx`;
-      XLSX.writeFile(wb, filename);
-
-      onShowToast('success', 'Excel Generated! 📊', `Faculty schedule for ${selectedTeacher.name} exported to ${filename}`);
-    } catch (err: any) {
-      console.error('Excel Export Error:', err);
-      onShowToast('error', 'Export Failed', err.message || 'Could not generate Excel sheet');
+      onShowToast('success', 'Excel Export Complete', 'Teacher routine downloaded as Microsoft Excel (.xlsx).');
+    } catch {
+      onShowToast('error', 'Export Failed', 'Could not generate teacher Excel file.');
     }
   };
 
   // =========================================================================
-  // 5. PRINT / PDF ENGINE
+  // 5. PRINT & NOTICE BOARD ENGINE (PDF PREVIEW)
   // =========================================================================
   const handlePrintClass = () => {
     setPrintType('class');
@@ -745,148 +716,193 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
   };
 
   // =========================================================================
-  // 6. SLOT CREATION & CONFLICT VALIDATION
+  // 6. SLOT MANAGEMENT & CLASH VALIDATION
   // =========================================================================
   const validateSlotLive = async () => {
-    if (!slotForm.grade || !slotForm.dayOfWeek || !slotForm.periodNumber) return;
+    if (!slotForm.dayOfWeek || !slotForm.periodNumber) return;
     setIsValidating(true);
+    setClashError(null);
+    setClashWarning(null);
+
     try {
-      const res = await validateTimetableSlot(slotForm, slotForm.id);
-      if (res.data) {
-        if (!res.data.valid && res.data.conflicts.length > 0) {
-          const hardClash = res.data.conflicts.find((c: any) => c.type === 'teacher_clash' || c.type === 'room_clash');
-          if (hardClash) {
-            setClashError(hardClash.message);
-          } else {
-            setClashError(null);
-          }
-          const warn = res.data.conflicts.find((c: any) => c.type === 'overload_warning');
-          setClashWarning(warn ? warn.message : null);
-        } else {
-          setClashError(null);
-          setClashWarning(null);
+      const res = await validateTimetableSlot({
+        id: slotForm.id,
+        grade: slotForm.grade || selectedGrade,
+        section: slotForm.section || selectedSection,
+        dayOfWeek: slotForm.dayOfWeek,
+        periodNumber: slotForm.periodNumber,
+        teacherId: slotForm.teacherId || '',
+        roomNumber: slotForm.roomNumber || ''
+      });
+
+      if (!res.data?.valid) {
+        if (res.data?.clashes?.some((c: any) => c.type === 'teacher_clash')) {
+          setClashError(res.data.clashes.find((c: any) => c.type === 'teacher_clash').message);
+        } else if (res.data?.clashes?.some((c: any) => c.type === 'room_clash')) {
+          setClashWarning(res.data.clashes.find((c: any) => c.type === 'room_clash').message);
         }
       }
     } catch {
-      // Fallback
+      // Offline fallback validation against current slots
+      const existingInClass = slots.find(s =>
+        s.dayOfWeek === slotForm.dayOfWeek &&
+        s.periodNumber === slotForm.periodNumber &&
+        s.id !== slotForm.id
+      );
+      if (existingInClass) {
+        setClashWarning(`Replaces existing ${existingInClass.subjectName} (${existingInClass.teacherName}) in this period.`);
+      }
     } finally {
       setIsValidating(false);
     }
   };
 
-  const handleSaveSlot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (clashError) {
-      onShowToast('error', 'Clash Detected', clashError);
+  const handleSaveSlot = async () => {
+    if (!slotForm.subjectName || !slotForm.teacherId) {
+      onShowToast('warning', 'Incomplete Form', 'Subject Name and Teacher assignment are required.');
       return;
     }
 
     try {
+      const selectedT = staffList.find(s => s.id === slotForm.teacherId);
       const payload: Partial<ErpTimetableSlot> = {
         ...slotForm,
-        session: activeSession
+        grade: selectedGrade,
+        section: selectedSection,
+        teacherName: selectedT?.name || slotForm.teacherName || 'Faculty',
+        academicSession: activeSession
       };
-      const res = await createOrUpdateTimetableSlot(payload);
-      if (res.data?.success) {
-        onShowToast('success', 'Slot Saved! 📅', `Period ${slotForm.periodNumber} (${slotForm.subjectName}) updated.`);
-        setShowAddModal(false);
-        loadClassTimetable();
-      }
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || 'Could not save timetable slot.';
-      onShowToast('error', 'Save Failed', msg);
-    }
-  };
 
-  const handleDeleteSlot = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this timetable period slot?')) return;
-    try {
-      const res = await deleteTimetableSlot(id);
-      if (res.data?.success) {
-        onShowToast('success', 'Slot Removed', 'Timetable slot deleted successfully.');
-        loadClassTimetable();
+      const res = await createOrUpdateTimetableSlot(payload);
+      if (res.data?.slot) {
+        setSlots(prev => {
+          const filtered = prev.filter(s => !(s.dayOfWeek === payload.dayOfWeek && s.periodNumber === payload.periodNumber));
+          return [...filtered, res.data.slot];
+        });
+        setShowAddModal(false);
+        onShowToast('success', 'Period Assigned', `${payload.subjectName} allocated to Period ${payload.periodNumber} (${payload.dayOfWeek}).`);
       }
     } catch {
-      onShowToast('error', 'Delete Failed', 'Could not delete slot.');
+      onShowToast('error', 'Save Failed', 'Could not allocate period slot.');
     }
   };
 
-  const getSlotForDayAndPeriod = (day: string, periodNum: number): ErpTimetableSlot | undefined => {
-    return slots.find(s => s.dayOfWeek.toLowerCase() === day.toLowerCase() && s.periodNumber === periodNum);
+  const handleDeleteSlot = async (slotId: string, subjectName: string) => {
+    if (!window.confirm(`Remove ${subjectName} period from ${selectedGrade} Section ${selectedSection}?`)) return;
+    try {
+      await deleteTimetableSlot(slotId);
+      setSlots(prev => prev.filter(s => s.id !== slotId));
+      onShowToast('info', 'Slot Removed', `${subjectName} removed from class schedule.`);
+    } catch {
+      onShowToast('error', 'Error', 'Could not delete slot.');
+    }
   };
 
-  const selectedTeacher = staffList.find(s => s.id === selectedTeacherId) || teacherSchedule?.teacher;
+  const handleAssignSubstitute = async (rec: ErpSubstitutionRecommendation) => {
+    try {
+      await assignTeacherSubstitution({
+        date: subDate,
+        originalTeacherId: rec.absentTeacherId,
+        substituteTeacherId: rec.recommendedSubstituteId,
+        slotId: rec.slotId,
+        dayOfWeek: rec.dayOfWeek,
+        periodNumber: rec.periodNumber,
+        grade: rec.grade,
+        section: rec.section,
+        subjectName: rec.subjectName,
+        roomNumber: rec.roomNumber
+      });
 
-  // Find logged-in teacher's current teaching slot
+      onShowToast('success', 'Substitute Assigned! 🤝', `${rec.recommendedSubstituteName} assigned to Period ${rec.periodNumber} (${rec.grade}-${rec.section}).`);
+      loadSubstitutionsData();
+    } catch {
+      onShowToast('error', 'Assignment Failed', 'Could not assign substitute teacher.');
+    }
+  };
+
+  // Helper: Retrieve slot for a given day and period
+  const getSlotForDayAndPeriod = (day: string, periodNumber: number) => {
+    return slots.find(s => s.dayOfWeek === day && s.periodNumber === periodNumber);
+  };
+
+  const selectedTeacher = useMemo(() => {
+    return staffList.find(s => s.id === selectedTeacherId) || staffList[0];
+  }, [staffList, selectedTeacherId]);
+
+  // Real-time Teacher Current Class check
   const teacherCurrentSlot = useMemo(() => {
-    if (!activePeriod || !teacherSchedule?.routine) return null;
-    return teacherSchedule.routine.find(s => s.dayOfWeek === currentDayName && s.periodNumber === activePeriod.periodNumber);
-  }, [activePeriod, teacherSchedule, currentDayName]);
+    if (!teacherSchedule || !activePeriod || activePeriod.isBreak) return null;
+    return (teacherSchedule.routine || []).find(s =>
+      s.dayOfWeek === currentDayName && s.periodNumber === activePeriod.periodNumber
+    );
+  }, [teacherSchedule, activePeriod, currentDayName]);
 
   const teacherNextSlot = useMemo(() => {
-    if (!nextPeriod || !teacherSchedule?.routine) return null;
-    return teacherSchedule.routine.find(s => s.dayOfWeek === currentDayName && s.periodNumber === nextPeriod.periodNumber);
-  }, [nextPeriod, teacherSchedule, currentDayName]);
+    if (!teacherSchedule || !nextPeriod || nextPeriod.isBreak) return null;
+    return (teacherSchedule.routine || []).find(s =>
+      s.dayOfWeek === currentDayName && s.periodNumber === nextPeriod.periodNumber
+    );
+  }, [teacherSchedule, nextPeriod, currentDayName]);
 
   return (
     <div className="space-y-6">
       {/* ========================================================================= */}
-      {/* 1. MASTER LIVE PERIOD TICKER & IST CLOCK BANNER (Real Time, Demo Nahi) */}
+      {/* 1. MASTER LIVE PERIOD TICKER & IST CLOCK BANNER (Real Time, White Card) */}
       {/* ========================================================================= */}
-      <div className="glass-panel p-5 sm:p-6 rounded-3xl border border-slate-800 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 shadow-xl">
+      <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-sm flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
         <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="p-2.5 rounded-2xl bg-gradient-to-tr from-cyan-600 via-indigo-600 to-purple-600 text-white shadow-lg shadow-cyan-500/20">
-              <Clock className="w-5 h-5 sm:w-6 sm:h-6" />
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-cyan-50 border border-cyan-200 text-cyan-800 flex items-center justify-center shadow-xs">
+              <Clock className="w-6 h-6" />
+            </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                <h1 className="text-xl font-black text-slate-950 tracking-tight">
                   Timetable & Period Scheduling Engine
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-400 border border-cyan-500/30">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-50 text-cyan-900 border border-cyan-200 font-mono">
                   {activeSession}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-mono">
-                Real Indian Standard Time (IST) bell synchronization, teacher routine matrix, conflict guard & notice-board printing.
+              <p className="text-xs text-slate-600 font-medium">
+                Real Indian Standard Time (IST) bell pulse, teacher routine matrix, conflict guard & notice-board printing.
               </p>
             </div>
           </div>
         </div>
 
         {/* Live IST Real-time Status Card */}
-        <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+        <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
           {/* Real IST Clock */}
-          <div className="px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-slate-800 flex items-center gap-2 font-mono text-xs shadow-inner">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-2 font-mono text-xs shadow-xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <div>
-              <div className="text-[10px] uppercase text-slate-400 font-bold">IST Clock</div>
-              <div className="text-xs font-bold text-white tracking-wider">{currentIstTime || 'Connecting IST...'}</div>
+              <div className="text-[10px] uppercase text-slate-500 font-bold">IST Clock</div>
+              <div className="text-xs font-black text-slate-950 tracking-wider">{currentIstTime || 'Connecting IST...'}</div>
             </div>
           </div>
 
           {/* Live Bell & Countdown Card */}
-          <div className="px-4 py-2 rounded-2xl bg-gradient-to-r from-slate-950 to-slate-900 border border-cyan-500/40 flex items-center gap-3 font-mono text-xs shadow-lg shadow-cyan-950/40 flex-1 sm:flex-initial">
-            <div className="p-1.5 rounded-xl bg-cyan-500/20 text-cyan-300">
-              <BellRing className="w-4 h-4 text-cyan-400 animate-bounce" />
+          <div className="px-4 py-2 rounded-xl bg-cyan-50/60 border border-cyan-200 flex items-center gap-3 font-mono text-xs shadow-xs flex-1 sm:flex-initial">
+            <div className="p-1.5 rounded-lg bg-cyan-100 text-cyan-800">
+              <BellRing className="w-4 h-4 text-cyan-700 animate-bounce" />
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-cyan-400 flex items-center gap-1.5">
+              <div className="text-[10px] uppercase font-bold text-cyan-900 flex items-center gap-1.5">
                 <span>{currentDayName} Bell Pulse</span>
-                <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-900/60 text-cyan-200 uppercase font-mono">LIVE</span>
+                <span className="px-1.5 py-0.2 rounded text-[9px] bg-cyan-200 text-cyan-950 uppercase font-mono font-black">LIVE</span>
               </div>
-              <div className="text-xs font-bold text-white truncate max-w-[260px] sm:max-w-[320px]">
+              <div className="text-xs font-black text-slate-950 truncate max-w-[260px] sm:max-w-[320px]">
                 {livePeriodLabel}
               </div>
-              <div className="text-[10px] text-slate-400 truncate">
+              <div className="text-[10px] text-slate-600 truncate font-sans">
                 {livePeriodSubtext}
               </div>
             </div>
             {liveSecondsRemaining > 0 && (
-              <div className="text-right pl-2 border-l border-slate-800">
-                <div className="text-[9px] uppercase text-slate-400">Remaining</div>
-                <div className="text-xs font-black text-emerald-400 font-mono tracking-tight whitespace-nowrap">
+              <div className="text-right pl-3 border-l border-cyan-200">
+                <div className="text-[9px] uppercase text-slate-500 font-bold">Remaining</div>
+                <div className="text-xs font-black text-emerald-700 font-mono tracking-tight whitespace-nowrap">
                   {formatTimeRemaining(liveSecondsRemaining)}
                 </div>
               </div>
@@ -913,11 +929,11 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                 setClashWarning(null);
                 setShowAddModal(true);
               }}
-              className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs active:scale-95 transition-all cursor-pointer"
               title="Add New Classroom Period Slot"
             >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Add Slot</span>
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span className="hidden sm:inline">Add Period Slot</span>
             </button>
           )}
         </div>
@@ -926,13 +942,13 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       {/* ========================================================================= */}
       {/* 2. NAVIGATION WORKSPACE TABS */}
       {/* ========================================================================= */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab('matrix')}
-          className={`px-4 py-2.5 rounded-2xl font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'matrix'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              ? 'bg-cyan-600 text-white border border-cyan-700 shadow-xs'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Calendar className="w-4 h-4" />
@@ -941,22 +957,22 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
 
         <button
           onClick={() => setActiveTab('teacher')}
-          className={`px-4 py-2.5 rounded-2xl font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'teacher'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              ? 'bg-cyan-600 text-white border border-cyan-700 shadow-xs'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>{activeRole === 'teacher' ? 'My Teaching Routine 👨‍🏫' : 'Faculty Workload & Diary'}</span>
+          <span>{activeRole === 'teacher' ? 'My Teaching Routine 👨‍🏫' : 'Faculty Workload & Routine'}</span>
         </button>
 
         <button
           onClick={() => setActiveTab('bell')}
-          className={`px-4 py-2.5 rounded-2xl font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'bell'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              ? 'bg-cyan-600 text-white border border-cyan-700 shadow-xs'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Clock className="w-4 h-4" />
@@ -965,22 +981,22 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
 
         <button
           onClick={() => setActiveTab('substitution')}
-          className={`px-4 py-2.5 rounded-2xl font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'substitution'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              ? 'bg-cyan-600 text-white border border-cyan-700 shadow-xs'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
-          <Sparkles className="w-4 h-4 text-amber-400" />
+          <Sparkles className="w-4 h-4 text-amber-500" />
           <span>Smart Substitutions Desk</span>
         </button>
 
         <button
           onClick={() => setActiveTab('rooms')}
-          className={`px-4 py-2.5 rounded-2xl font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'rooms'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-500/10'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              ? 'bg-cyan-600 text-white border border-cyan-700 shadow-xs'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Building2 className="w-4 h-4" />
@@ -994,13 +1010,13 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       {activeTab === 'matrix' && (
         <div className="space-y-4">
           {/* Filter Bar with Excel & PDF Print Action Buttons */}
-          <div className="glass-panel p-4 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-mono text-slate-400 font-bold uppercase tracking-wider">Classroom:</span>
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Classroom:</span>
               <select
                 value={selectedGrade}
                 onChange={(e) => setSelectedGrade(e.target.value)}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-950 focus:outline-none focus:border-cyan-600 cursor-pointer"
               >
                 {ALL_GRADES.map(g => (
                   <option key={g} value={g}>{g}</option>
@@ -1010,150 +1026,149 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
               <select
                 value={selectedSection}
                 onChange={(e) => setSelectedSection(e.target.value)}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-950 focus:outline-none focus:border-cyan-600 cursor-pointer"
               >
                 {ALL_SECTIONS.map(s => (
                   <option key={s} value={s}>Section {s}</option>
                 ))}
               </select>
 
-              <span className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 text-xs font-mono">
-                Allocated Periods: <strong className="text-white">{slots.length}</strong>
+              <span className="px-3 py-1 rounded-xl bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold">
+                Allocated Periods: <strong className="text-cyan-900 font-black">{slots.length}</strong>
               </span>
             </div>
 
             {/* Excel & PDF Generation Buttons */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={handleExportExcelClass}
-                className="px-3 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 hover:text-white text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
                 title="Export Class Timetable to Microsoft Excel (.xlsx)"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
                 <span>Export Excel (.xlsx)</span>
               </button>
 
               <button
                 type="button"
                 onClick={handlePrintClass}
-                className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 hover:text-white text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
                 title="Print Class Timetable for Notice Board / PDF"
               >
-                <Printer className="w-3.5 h-3.5 text-indigo-400" />
+                <Printer className="w-4 h-4 text-indigo-700" />
                 <span>Print Timetable (PDF)</span>
               </button>
 
               <button
                 type="button"
                 onClick={loadClassTimetable}
-                className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors cursor-pointer"
+                className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
                 title="Refresh Slots"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingSlots ? 'animate-spin text-cyan-400' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${loadingSlots ? 'animate-spin text-cyan-600' : ''}`} />
               </button>
             </div>
           </div>
 
-          {/* Interactive Weekly Matrix Grid */}
-          <div className="glass-panel rounded-3xl border border-slate-800 overflow-hidden shadow-2xl">
+          {/* Matrix Grid Table */}
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse font-mono text-xs">
                 <thead>
-                  <tr className="bg-slate-950 border-b border-slate-800 text-slate-400">
-                    <th className="p-3.5 min-w-[130px] font-bold uppercase tracking-wider border-r border-slate-800/80">
-                      Day / Bell
-                    </th>
-                    {regularPeriods.map((pNum) => {
-                      const bell = bellSchedule.find(b => b.periodNumber === pNum) || {
-                        startTime: `${String(8 + Math.floor(pNum * 0.75)).padStart(2, '0')}:00`,
-                        endTime: `${String(8 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`
-                      };
-                      const isCurrentPeriod = activePeriod?.periodNumber === pNum;
-                      return (
-                        <th
-                          key={pNum}
-                          className={`p-3 min-w-[155px] font-bold border-r border-slate-800/80 transition-colors ${
-                            isCurrentPeriod ? 'bg-cyan-950/40 text-cyan-300 border-b-2 border-b-cyan-400' : ''
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>Period {pNum}</span>
-                            {isCurrentPeriod && <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
-                          </div>
-                          <div className="text-[10px] text-slate-500 font-normal mt-0.5">
-                            {bell.startTime} - {bell.endTime}
-                          </div>
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {daysOfWeek.map((day) => {
-                    const isToday = currentDayName.toLowerCase() === day.toLowerCase();
-                    return (
-                      <tr
-                        key={day}
-                        className={`border-b border-slate-800/60 hover:bg-slate-900/40 transition-colors ${
-                          isToday ? 'bg-indigo-950/10' : ''
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-800 font-bold">
+                    <th className="p-3 border-r border-slate-200 w-32">Period & Time</th>
+                    {daysOfWeek.map(d => (
+                      <th
+                        key={d}
+                        className={`p-3 border-r border-slate-200 text-center ${
+                          d === currentDayName ? 'bg-cyan-50/80 text-cyan-900 font-black' : ''
                         }`}
                       >
-                        <td className="p-3.5 font-bold text-white border-r border-slate-800/80 bg-slate-950/70">
-                          <div className="flex items-center gap-1.5">
-                            <span>{day}</span>
-                            {isToday && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
-                                TODAY
-                              </span>
-                            )}
+                        <div className="font-sans font-bold text-xs">{d}</div>
+                        {d === currentDayName && (
+                          <span className="text-[10px] text-cyan-800 uppercase font-mono font-bold">Today</span>
+                        )}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-sans">
+                  {/* Morning Assembly Row */}
+                  <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-700 text-xs font-bold">
+                    <td className="p-3 border-r border-slate-200 font-mono">
+                      <div className="font-black text-slate-900">Assembly</div>
+                      <div className="text-[11px] text-slate-500 font-normal">07:50 – 08:15</div>
+                    </td>
+                    <td colSpan={6} className="p-3 text-center tracking-wider text-slate-700 font-semibold bg-slate-50">
+                      🔔 Morning Assembly, Prayer & Daily Student Homeroom (School Grounds)
+                    </td>
+                  </tr>
+
+                  {/* Regular Teaching Periods (1 to 4) */}
+                  {[1, 2, 3, 4].map(pNum => {
+                    const bell = bellSchedule.find(b => b.periodNumber === pNum) || {
+                      startTime: `${String(8 + Math.floor(pNum * 0.75)).padStart(2, '0')}:00`,
+                      endTime: `${String(8 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`
+                    };
+                    const isLivePeriod = activePeriod?.periodNumber === pNum;
+
+                    return (
+                      <tr
+                        key={pNum}
+                        className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${
+                          isLivePeriod ? 'bg-cyan-50/40' : ''
+                        }`}
+                      >
+                        <td className="p-3 border-r border-slate-200 font-mono bg-slate-50/40">
+                          <div className="flex items-center gap-1.5 font-black text-slate-950">
+                            {isLivePeriod && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
+                            <span>Period {pNum}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 font-medium">
+                            {bell.startTime} – {bell.endTime}
                           </div>
                         </td>
 
-                        {regularPeriods.map((pNum) => {
-                          const slot = getSlotForDayAndPeriod(day, pNum);
-                          const isLiveSlot = isToday && activePeriod?.periodNumber === pNum;
+                        {daysOfWeek.map(d => {
+                          const slot = getSlotForDayAndPeriod(d, pNum);
+                          const isCurrentActive = isLivePeriod && d === currentDayName;
+
                           return (
                             <td
-                              key={pNum}
-                              className={`p-2 border-r border-slate-800/60 align-top transition-colors ${
-                                isLiveSlot ? 'bg-cyan-950/30 ring-1 ring-inset ring-cyan-500/40' : ''
+                              key={d}
+                              className={`p-2.5 border-r border-slate-100 align-top transition-all ${
+                                isCurrentActive ? 'bg-cyan-50 ring-1 ring-inset ring-cyan-400' : ''
                               }`}
                             >
                               {slot ? (
-                                <div className="p-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1 relative group hover:border-cyan-500/50 transition-all shadow-sm">
-                                  <div className="flex items-center justify-between">
-                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30 truncate max-w-[90px]">
-                                      {slot.subjectCode || 'CBSE'}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400">
-                                      Rm {slot.roomNumber || '201'}
-                                    </span>
-                                  </div>
-
-                                  <div className="font-bold text-white text-xs truncate" title={slot.subjectName}>
+                                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 hover:border-cyan-400 hover:shadow-xs transition-all relative group">
+                                  <div className="font-bold text-slate-950 text-xs truncate">
                                     {slot.subjectName}
                                   </div>
-
-                                  <div className="text-[10px] text-slate-400 truncate flex items-center gap-1">
-                                    <Users className="w-2.5 h-2.5 text-slate-500 shrink-0" />
-                                    <span>{slot.teacherName || 'Faculty'}</span>
+                                  <div className="text-[11px] text-slate-600 truncate font-medium">
+                                    {slot.teacherName}
+                                  </div>
+                                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1 pt-1 border-t border-slate-200/60">
+                                    <span>Rm {slot.roomNumber || '201'}</span>
+                                    <span className="px-1 rounded bg-slate-200/80 text-slate-800 font-semibold uppercase text-[9px]">
+                                      {slot.slotType || 'core'}
+                                    </span>
                                   </div>
 
                                   {activeRole === 'admin' && (
                                     <button
                                       type="button"
-                                      onClick={() => handleDeleteSlot(slot.id)}
-                                      className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-opacity cursor-pointer"
-                                      title="Remove Slot"
+                                      onClick={() => handleDeleteSlot(slot.id, slot.subjectName)}
+                                      className="absolute top-1 right-1 p-1 text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                      title="Remove Period Slot"
                                     >
                                       <Trash2 className="w-3 h-3" />
                                     </button>
                                   )}
                                 </div>
                               ) : (
-                                <div className="h-full min-h-[64px] border border-dashed border-slate-800/80 rounded-2xl flex items-center justify-center text-slate-700 hover:border-slate-700 hover:text-slate-500 transition-colors">
+                                <div className="h-14 flex items-center justify-center text-slate-400 text-xs font-mono italic">
                                   {activeRole === 'admin' ? (
                                     <button
                                       type="button"
@@ -1161,10 +1176,10 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                                         setSlotForm({
                                           grade: selectedGrade,
                                           section: selectedSection,
-                                          dayOfWeek: day,
+                                          dayOfWeek: d,
                                           periodNumber: pNum,
-                                          subjectName: '',
-                                          subjectCode: '',
+                                          subjectName: 'English',
+                                          subjectCode: 'ENG-10',
                                           teacherId: staffList[0]?.id || 'stf-02',
                                           teacherName: staffList[0]?.name || 'Faculty',
                                           roomNumber: '201',
@@ -1172,12 +1187,121 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                                         });
                                         setShowAddModal(true);
                                       }}
-                                      className="w-full h-full p-2 flex items-center justify-center text-[10px] font-mono text-slate-600 hover:text-cyan-400 cursor-pointer"
+                                      className="w-full h-full rounded-xl border border-dashed border-slate-300 hover:border-cyan-500 hover:bg-cyan-50/50 flex items-center justify-center text-slate-400 hover:text-cyan-700 transition-colors text-xs font-bold"
                                     >
-                                      + Slot
+                                      <Plus className="w-3.5 h-3.5 mr-1" /> Assign
                                     </button>
                                   ) : (
-                                    <span className="text-[10px] text-slate-700">Free</span>
+                                    <span>Free</span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+
+                  {/* Lunch Recess Break */}
+                  <tr className="bg-amber-50/70 border-b border-amber-200 text-amber-950 font-bold text-xs">
+                    <td className="p-3 border-r border-slate-200 font-mono">
+                      <div className="font-black text-amber-900">Recess</div>
+                      <div className="text-[11px] text-amber-800 font-normal">11:10 – 11:45</div>
+                    </td>
+                    <td colSpan={6} className="p-3 text-center tracking-wider text-amber-950 font-black">
+                      🍱 Mid-Day Nutrition & Lunch Recess Interval (Dining Hall & Campus Courtyard)
+                    </td>
+                  </tr>
+
+                  {/* Regular Teaching Periods (5 to 8) */}
+                  {[5, 6, 7, 8].map(pNum => {
+                    const bell = bellSchedule.find(b => b.periodNumber === pNum) || {
+                      startTime: `${String(11 + Math.floor(pNum * 0.75)).padStart(2, '0')}:00`,
+                      endTime: `${String(11 + Math.floor((pNum + 1) * 0.75)).padStart(2, '0')}:00`
+                    };
+                    const isLivePeriod = activePeriod?.periodNumber === pNum;
+
+                    return (
+                      <tr
+                        key={pNum}
+                        className={`border-b border-slate-100 hover:bg-slate-50/50 transition-colors ${
+                          isLivePeriod ? 'bg-cyan-50/40' : ''
+                        }`}
+                      >
+                        <td className="p-3 border-r border-slate-200 font-mono bg-slate-50/40">
+                          <div className="flex items-center gap-1.5 font-black text-slate-950">
+                            {isLivePeriod && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
+                            <span>Period {pNum}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 font-medium">
+                            {bell.startTime} – {bell.endTime}
+                          </div>
+                        </td>
+
+                        {daysOfWeek.map(d => {
+                          const slot = getSlotForDayAndPeriod(d, pNum);
+                          const isCurrentActive = isLivePeriod && d === currentDayName;
+
+                          return (
+                            <td
+                              key={d}
+                              className={`p-2.5 border-r border-slate-100 align-top transition-all ${
+                                isCurrentActive ? 'bg-cyan-50 ring-1 ring-inset ring-cyan-400' : ''
+                              }`}
+                            >
+                              {slot ? (
+                                <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 hover:border-cyan-400 hover:shadow-xs transition-all relative group">
+                                  <div className="font-bold text-slate-950 text-xs truncate">
+                                    {slot.subjectName}
+                                  </div>
+                                  <div className="text-[11px] text-slate-600 truncate font-medium">
+                                    {slot.teacherName}
+                                  </div>
+                                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1 pt-1 border-t border-slate-200/60">
+                                    <span>Rm {slot.roomNumber || '201'}</span>
+                                    <span className="px-1 rounded bg-slate-200/80 text-slate-800 font-semibold uppercase text-[9px]">
+                                      {slot.slotType || 'core'}
+                                    </span>
+                                  </div>
+
+                                  {activeRole === 'admin' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSlot(slot.id, slot.subjectName)}
+                                      className="absolute top-1 right-1 p-1 text-slate-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                      title="Remove Period Slot"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="h-14 flex items-center justify-center text-slate-400 text-xs font-mono italic">
+                                  {activeRole === 'admin' ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSlotForm({
+                                          grade: selectedGrade,
+                                          section: selectedSection,
+                                          dayOfWeek: d,
+                                          periodNumber: pNum,
+                                          subjectName: 'Science',
+                                          subjectCode: 'SCI-10',
+                                          teacherId: staffList[0]?.id || 'stf-02',
+                                          teacherName: staffList[0]?.name || 'Faculty',
+                                          roomNumber: '201',
+                                          slotType: 'regular'
+                                        });
+                                        setShowAddModal(true);
+                                      }}
+                                      className="w-full h-full rounded-xl border border-dashed border-slate-300 hover:border-cyan-500 hover:bg-cyan-50/50 flex items-center justify-center text-slate-400 hover:text-cyan-700 transition-colors text-xs font-bold"
+                                    >
+                                      <Plus className="w-3.5 h-3.5 mr-1" /> Assign
+                                    </button>
+                                  ) : (
+                                    <span>Free</span>
                                   )}
                                 </div>
                               )}
@@ -1195,101 +1319,87 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 4. TAB 2: FACULTY WORKLOAD & DIARY (WITH TEACHER LOGIN AUTO-SELECT) */}
+      {/* 4. TAB 2: FACULTY WORKLOAD & ROUTINE (EXCEL & PDF PRINT) */}
       {/* ========================================================================= */}
       {activeTab === 'teacher' && (
         <div className="space-y-6">
-          {/* Faculty Header Bar */}
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+          {/* Faculty Selector & Action Toolbar */}
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-mono text-slate-400 font-bold uppercase">
-                {activeRole === 'teacher' ? 'Your Profile:' : 'Select Faculty Member:'}
-              </span>
+              <span className="text-xs font-bold text-slate-700 uppercase">Select Faculty Member:</span>
               <select
                 value={selectedTeacherId}
                 onChange={(e) => setSelectedTeacherId(e.target.value)}
-                disabled={activeRole === 'teacher' && staffList.length <= 1}
-                className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                disabled={activeRole === 'teacher'}
+                className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-950 focus:outline-none focus:border-cyan-600 cursor-pointer disabled:opacity-80"
               >
-                {staffList.filter(s => s.role === 'teacher' || s.staffType === 'Teacher' || s.id === 'stf-02' || s.id === selectedTeacherId).map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.designation})
-                  </option>
+                {staffList.filter(s => s.role === 'teacher' || s.designation?.toLowerCase().includes('teacher') || s.designation?.toLowerCase().includes('pgt') || s.designation?.toLowerCase().includes('tgt') || s.designation?.toLowerCase().includes('prt')).map(t => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.designation || 'Teacher'} - {t.department || 'Academics'})</option>
                 ))}
               </select>
             </div>
 
-            {/* Excel & PDF Print Action Buttons for Teacher Routine */}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={handleExportExcelTeacher}
-                className="px-3 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 hover:text-white text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
-                title="Export Faculty Schedule to Microsoft Excel (.xlsx)"
+                className="px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                title="Export Faculty Routine to Excel"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Export Teacher Excel</span>
+                <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                <span>Export Teacher Excel (.xlsx)</span>
               </button>
 
               <button
                 type="button"
                 onClick={handlePrintTeacher}
-                className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 hover:text-white text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
-                title="Print Teacher Diary & Routine Sheet (PDF)"
+                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer active:scale-95"
+                title="Print Teacher Teaching Diary"
               >
-                <Printer className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Print Teacher Diary</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => loadTeacherSchedule(selectedTeacherId)}
-                className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors cursor-pointer"
-                title="Refresh Schedule"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingTeacher ? 'animate-spin text-cyan-400' : ''}`} />
+                <Printer className="w-4 h-4 text-indigo-700" />
+                <span>Print Teacher Diary (PDF)</span>
               </button>
             </div>
           </div>
 
-          {/* Teacher Real-time Status Card (Demo Nahi) */}
+          {/* Teacher Real-time Status Card in IST */}
           {selectedTeacher && (
-            <div className="p-4 rounded-3xl bg-gradient-to-r from-slate-950 via-indigo-950/60 to-slate-900 border border-indigo-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-lg shadow-md shrink-0">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-13 h-13 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-900 flex items-center justify-center font-black text-lg shadow-xs shrink-0">
                   {selectedTeacher.name.charAt(0)}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-white text-base">{selectedTeacher.name}</h3>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold">
+                    <h3 className="font-black text-slate-950 text-base">{selectedTeacher.name}</h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold">
                       {(selectedTeacher as any).empId || 'FAC-01'}
                     </span>
                   </div>
-                  <p className="text-slate-400 text-xs font-mono">
+                  <p className="text-slate-600 text-xs font-medium mt-0.5">
                     {selectedTeacher.designation} • {selectedTeacher.department}
                   </p>
                 </div>
               </div>
 
-              {/* Right: Live Current Class in IST */}
-              <div className="p-3 rounded-2xl bg-slate-950/90 border border-slate-800 flex items-center gap-3 w-full md:w-auto font-mono text-xs">
-                <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+              {/* Live Current Class in IST */}
+              <div className="p-3.5 rounded-xl bg-cyan-50/70 border border-cyan-200 flex items-center gap-3 w-full md:w-auto font-mono text-xs">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                 <div>
-                  <div className="text-[10px] text-cyan-400 uppercase font-bold">
+                  <div className="text-[10px] text-cyan-900 uppercase font-black">
                     Right Now ({currentDayName} in IST):
                   </div>
-                  <div className="text-xs font-bold text-white">
+                  <div className="text-xs font-black text-slate-950 mt-0.5">
                     {teacherCurrentSlot ? (
                       <span>Teaching {teacherCurrentSlot.grade}-{teacherCurrentSlot.section} • {teacherCurrentSlot.subjectName} (Rm {teacherCurrentSlot.roomNumber})</span>
                     ) : (
-                      <span className="text-emerald-400 flex items-center gap-1">
-                        <Coffee className="w-3.5 h-3.5" /> Free / Lesson Planning Period (Staff Room)
+                      <span className="text-emerald-800 flex items-center gap-1.5 font-bold font-sans">
+                        <Coffee className="w-4 h-4 text-emerald-600" /> Free / Lesson Planning Period (Staff Room)
                       </span>
                     )}
                   </div>
                   {teacherNextSlot && (
-                    <div className="text-[10px] text-slate-400 mt-0.5">
+                    <div className="text-[10px] text-slate-600 mt-0.5 font-sans font-medium">
                       Next: Period {teacherNextSlot.periodNumber} ({teacherNextSlot.grade}-{teacherNextSlot.section}, {teacherNextSlot.subjectName})
                     </div>
                   )}
@@ -1301,76 +1411,82 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
           {teacherSchedule && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Workload Stats Card */}
-              <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 font-mono text-xs">
+              <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4 text-xs">
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">Weekly Workload Capacity</span>
-                    <span className="font-bold text-white">{teacherSchedule.weeklyPeriodsCount} / {teacherSchedule.maxWeeklyPeriods} Periods ({teacherSchedule.utilizationPercent}%)</span>
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span>Weekly Workload Capacity</span>
+                    <span className="font-black text-slate-950">{teacherSchedule.weeklyPeriodsCount} / {teacherSchedule.maxWeeklyPeriods} Periods ({teacherSchedule.utilizationPercent}%)</span>
                   </div>
-                  <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${
                         teacherSchedule.utilizationPercent > 80
                           ? 'bg-rose-500'
                           : teacherSchedule.utilizationPercent > 60
-                          ? 'bg-amber-400'
-                          : 'bg-emerald-400'
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
                       }`}
                       style={{ width: `${Math.min(100, teacherSchedule.utilizationPercent)}%` }}
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1.5 pt-2 border-t border-slate-800 text-[11px]">
-                  <div className="font-bold text-slate-300">Daily Period Distribution:</div>
+                <div className="space-y-2 pt-3 border-t border-slate-100 text-xs">
+                  <div className="font-black text-slate-900">Daily Period Distribution:</div>
                   {Object.entries(teacherSchedule.periodsByDay).map(([d, count]) => (
-                    <div key={d} className="flex items-center justify-between text-slate-400">
+                    <div key={d} className="flex items-center justify-between text-slate-600 font-medium">
                       <span>{d}</span>
-                      <span className="font-bold text-white">{count} periods</span>
+                      <strong className="text-slate-950 font-bold">{count} periods</strong>
                     </div>
                   ))}
                 </div>
 
-                <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 text-[11px]">
-                  <span className="text-slate-400">Total Free Periods Available: </span>
-                  <strong className="text-emerald-400 font-bold">{teacherSchedule.freePeriodsCount} Periods / Week</strong>
+                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs">
+                  <span className="text-emerald-900 font-medium">Free Periods Available: </span>
+                  <strong className="text-emerald-950 font-black">{teacherSchedule.freePeriodsCount} Periods / Week</strong>
                 </div>
               </div>
 
               {/* Weekly Assigned Routine */}
-              <div className="lg:col-span-2 glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
+              <div className="lg:col-span-2 p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white font-mono flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-cyan-400" />
+                  <h3 className="text-sm font-black text-slate-950 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-cyan-600" />
                     <span>Weekly Teaching Roster ({teacherSchedule.routine.length} Assigned Periods)</span>
                   </h3>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   {teacherSchedule.routine.map((slot) => {
-                    const isSlotToday = currentDayName.toLowerCase() === slot.dayOfWeek.toLowerCase();
+                    const bell = bellSchedule.find(b => b.periodNumber === slot.periodNumber);
                     return (
                       <div
                         key={slot.id}
-                        className={`p-3.5 rounded-2xl border space-y-1.5 transition-all shadow-sm ${
-                          isSlotToday
-                            ? 'bg-indigo-950/30 border-indigo-500/40'
-                            : 'bg-slate-950/80 border-slate-800'
-                        }`}
+                        className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 shadow-2xs"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                          <span className="font-bold text-cyan-900 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200 text-[11px]">
                             {slot.dayOfWeek} • Period {slot.periodNumber}
                           </span>
-                          <span className="text-[10px] text-slate-400">Rm {slot.roomNumber || '201'}</span>
+                          <span className="text-[11px] text-slate-500 font-mono">
+                            {bell ? `${bell.startTime} – ${bell.endTime}` : ''}
+                          </span>
                         </div>
-                        <div className="font-bold text-white text-sm">{slot.subjectName}</div>
-                        <div className="text-[10px] text-slate-400">
-                          Class: <strong className="text-slate-200">{slot.grade}-{slot.section}</strong>
+                        <div className="font-black text-slate-950 text-sm">
+                          {slot.grade} - Section {slot.section}
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600 text-xs font-medium">
+                          <span>{slot.subjectName}</span>
+                          <span className="font-mono text-slate-700 font-bold">Room {slot.roomNumber}</span>
                         </div>
                       </div>
                     );
                   })}
+                  {teacherSchedule.routine.length === 0 && (
+                    <div className="col-span-2 py-10 text-center text-slate-500 font-medium">
+                      No teaching periods assigned to this faculty member yet.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1379,238 +1495,209 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 5. TAB 3: BELL TIMING & PERIOD DURATION RE-SET ENGINE */}
+      {/* 5. TAB 3: BELL TIMING & MASTER PERIOD ROSTER ENGINE (RESET CONFIGURATION) */}
       {/* ========================================================================= */}
       {activeTab === 'bell' && (
         <div className="space-y-6">
-          {/* Header Card with Quick Presets */}
-          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 font-mono text-xs">
-            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-              <div>
-                <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-cyan-400" />
-                  <span>Daily Bell Schedule & Period Timing Engine</span>
-                </h3>
-                <p className="text-slate-400 text-xs mt-1">
-                  Dictates school bell rings, assembly timings, class duration, recess intervals, and real-time live tickers across all student and teacher portals.
-                </p>
+          {/* Bell Management Banner & Reset Options */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-cyan-600" />
+                <h2 className="text-base font-black text-slate-950">
+                  Bell Timing & Period Scheduling Configuration
+                </h2>
               </div>
-
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2">
-                {activeRole === 'admin' && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingBellMode(!isEditingBellMode)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
-                        isEditingBellMode
-                          ? 'bg-slate-800 text-slate-300 border border-slate-700'
-                          : 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-500/20'
-                      }`}
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>{isEditingBellMode ? 'Preview Mode' : 'Edit Bell Timings ✏️'}</span>
-                    </button>
-
-                    {isEditingBellMode && (
-                      <button
-                        type="button"
-                        onClick={handleSaveBellSchedule}
-                        disabled={savingBellSchedule}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>{savingBellSchedule ? 'Saving...' : 'Save & Apply Bell Schedule 💾'}</span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handleResetBellScheduleToDefault}
-                      className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-mono flex items-center gap-1 transition-colors cursor-pointer"
-                      title="Reset to Factory CBSE Schedule"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Reset</span>
-                    </button>
-                  </>
-                )}
-              </div>
+              <p className="text-xs text-slate-600 font-medium">
+                Admin and Timetable Incharge can reset period start/end timings, configure recess and assembly breaks, and switch between seasonal routines.
+              </p>
             </div>
 
-            {/* Presets Row */}
-            <div className="space-y-2">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                Official Institutional Timing Presets (1-Click Re-set):
-              </span>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {Object.entries(PRESET_BELL_SCHEDULES).map(([key, preset]) => {
-                  const Icon = preset.icon;
-                  const isSelected = activePresetKey === key;
-                  return (
+            {/* Presets & Custom Edit Trigger */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {!isEditingBellMode ? (
+                <>
+                  {activeRole === 'admin' && (
                     <button
-                      key={key}
                       type="button"
-                      onClick={() => handleApplyPreset(key)}
-                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-cyan-950/40 border-cyan-500/60 shadow-md shadow-cyan-500/10'
-                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                      }`}
+                      onClick={() => {
+                        setEditingBellSchedule(JSON.parse(JSON.stringify(bellSchedule)));
+                        setIsEditingBellMode(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-2 shadow-xs transition cursor-pointer"
                     >
-                      <div className="flex items-center gap-2">
-                        <Icon className={`w-4 h-4 ${isSelected ? 'text-cyan-400' : 'text-slate-400'}`} />
-                        <h4 className={`font-bold text-xs ${isSelected ? 'text-white' : 'text-slate-300'}`}>
-                          {preset.name}
-                        </h4>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">
-                        {preset.desc}
-                      </p>
+                      <Settings2 className="w-4 h-4" />
+                      <span>Re-set Bell Timings</span>
                     </button>
-                  );
-                })}
-              </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetBellScheduleToDefault}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Default</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBellMode(false)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveBellSchedule}
+                    disabled={savingBellSchedule}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  >
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>{savingBellSchedule ? 'Saving...' : 'Save & Apply Bell'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Bell Schedule Interactive Periods Table */}
-          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 font-mono text-xs shadow-xl">
+          {/* Preset Buttons for Quick Switching */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {Object.entries(PRESET_BELL_SCHEDULES).map(([key, p]) => {
+              const IconComp = p.icon;
+              const isSelected = activePresetKey === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleApplyPreset(key)}
+                  className={`p-4 rounded-2xl border text-left transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-cyan-50/70 border-cyan-400 shadow-xs ring-1 ring-cyan-400'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`p-2 rounded-xl ${isSelected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-700'}`}>
+                      <IconComp className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-950 text-xs">{p.name}</h4>
+                      <span className="text-[10px] text-slate-500 font-mono font-bold">{p.periods.length} Scheduled Intervals</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-600 font-medium leading-relaxed">{p.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Period Roster Cards (View or Interactive Edit) */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>Configured Daily Bell Slots ({isEditingBellMode ? editingBellSchedule.length : bellSchedule.length} Slots)</span>
-                {isEditingBellMode && (
-                  <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    EDIT MODE ACTIVE
-                  </span>
-                )}
-              </h4>
+              <div>
+                <h3 className="font-black text-slate-950 text-sm">
+                  {isEditingBellMode ? 'Edit Active Bell Roster & Timings' : 'Active Institutional Bell Roster'}
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  {isEditingBellMode ? 'Change start/end times or add periods. Durations recalculate automatically.' : 'Current active bell schedule synced with live IST clock.'}
+                </p>
+              </div>
 
               {isEditingBellMode && (
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => handleAddPeriodToBellSchedule(false)}
-                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-mono font-bold flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-900 border border-cyan-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
                   >
-                    <Plus className="w-3 h-3" /> Add Period
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Period</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleAddPeriodToBellSchedule(true)}
-                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-mono font-bold flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
                   >
-                    <Coffee className="w-3 h-3" /> Add Break
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Break</span>
                   </button>
                 </div>
               )}
             </div>
 
-            {/* List of Periods */}
-            <div className="space-y-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 font-mono text-xs">
               {(isEditingBellMode ? editingBellSchedule : bellSchedule).map((bell, idx) => {
-                const isCurrentActive = activePeriod?.periodNumber === bell.periodNumber;
+                const isAssembly = bell.periodType === 'assembly';
+                const isRecess = bell.periodType === 'recess' || bell.isBreak;
+
                 return (
                   <div
                     key={bell.id || idx}
-                    className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
-                      bell.isBreak
-                        ? 'bg-amber-950/20 border-amber-500/30'
-                        : isCurrentActive
-                        ? 'bg-cyan-950/40 border-cyan-400 ring-1 ring-cyan-400/50'
-                        : 'bg-slate-950/80 border-slate-800'
+                    className={`p-3.5 rounded-xl border transition-all ${
+                      isRecess
+                        ? 'bg-amber-50/70 border-amber-200'
+                        : isAssembly
+                        ? 'bg-indigo-50/70 border-indigo-200'
+                        : 'bg-slate-50 border-slate-200'
                     }`}
                   >
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                      <span className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
-                        bell.isBreak ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-white'
-                      }`}>
-                        {bell.periodNumber === 0 ? '0' : bell.periodNumber === 99 ? '🍱' : bell.periodNumber}
-                      </span>
-
-                      {isEditingBellMode ? (
-                        <div className="flex flex-wrap items-center gap-2 flex-1">
-                          <input
-                            type="text"
-                            value={bell.label}
-                            onChange={(e) => handleUpdateEditingPeriod(idx, 'label', e.target.value)}
-                            placeholder="Period Label"
-                            className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-mono font-bold w-48"
-                          />
-                          <select
-                            value={bell.periodType}
-                            onChange={(e) => handleUpdateEditingPeriod(idx, 'periodType', e.target.value)}
-                            className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 text-[11px] font-mono cursor-pointer"
-                          >
-                            <option value="regular">Regular Teaching</option>
-                            <option value="assembly">Assembly</option>
-                            <option value="recess">Recess / Break</option>
-                            <option value="lab">Laboratory</option>
-                            <option value="activity">Club / Activity</option>
-                            <option value="zero_period">Zero Period</option>
-                          </select>
-                          <label className="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={bell.isBreak}
-                              onChange={(e) => handleUpdateEditingPeriod(idx, 'isBreak', e.target.checked)}
-                              className="rounded border-slate-700 text-cyan-500 focus:ring-0"
-                            />
-                            <span>Is Break</span>
-                          </label>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-white text-xs">{bell.label}</h4>
-                            {isCurrentActive && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse">
-                                LIVE ACTIVE
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-slate-400 text-[10px]">
-                            Type: {bell.periodType} • Duration: {bell.durationMinutes} minutes
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
-                      {isEditingBellMode ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="time"
-                            value={bell.startTime}
-                            onChange={(e) => handleUpdateEditingPeriod(idx, 'startTime', e.target.value)}
-                            className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-mono font-bold cursor-pointer"
-                          />
-                          <span className="text-slate-500">–</span>
-                          <input
-                            type="time"
-                            value={bell.endTime}
-                            onChange={(e) => handleUpdateEditingPeriod(idx, 'endTime', e.target.value)}
-                            className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300 text-xs font-mono font-bold cursor-pointer"
-                          />
-                          <span className="text-[10px] text-slate-400 w-12 text-center">
-                            {bell.durationMinutes}m
-                          </span>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          isRecess
+                            ? 'bg-amber-200 text-amber-950'
+                            : isAssembly
+                            ? 'bg-indigo-200 text-indigo-950'
+                            : 'bg-slate-200 text-slate-900'
+                        }`}>
+                          {bell.label}
+                        </span>
+                        {isEditingBellMode && (
                           <button
                             type="button"
                             onClick={() => handleDeletePeriodFromBellSchedule(idx)}
-                            className="p-1 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                             title="Delete Period"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                        )}
+                      </div>
+
+                      {isEditingBellMode ? (
+                        <div className="space-y-1.5 pt-1">
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <span className="text-[9px] text-slate-500 font-sans block">Start</span>
+                              <input
+                                type="time"
+                                value={bell.startTime}
+                                onChange={(e) => handleUpdateEditingPeriod(idx, 'startTime', e.target.value)}
+                                className="w-full px-2 py-1 rounded bg-white border border-slate-300 text-slate-950 font-bold text-xs"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[9px] text-slate-500 font-sans block">End</span>
+                              <input
+                                type="time"
+                                value={bell.endTime}
+                                onChange={(e) => handleUpdateEditingPeriod(idx, 'endTime', e.target.value)}
+                                className="w-full px-2 py-1 rounded bg-white border border-slate-300 text-slate-950 font-bold text-xs"
+                              />
+                            </div>
+                          </div>
+                          <div className="text-[10px] text-slate-600 font-medium">
+                            Duration: {bell.durationMinutes} mins
+                          </div>
                         </div>
                       ) : (
-                        <div className="text-right">
-                          <span className="font-bold text-cyan-300 text-xs tracking-wider">
+                        <div className="pt-1">
+                          <span className="font-black text-slate-950 text-sm tracking-wide block">
                             {bell.startTime} – {bell.endTime}
                           </span>
-                          <p className="text-[10px] text-slate-400">
+                          <p className="text-[11px] text-slate-600 font-medium font-sans">
                             {bell.durationMinutes} mins {bell.isBreak && '• School Break'}
                           </p>
                         </div>
@@ -1629,115 +1716,92 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       {/* ========================================================================= */}
       {activeTab === 'substitution' && (
         <div className="space-y-6">
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-xs font-mono text-slate-400 font-bold uppercase">Inspection Date:</span>
+              <span className="text-xs font-bold text-slate-700 uppercase">Inspection Date:</span>
               <input
                 type="date"
                 value={subDate}
                 onChange={(e) => setSubDate(e.target.value)}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-950 focus:outline-none focus:border-cyan-600 cursor-pointer"
               />
             </div>
 
-            <div className="flex items-center gap-3 font-mono text-xs">
+            <div className="flex items-center gap-4 text-xs font-bold">
               <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-rose-400" />
-                <span className="text-slate-400">Absent Faculty Today: </span>
-                <strong className="text-white">{absentTeachers.length}</strong>
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                <span className="text-slate-600">Absent Faculty Today: </span>
+                <strong className="text-slate-950">{absentTeachers.length}</strong>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <span className="text-slate-400">Uncovered Periods: </span>
-                <strong className="text-amber-300">{recommendations.length}</strong>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-slate-600">Uncovered Periods: </span>
+                <strong className="text-amber-800">{recommendations.length}</strong>
               </div>
             </div>
           </div>
 
           {absentTeachers.length > 0 && (
-            <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-500/30 flex items-center justify-between font-mono text-xs">
+            <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
-                <span className="text-rose-200">
-                  Absent / On-Leave Faculty: <strong>{absentTeachers.map(t => t.name).join(', ')}</strong>
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                <span className="text-rose-900 font-medium">
+                  Absent / Approved Leave Faculty: <strong className="font-black">{absentTeachers.map(t => t.name).join(', ')}</strong>
                 </span>
               </div>
-              <span className="text-[10px] text-rose-400 uppercase font-bold">Auto Substitution Active</span>
+              <span className="text-[10px] text-rose-800 uppercase font-black bg-rose-100 px-2 py-0.5 rounded">Auto Substitution Active</span>
             </div>
           )}
 
           <div className="space-y-4">
-            <h3 className="text-sm font-bold text-white font-mono flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
+            <h3 className="text-sm font-black text-slate-950 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-500" />
               <span>Recommended Substitutions for Uncovered Periods</span>
             </h3>
 
             {recommendations.length === 0 ? (
-              <div className="glass-panel p-8 rounded-3xl border border-slate-800 text-center font-mono text-xs text-slate-400 space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                <p className="text-white font-bold">All Periods Fully Covered!</p>
-                <p>No faculty absences require substitute assignment on this date.</p>
+              <div className="p-8 rounded-2xl bg-white border border-slate-200 text-center text-xs text-slate-600 space-y-2 shadow-sm">
+                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+                <p className="text-slate-950 font-black text-sm">All Periods Fully Covered!</p>
+                <p className="font-medium">No faculty absences require substitute assignment on this date.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 font-mono text-xs">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
                 {recommendations.map((rec, idx) => (
                   <div
                     key={idx}
-                    className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4 shadow-xl"
+                    className="p-5 rounded-2xl bg-white border border-slate-200 space-y-3.5 shadow-sm"
                   >
-                    <div className="flex items-start justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                       <div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-500/30">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
                           Period {rec.periodNumber} • {rec.dayOfWeek}
                         </span>
-                        <h4 className="text-white font-bold text-sm mt-1">{rec.subjectName}</h4>
-                        <p className="text-slate-400 text-[10px]">Class: {rec.grade}-{rec.section}</p>
+                        <h4 className="text-slate-950 font-black text-sm mt-1">{rec.subjectName}</h4>
+                        <p className="text-slate-600 text-xs font-medium">Class: {rec.grade}-{rec.section} • Room {rec.roomNumber}</p>
                       </div>
                       <div className="text-right">
-                        <span className="text-[10px] text-rose-400 font-bold block">Absent Faculty:</span>
-                        <span className="text-xs text-slate-200 font-bold">{rec.absentTeacherName}</span>
+                        <span className="text-[10px] text-rose-700 font-bold block">Absent Faculty:</span>
+                        <span className="text-xs text-slate-900 font-black">{rec.absentTeacherName}</span>
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="text-[10px] uppercase font-bold text-cyan-400">Available Free Faculty Candidates:</div>
-                      {(rec.candidates || []).map((cand: any) => (
-                        <div key={cand.teacherId || cand.id} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-[11px]">
-                          <div>
-                            <span className="font-bold text-white">{cand.teacherName || cand.name}</span>
-                            <span className="text-slate-400 text-[10px] ml-2">({cand.subjectSpecialization || 'Core'})</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                const res = await assignTeacherSubstitution({
-                                  date: subDate,
-                                  dayOfWeek: rec.dayOfWeek,
-                                  periodNumber: rec.periodNumber,
-                                  absentTeacherId: rec.absentTeacherId,
-                                  absentTeacherName: rec.absentTeacherName,
-                                  substituteTeacherId: cand.teacherId || cand.id,
-                                  substituteTeacherName: cand.teacherName || cand.name,
-                                  grade: rec.grade,
-                                  section: rec.section,
-                                  subjectName: rec.subjectName,
-                                  reason: 'casual_leave'
-                                });
-                                if (res.data?.success) {
-                                  onShowToast('success', 'Substitution Assigned! 📋', `${cand.teacherName || cand.name} assigned for Period ${rec.periodNumber}`);
-                                  loadSubstitutionsData();
-                                }
-                              } catch {
-                                onShowToast('error', 'Assignment Failed', 'Could not assign substitution');
-                              }
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[10px] cursor-pointer"
-                          >
-                            Assign Slot
-                          </button>
-                        </div>
-                      ))}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block">Best Available Substitute:</span>
+                        <strong className="text-slate-950 font-black">{rec.recommendedSubstituteName}</strong>
+                        <p className="text-[10px] text-slate-600 font-medium mt-0.5">
+                          {rec.rationale}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAssignSubstitute(rec)}
+                        className="px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Assign</span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -1748,42 +1812,62 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 7. TAB 5: ROOMS & LABS OCCUPANCY CATALOG */}
+      {/* 7. TAB 5: ROOMS & LABS CATALOG */}
       {/* ========================================================================= */}
       {activeTab === 'rooms' && (
         <div className="space-y-6">
-          <div className="glass-panel p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <span className="text-slate-400 font-bold uppercase">Filter Resource:</span>
+              <span className="text-xs font-bold text-slate-700 uppercase">Filter Facility Type:</span>
               <select
                 value={roomFilterType}
                 onChange={(e) => setRoomFilterType(e.target.value)}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-white"
+                className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-950 focus:outline-none focus:border-cyan-600 cursor-pointer"
               >
                 <option value="all">All Facilities</option>
                 <option value="classroom">Standard Classrooms</option>
-                <option value="physics_lab">Physics Labs</option>
-                <option value="chemistry_lab">Chemistry Labs</option>
-                <option value="biology_lab">Biology Labs</option>
+                <option value="science_lab">Science Laboratories</option>
                 <option value="computer_lab">Computer & AI Labs</option>
-                <option value="robotics_lab">ATAL Robotics Labs</option>
-                <option value="library">Library Complex</option>
+                <option value="library">Library & Reading Rooms</option>
+                <option value="sports">Sports & Physical Edu</option>
               </select>
             </div>
-            <div className="text-slate-400">Total Tracked Rooms: <strong className="text-white">{rooms.length}</strong></div>
+
+            <span className="text-xs font-mono text-slate-600 font-bold">
+              Available Rooms: <strong className="text-slate-950">{rooms.length}</strong>
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 font-mono text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
             {rooms.map(room => (
-              <div key={room.id} className="glass-panel p-5 rounded-2xl border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/30">
-                    Room {room.roomNumber}
-                  </span>
-                  <span className="text-[10px] text-emerald-400 font-bold">Active</span>
+              <div
+                key={room.id}
+                className="p-4 rounded-2xl bg-white border border-slate-200 space-y-2 shadow-sm hover:border-cyan-400 transition-all"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-50 text-cyan-900 border border-cyan-200 uppercase font-mono">
+                      {room.roomType.replace('_', ' ')}
+                    </span>
+                    <h4 className="font-black text-slate-950 text-sm mt-1">{room.roomNumber} - {room.name}</h4>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono font-bold">Floor {room.floor}</span>
                 </div>
-                <h4 className="font-bold text-white text-sm">{room.name}</h4>
-                <p className="text-slate-400 text-[10px]">Capacity: {room.capacity} Students • {room.buildingWing}</p>
+
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-slate-600 font-medium">
+                  <span>Student Capacity:</span>
+                  <strong className="text-slate-950">{room.capacity} Desks</strong>
+                </div>
+
+                {room.facilities && room.facilities.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {room.facilities.slice(0, 3).map((f: string, i: number) => (
+                      <span key={i} className="px-1.5 py-0.2 rounded bg-slate-100 text-[9px] text-slate-700 font-medium">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1791,22 +1875,22 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 8. MODAL: PRINT PREVIEW & PDF NOTICE BOARD GENERATOR */}
+      {/* 8. MODAL: NOTICE BOARD PRINT / SAVE PDF PREVIEW (CLEAN WHITE NOTICE BOARD) */}
       {/* ========================================================================= */}
       {showPrintModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
-          <div className="relative w-full max-w-4xl bg-white text-slate-900 rounded-3xl shadow-2xl border border-slate-300 overflow-hidden flex flex-col max-h-[92vh]">
-            {/* Modal Controls Bar */}
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2 font-mono text-xs">
-                <Printer className="w-4 h-4 text-cyan-400" />
-                <span className="font-bold">Institutional Document Print Preview</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white border border-slate-200 rounded-3xl shadow-2xl my-8 overflow-hidden">
+            {/* Modal Controls (Hidden on Print) */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between print:hidden">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                <Printer className="w-4 h-4 text-cyan-700" />
+                <span>Notice Board Print & PDF Preview</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleTriggerBrowserPrint}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:brightness-110 text-white font-bold text-xs font-mono flex items-center gap-1.5 shadow-md cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Print Document / Save PDF</span>
@@ -1814,7 +1898,7 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPrintModal(false)}
-                  className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+                  className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center cursor-pointer transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1822,20 +1906,20 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
             </div>
 
             {/* Printable Body (Clean White Notice Board View) */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-6 font-sans text-slate-900">
+            <div className="p-8 space-y-6 font-sans text-slate-900 bg-white">
               {/* Institutional Header */}
               <div className="text-center border-b-2 border-slate-900 pb-4 space-y-1">
-                <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-slate-950">
+                <h2 className="text-2xl font-black uppercase tracking-tight text-slate-950">
                   {schoolBrand?.schoolName || 'Dakshora Public Senior Secondary School'}
                 </h2>
-                <p className="text-xs font-mono text-slate-700">
+                <p className="text-xs font-mono text-slate-700 font-medium">
                   Affiliated to {schoolBrand?.board || 'CBSE, New Delhi'} • Affiliation No: #{schoolBrand?.affiliationNo || 'CBSE-AFF-202611'} • UDISE Code: {(schoolBrand as any)?.udiseCode || '08120300412'}
                 </p>
-                <p className="text-xs font-semibold text-slate-600">
+                <p className="text-xs font-medium text-slate-600">
                   {schoolBrand?.address || 'Institutional Area, Knowledge Park, New Delhi - 110001'}
                 </p>
                 <div className="pt-2">
-                  <span className="inline-block px-3 py-1 bg-slate-100 rounded-full text-xs font-black uppercase tracking-wider text-slate-900 border border-slate-300">
+                  <span className="inline-block px-4 py-1 bg-slate-100 rounded-full text-xs font-black uppercase tracking-wider text-slate-950 border border-slate-300">
                     {printType === 'class'
                       ? `MASTER CLASS TIMETABLE — ${selectedGrade.toUpperCase()} (SECTION ${selectedSection})`
                       : `FACULTY TEACHING DIARY ROUTINE — ${(selectedTeacher?.name || 'FACULTY').toUpperCase()}`}
@@ -1851,10 +1935,10 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                 <table className="w-full text-left border-collapse border border-slate-900 font-mono text-xs">
                   <thead>
                     <tr className="bg-slate-100 border-b border-slate-900">
-                      <th className="p-2 border-r border-slate-900 font-bold w-24">Period</th>
-                      <th className="p-2 border-r border-slate-900 font-bold w-28">Timing</th>
+                      <th className="p-2.5 border-r border-slate-900 font-black w-28">Period</th>
+                      <th className="p-2.5 border-r border-slate-900 font-black w-28">Timing</th>
                       {daysOfWeek.map(d => (
-                        <th key={d} className="p-2 border-r border-slate-900 font-bold text-center">
+                        <th key={d} className="p-2.5 border-r border-slate-900 font-black text-center">
                           {d}
                         </th>
                       ))}
@@ -1869,22 +1953,21 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
 
                       return (
                         <React.Fragment key={pNum}>
-                          {/* Recess Break insertion before period 5 */}
                           {pNum === 5 && (
-                            <tr className="bg-slate-200 border-b border-slate-900 font-bold text-center">
+                            <tr className="bg-slate-200 border-b border-slate-900 font-black text-center">
                               <td className="p-2 border-r border-slate-900">RECESS</td>
                               <td className="p-2 border-r border-slate-900">11:10 – 11:45</td>
-                              <td colSpan={6} className="p-2 tracking-widest text-slate-800">
+                              <td colSpan={6} className="p-2 tracking-widest text-slate-900">
                                 🍱 MID-DAY NUTRITION & RECESS BREAK
                               </td>
                             </tr>
                           )}
 
                           <tr className="border-b border-slate-900">
-                            <td className="p-2 border-r border-slate-900 font-bold bg-slate-50">
+                            <td className="p-2 border-r border-slate-900 font-black bg-slate-50">
                               Period {pNum}
                             </td>
-                            <td className="p-2 border-r border-slate-900 text-[11px] text-slate-700">
+                            <td className="p-2 border-r border-slate-900 text-[11px] text-slate-700 font-semibold">
                               {bell.startTime} – {bell.endTime}
                             </td>
 
@@ -1895,8 +1978,8 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                                   <td key={d} className="p-2 border-r border-slate-900 align-top">
                                     {slot ? (
                                       <div>
-                                        <div className="font-bold text-slate-950">{slot.subjectName}</div>
-                                        <div className="text-[10px] text-slate-600">{slot.teacherName} (Rm {slot.roomNumber || '201'})</div>
+                                        <div className="font-black text-slate-950 font-sans">{slot.subjectName}</div>
+                                        <div className="text-[10px] text-slate-700 font-medium font-sans">{slot.teacherName} (Rm {slot.roomNumber || '201'})</div>
                                       </div>
                                     ) : (
                                       <span className="text-slate-400 text-[10px] italic">Free</span>
@@ -1909,9 +1992,9 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                                   <td key={d} className="p-2 border-r border-slate-900 align-top">
                                     {slot ? (
                                       <div>
-                                        <div className="font-bold text-slate-950">{slot.grade}-{slot.section}</div>
-                                        <div className="text-[11px] font-semibold text-slate-800">{slot.subjectName}</div>
-                                        <div className="text-[10px] text-slate-600">Room {slot.roomNumber}</div>
+                                        <div className="font-black text-slate-950 font-sans">{slot.grade}-{slot.section}</div>
+                                        <div className="text-[11px] font-semibold text-slate-800 font-sans">{slot.subjectName}</div>
+                                        <div className="text-[10px] text-slate-600 font-sans">Room {slot.roomNumber}</div>
                                       </div>
                                     ) : (
                                       <span className="text-slate-400 text-[10px] italic">Free / Prep</span>
@@ -1928,19 +2011,16 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
                 </table>
               </div>
 
-              {/* Statutory Signatures Footer */}
-              <div className="grid grid-cols-3 gap-6 pt-12 text-center text-xs font-mono font-bold border-t border-slate-300">
-                <div>
-                  <div className="w-36 border-t-2 border-slate-900 mx-auto mb-1"></div>
-                  <span>Timetable Incharge</span>
+              {/* Signatures */}
+              <div className="pt-8 flex items-end justify-between text-xs text-slate-800 font-bold border-t border-slate-300">
+                <div className="text-center w-36 border-t-2 border-slate-900 pt-2">
+                  Timetable Incharge
                 </div>
-                <div>
-                  <div className="w-36 border-t-2 border-slate-900 mx-auto mb-1"></div>
-                  <span>Academic Coordinator</span>
+                <div className="text-center w-36 border-t-2 border-slate-900 pt-2">
+                  Vice Principal
                 </div>
-                <div>
-                  <div className="w-36 border-t-2 border-slate-900 mx-auto mb-1"></div>
-                  <span>Principal & Head of School</span>
+                <div className="text-center w-40 border-t-2 border-slate-900 pt-2">
+                  Principal & School Stamp
                 </div>
               </div>
             </div>
@@ -1949,92 +2029,60 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 9. MODAL: ADD / EDIT PERIOD SLOT WITH REAL-TIME CLASH DETECTOR */}
+      {/* 9. MODAL: ADD / EDIT TIMETABLE SLOT */}
       {/* ========================================================================= */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-[#0B0F19] border border-cyan-500/40 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="font-bold text-sm text-white font-mono flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-cyan-400" />
-                <span>Configure Timetable Period Slot</span>
-              </span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-black text-slate-950 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-cyan-600" />
+                <span>Allocate Period Slot ({selectedGrade} - Sec {selectedSection})</span>
+              </h3>
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="text-xs font-mono text-slate-400 hover:text-white cursor-pointer"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
               >
-                ✕ Close
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveSlot} className="space-y-4 font-mono text-xs">
-              {clashError && (
-                <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/50 flex items-start gap-2 text-rose-300 text-[11px]">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="block font-bold">Scheduling Clash Detected!</strong>
-                    <span>{clashError}</span>
-                  </div>
-                </div>
-              )}
-
-              {clashWarning && !clashError && (
-                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 flex items-start gap-2 text-amber-300 text-[11px]">
-                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="block font-bold">Workload Warning</strong>
-                    <span>{clashWarning}</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 mb-1">Class</label>
-                  <select
-                    value={slotForm.grade}
-                    onChange={(e) => setSlotForm({ ...slotForm, grade: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
-                  >
-                    {ALL_GRADES.map(g => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-slate-400 mb-1">Section</label>
-                  <select
-                    value={slotForm.section}
-                    onChange={(e) => setSlotForm({ ...slotForm, section: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
-                  >
-                    {ALL_SECTIONS.map(s => (
-                      <option key={s} value={s}>Section {s}</option>
-                    ))}
-                  </select>
-                </div>
+            {/* Live Conflict Guard Warning */}
+            {clashError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span><strong>Faculty Clash Conflict:</strong> {clashError}</span>
               </div>
+            )}
+            {clashWarning && !clashError && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+                <Info className="w-4 h-4 shrink-0 text-amber-600" />
+                <span><strong>Notice:</strong> {clashWarning}</span>
+              </div>
+            )}
 
+            <div className="space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">Day of Week</label>
+                  <label className="text-slate-700 font-bold block mb-1">Day of Week *</label>
                   <select
                     value={slotForm.dayOfWeek}
                     onChange={(e) => setSlotForm({ ...slotForm, dayOfWeek: e.target.value as any })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-cyan-600"
                   >
                     {daysOfWeek.map(d => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-slate-400 mb-1">Period Number</label>
+                  <label className="text-slate-700 font-bold block mb-1">Period Number *</label>
                   <select
                     value={slotForm.periodNumber}
-                    onChange={(e) => setSlotForm({ ...slotForm, periodNumber: parseInt(e.target.value, 10) })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
+                    onChange={(e) => setSlotForm({ ...slotForm, periodNumber: Number(e.target.value) })}
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-cyan-600"
                   >
                     {regularPeriods.map(p => (
                       <option key={p} value={p}>Period {p}</option>
@@ -2044,81 +2092,61 @@ export const TimetableManagementHub: React.FC<TimetableManagementHubProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-400 mb-1">Subject Name *</label>
+                <label className="text-slate-700 font-bold block mb-1">Subject Name *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Mathematics, Physics, Chemistry Lab, Computer AI"
+                  placeholder="e.g. Mathematics, Physics, Social Science"
                   value={slotForm.subjectName}
                   onChange={(e) => setSlotForm({ ...slotForm, subjectName: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-cyan-600"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 mb-1">Assigned Faculty</label>
+                  <label className="text-slate-700 font-bold block mb-1">Assigned Teacher *</label>
                   <select
-                    value={slotForm.teacherId || ''}
-                    onChange={(e) => {
-                      const staff = staffList.find(s => s.id === e.target.value);
-                      setSlotForm({
-                        ...slotForm,
-                        teacherId: e.target.value,
-                        teacherName: staff ? staff.name : ''
-                      });
-                    }}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
+                    value={slotForm.teacherId}
+                    onChange={(e) => setSlotForm({ ...slotForm, teacherId: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-cyan-600"
                   >
-                    <option value="">-- No Teacher --</option>
-                    {staffList.filter(s => s.role === 'teacher' || s.staffType === 'Teacher' || s.id === 'stf-02').map(t => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
+                    {staffList.filter(s => s.role === 'teacher' || s.designation?.toLowerCase().includes('teacher') || s.designation?.toLowerCase().includes('pgt') || s.designation?.toLowerCase().includes('tgt') || s.designation?.toLowerCase().includes('prt')).map(t => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.department || 'Faculty'})</option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-slate-400 mb-1">Room / Lab Number</label>
-                  <select
-                    value={slotForm.roomNumber || ''}
+                  <label className="text-slate-700 font-bold block mb-1">Classroom / Lab Room</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 201, Physics Lab"
+                    value={slotForm.roomNumber}
                     onChange={(e) => setSlotForm({ ...slotForm, roomNumber: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
-                  >
-                    {rooms.map(r => (
-                      <option key={r.id} value={r.roomNumber}>{r.roomNumber} ({r.name})</option>
-                    ))}
-                  </select>
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-cyan-600"
+                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 mb-1">Slot Category</label>
-                  <select
-                    value={slotForm.slotType}
-                    onChange={(e) => setSlotForm({ ...slotForm, slotType: e.target.value as any })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white cursor-pointer"
-                  >
-                    <option value="regular">Regular Classroom</option>
-                    <option value="lab">Science / Computer Lab</option>
-                    <option value="activity">Sports / Club / Activity</option>
-                  </select>
-                </div>
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSlot}
+                  disabled={Boolean(clashError)}
+                  className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white font-black cursor-pointer shadow-xs"
+                >
+                  Allocate Slot
+                </button>
               </div>
-
-              <button
-                type="submit"
-                disabled={Boolean(clashError)}
-                className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all mt-2 cursor-pointer ${
-                  clashError
-                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white shadow-cyan-500/20 active:scale-95'
-                }`}
-              >
-                <Check className="w-4 h-4" />
-                <span>Save Timetable Slot</span>
-              </button>
-            </form>
+            </div>
           </div>
         </div>
       )}
