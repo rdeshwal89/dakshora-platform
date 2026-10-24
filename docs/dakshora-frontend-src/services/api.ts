@@ -989,16 +989,78 @@ export async function updateErpStaff(id: string, data: Partial<ErpStaffRecord>) 
   });
 }
 
-export async function deactivateErpStaff(id: string) {
+export async function deactivateErpStaff(id: string, principalAuth?: { otp?: string; token?: string; reason?: string }) {
   return makeApiCall<{ staff: ErpStaffRecord; message: string }>(`/api/erp/staff/${id}/deactivate`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(principalAuth?.token ? { 'x-principal-auth-token': principalAuth.token } : {})
+    },
+    body: JSON.stringify({
+      principalOtp: principalAuth?.otp,
+      principalAuthToken: principalAuth?.token,
+      reason: principalAuth?.reason
+    })
   });
 }
 
-export async function deleteErpStaff(id: string, hard = false) {
+export async function deleteErpStaff(id: string, hard = false, principalAuth?: { otp?: string; token?: string; reason?: string }) {
   return makeApiCall<{ staff: ErpStaffRecord; message: string }>(`/api/erp/staff/${id}${hard ? '?hard=true' : ''}`, {
     method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(principalAuth?.token ? { 'x-principal-auth-token': principalAuth.token } : {})
+    },
+    body: JSON.stringify({
+      principalOtp: principalAuth?.otp,
+      principalAuthToken: principalAuth?.token,
+      reason: principalAuth?.reason
+    })
   });
+}
+
+export async function requestPrincipalOtp(payload: { action: string; targetStaffId?: string; staffName?: string }) {
+  return makeApiCall<{
+    success: boolean;
+    message: string;
+    principalName: string;
+    principalEmail: string;
+    principalPhone: string;
+    cooldownSeconds: number;
+    devOtp?: string;
+  }>('/api/erp/principal/request-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function verifyPrincipalOtp(payload: { otp: string; action: string; targetStaffId?: string; reason?: string }) {
+  return makeApiCall<{
+    success: boolean;
+    authorized: boolean;
+    principalAuthToken: string;
+    authorizedBy: string;
+    authorizedEmail: string;
+    verifiedAt: string;
+    message: string;
+  }>('/api/erp/principal/verify-otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchInstitutionalDuties(params?: { session?: string; search?: string }) {
+  const q = new URLSearchParams();
+  if (params?.session && params.session !== 'all') q.set('session', params.session);
+  if (params?.search) q.set('search', params.search);
+  const qs = q.toString() ? `?${q.toString()}` : '';
+  return makeApiCall<{
+    success: boolean;
+    total: number;
+    responsibilities: any[];
+  }>(`/api/erp/staff-responsibilities/all${qs}`);
 }
 
 export async function fetchTeacherAssignments(staffId: string) {

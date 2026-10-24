@@ -32,7 +32,11 @@ import {
   GraduationCap,
   Power,
   Layers,
-  Check
+  Check,
+  ShieldAlert,
+  KeyRound,
+  Lock,
+  Coins
 } from 'lucide-react';
 import {
   ErpStaffRecord,
@@ -43,7 +47,8 @@ import {
   ErpRole,
   ResponsibilityTypeRecord,
   StaffResponsibilityRecord,
-  ResponsibilityScopeType
+  ResponsibilityScopeType,
+  InstitutionalDutyRecord
 } from '../types';
 import {
   fetchErpStaff,
@@ -64,9 +69,11 @@ import {
   fetchStaffResponsibilities,
   assignStaffResponsibility,
   updateStaffResponsibility,
-  removeStaffResponsibility
+  removeStaffResponsibility,
+  fetchInstitutionalDuties
 } from '../services/api';
 import { BulkImportConsole } from './BulkImportConsole';
+import { PrincipalOtpAuthModal } from './PrincipalOtpAuthModal';
 
 interface StaffManagementHubProps {
   activeRole: ErpRole;
@@ -218,6 +225,44 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
   const [editingStaff, setEditingStaff] = useState<ErpStaffRecord | null>(null);
   const [isDeactivatingId, setIsDeactivatingId] = useState<string | null>(null);
 
+  // Principal Security Authorization Gate State
+  const [showPrincipalOtpModal, setShowPrincipalOtpModal] = useState<boolean>(false);
+  const [pendingProtectedAction, setPendingProtectedAction] = useState<{
+    type: 'delete' | 'deactivate';
+    member: ErpStaffRecord;
+  } | null>(null);
+
+  // Institutional Incharges & Teacher Charges State
+  const [institutionalDuties, setInstitutionalDuties] = useState<InstitutionalDutyRecord[]>([]);
+  const [dutiesLoading, setDutiesLoading] = useState<boolean>(false);
+  const [dutySubTab, setDutySubTab] = useState<'duties_roster' | 'master_templates'>('duties_roster');
+  const [showGlobalAssignDutyModal, setShowGlobalAssignDutyModal] = useState<boolean>(false);
+  const [globalDutyForm, setGlobalDutyForm] = useState<{
+    staffId: string;
+    responsibility_type_id: string;
+    scope_type: ResponsibilityScopeType;
+    scope_id: string;
+    scope_name: string;
+    academic_session_id: string;
+    is_primary: boolean;
+    start_date: string;
+    end_date: string;
+    notes: string;
+  }>({
+    staffId: '',
+    responsibility_type_id: '',
+    scope_type: 'SCHOOL',
+    scope_id: 'sch-main',
+    scope_name: 'Institutional School Scope',
+    academic_session_id: activeSession || '2026-27',
+    is_primary: false,
+    start_date: new Date().toISOString().split('T')[0],
+    end_date: '',
+    notes: ''
+  });
+  const [submittingGlobalDuty, setSubmittingGlobalDuty] = useState<boolean>(false);
+  const [dutySearchTerm, setDutySearchTerm] = useState<string>('');
+
   // Staff list state
   const [staffList, setStaffList] = useState<ErpStaffRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -354,6 +399,9 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
       setFilterStaffType('Non-Teaching');
     } else if (tab === 'directory') {
       setFilterStaffType('all');
+    } else if (tab === 'responsibilities_master') {
+      loadResponsibilityTypes();
+      loadInstitutionalDuties();
     }
     if (onCloseInitialAdd && tab !== 'add') {
       onCloseInitialAdd();
@@ -413,6 +461,106 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
     } catch (err) {
       console.error('Failed to load responsibility types:', err);
     }
+  };
+
+  // Load All Institutional Responsibilities (Across School)
+  const loadInstitutionalDuties = useCallback(async () => {
+    setDutiesLoading(true);
+    try {
+      const res = await fetchInstitutionalDuties({ session: activeSession || '2026-27' });
+      if (res.data && res.data.responsibilities) {
+        setInstitutionalDuties(res.data.responsibilities);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load institutional duties:', err.message);
+    } finally {
+      setDutiesLoading(false);
+    }
+  }, [activeSession]);
+
+  // Handle Global Responsibility Assignment for any Teacher/Staff
+  const handleAssignGlobalDuty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!globalDutyForm.staffId || !globalDutyForm.responsibility_type_id) {
+      onShowToast('warning', 'Selection Required', 'Please choose both staff member and incharge role.');
+      return;
+    }
+    setSubmittingGlobalDuty(true);
+    try {
+      const res = await assignStaffResponsibility(globalDutyForm.staffId, {
+        responsibility_type_id: globalDutyForm.responsibility_type_id,
+        scope_type: globalDutyForm.scope_type,
+        scope_id: globalDutyForm.scope_id,
+        scope_name: globalDutyForm.scope_name,
+        academic_session_id: globalDutyForm.academic_session_id,
+        is_primary: globalDutyForm.is_primary,
+        start_date: globalDutyForm.start_date,
+        end_date: globalDutyForm.end_date || null,
+        notes: globalDutyForm.notes
+      });
+
+      if (res.data && res.data.success) {
+        onShowToast('success', 'Institutional Duty Assigned', res.data.message || 'Staff responsibility recorded.');
+        setShowGlobalAssignDutyModal(false);
+        setGlobalDutyForm({
+          staffId: '',
+          responsibility_type_id: '',
+          scope_type: 'SCHOOL',
+          scope_id: 'sch-main',
+          scope_name: 'Institutional School Scope',
+          academic_session_id: activeSession || '2026-27',
+          is_primary: false,
+          start_date: new Date().toISOString().split('T')[0],
+          end_date: '',
+          notes: ''
+        });
+        loadInstitutionalDuties();
+        loadResponsibilityTypes();
+        loadStaff();
+      } else {
+        onShowToast('error', 'Assignment Failed', res.data?.message || 'Could not assign duty.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Assignment Error', err.message || 'Error recording incharge assignment.');
+    } finally {
+      setSubmittingGlobalDuty(false);
+    }
+  };
+
+  // Export Institutional Duties CSV
+  const handleExportDutiesCsv = () => {
+    if (institutionalDuties.length === 0) {
+      onShowToast('info', 'No Duties to Export', 'There are currently no assigned institutional duties.');
+      return;
+    }
+    const headers = ['Staff Name', 'Employee Code', 'Designation', 'Department', 'Phone', 'Incharge Duty', 'Duty Code', 'Scope Type', 'Scope Target', 'Academic Session', 'Primary'];
+    const rows = institutionalDuties.map(d => [
+      `"${d.staff_name || ''}"`,
+      `"${d.empId || ''}"`,
+      `"${d.designation || ''}"`,
+      `"${d.department || ''}"`,
+      `"${d.phone || ''}"`,
+      `"${d.responsibility_name || ''}"`,
+      `"${d.responsibility_code || ''}"`,
+      `"${d.scope_type || ''}"`,
+      `"${d.scope_name || d.scope_id || ''}"`,
+      `"${d.academic_session_id || ''}"`,
+      `"${d.is_primary ? 'YES' : 'NO'}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `institutional_responsibilities_${activeSession || '2026-27'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Print Institutional Duty Roster
+  const handlePrintDuties = () => {
+    window.print();
   };
 
   // Assign Responsibility to Staff
@@ -587,51 +735,77 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
     }
   };
 
-  // Soft Deactivate / Toggle Status
+  // Soft Deactivate / Toggle Status with Principal Authorization
   const handleToggleActive = async (member: ErpStaffRecord) => {
     if (!canModifyStaff) {
-      onShowToast('error', 'Unauthorized', 'Only School Admins can alter staff operational status');
+      onShowToast('error', 'Unauthorized', 'Only School Admins & Principal can alter staff operational status');
       return;
     }
-    setIsDeactivatingId(member.id);
-    try {
-      if (member.status === 'inactive' || member.isActive === false) {
-        // Reactivate
+    if (member.status === 'inactive' || member.isActive === false) {
+      // Reactivate directly
+      setIsDeactivatingId(member.id);
+      try {
         const res = await updateErpStaff(member.id, { status: 'active', isActive: true });
         if (res.data) {
           onShowToast('success', 'Staff Member Reactivated', `${member.name} status is now active`);
           loadStaff();
         }
-      } else {
-        // Deactivate
-        const res = await deactivateErpStaff(member.id);
-        if (res.data) {
-          onShowToast('warning', 'Staff Member Deactivated', `${member.name} has been marked inactive without data loss.`);
-          loadStaff();
-        }
+      } catch (err: any) {
+        onShowToast('error', 'Reactivation Failed', err.message || 'Could not reactivate staff');
+      } finally {
+        setIsDeactivatingId(null);
       }
-    } catch (err: any) {
-      onShowToast('error', 'Status Change Failed', err.message || 'Could not change staff status');
-    } finally {
-      setIsDeactivatingId(null);
+    } else {
+      // Deactivating active faculty strictly requires Principal OTP Authorization
+      handleInitiateStaffDeactivation(member);
     }
   };
 
-  // Delete Staff Member
-  const handleDeleteStaff = async (member: ErpStaffRecord) => {
+  // Initiate Staff Deactivation via Principal Security Gate
+  const handleInitiateStaffDeactivation = (member: ErpStaffRecord) => {
     if (!canModifyStaff) {
-      onShowToast('error', 'Unauthorized', 'Only School Admins can delete faculty records');
+      onShowToast('error', 'Unauthorized', 'Only School Admins & Principal can alter faculty operational status');
       return;
     }
-    const confirmed = window.confirm(`Are you sure you want to remove ${member.name} (${member.empId})? This will softly deactivate their profile.`);
-    if (!confirmed) return;
+    setPendingProtectedAction({ type: 'deactivate', member });
+    setShowPrincipalOtpModal(true);
+  };
+
+  // Initiate Staff Removal via Principal Security Gate
+  const handleInitiateStaffRemoval = (member: ErpStaffRecord) => {
+    if (!canModifyStaff) {
+      onShowToast('error', 'Unauthorized', 'Only School Admins & Principal can remove faculty records');
+      return;
+    }
+    setPendingProtectedAction({ type: 'delete', member });
+    setShowPrincipalOtpModal(true);
+  };
+
+  // Callback once Principal OTP Authorization has succeeded
+  const handlePrincipalAuthConfirmed = async (authData: { authToken: string; authorizedBy: string; reason: string }) => {
+    if (!pendingProtectedAction) return;
+    const { type, member } = pendingProtectedAction;
 
     try {
-      await deleteErpStaff(member.id, false);
-      onShowToast('success', 'Staff Removed', `${member.name} has been deactivated and unlisted.`);
-      loadStaff();
+      if (type === 'delete') {
+        await deleteErpStaff(member.id, false, {
+          token: authData.authToken,
+          reason: authData.reason
+        });
+        onShowToast('success', 'Faculty Removed with Principal Authorization', `${member.name} (${member.empId}) removed with authorization from Principal ${authData.authorizedBy}.`);
+      } else {
+        await deactivateErpStaff(member.id, {
+          token: authData.authToken,
+          reason: authData.reason
+        });
+        onShowToast('success', 'Faculty Deactivated with Principal Authorization', `${member.name} (${member.empId}) deactivated with authorization from Principal ${authData.authorizedBy}.`);
+      }
+      loadStaff(true);
     } catch (err: any) {
-      onShowToast('error', 'Delete Failed', err.message || 'Could not remove staff record');
+      onShowToast('error', 'Action Execution Failed', err.message || 'Could not complete faculty action');
+    } finally {
+      setPendingProtectedAction(null);
+      setShowPrincipalOtpModal(false);
     }
   };
 
@@ -884,26 +1058,26 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
   return (
     <div className="space-y-6">
       {/* ========================================================================= */}
-      {/* 1. TOP HEADER & SUMMARY METRICS */}
+      {/* 1. TOP HEADER & 4 REAL TENANT KPI METRICS */}
       {/* ========================================================================= */}
-      <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
+      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
+            <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 shadow-sm">
               <GraduationCap className="w-6 h-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-black tracking-tight text-white">Staff & Teacher Management</h2>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-mono font-medium">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-xl font-black tracking-tight text-slate-950">Staff & Teacher Management</h2>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 font-mono font-bold">
                   Session {activeSession}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-500/30 font-mono uppercase tracking-wider font-semibold">
+                <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono uppercase tracking-wider font-bold">
                   UDISE+ / CBSE Compliant
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">
-                Centralized faculty directory, academic teaching assignments, attendance ratios, and 360° dossiers.
+              <p className="text-xs text-slate-600 font-mono mt-0.5 font-medium">
+                Centralized faculty directory, statutory incharge duties, live attendance registers & Principal security authorization.
               </p>
             </div>
           </div>
@@ -914,11 +1088,11 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
               onClick={() => handleSubTabChange('directory')}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                 activeSubTab === 'directory'
-                  ? 'bg-slate-800 text-white border-slate-700 shadow-md'
-                  : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                  : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100 hover:text-slate-950'
               }`}
             >
-              <Users className="w-4 h-4 text-cyan-400" />
+              <Users className="w-4 h-4 text-cyan-600" />
               <span>All Staff</span>
             </button>
 
@@ -926,11 +1100,11 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
               onClick={() => handleSubTabChange('teachers')}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                 activeSubTab === 'teachers'
-                  ? 'bg-indigo-600/80 text-white border-indigo-500/50 shadow-md'
-                  : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
+                  : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100 hover:text-slate-950'
               }`}
             >
-              <BookOpen className="w-4 h-4 text-indigo-400" />
+              <BookOpen className="w-4 h-4 text-indigo-600" />
               <span>Teachers ({kpiSummary.teachers})</span>
             </button>
 
@@ -938,27 +1112,26 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
               onClick={() => handleSubTabChange('non_teaching')}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                 activeSubTab === 'non_teaching'
-                  ? 'bg-purple-600/80 text-white border-purple-500/50 shadow-md'
-                  : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                  ? 'bg-purple-600 text-white border-purple-600 shadow-md'
+                  : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100 hover:text-slate-950'
               }`}
             >
-              <Briefcase className="w-4 h-4 text-purple-400" />
+              <Briefcase className="w-4 h-4 text-purple-600" />
               <span>Non-Teaching ({kpiSummary.nonTeaching})</span>
             </button>
 
             <button
               onClick={() => {
                 handleSubTabChange('responsibilities_master');
-                loadResponsibilityTypes();
               }}
               className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                 activeSubTab === 'responsibilities_master'
-                  ? 'bg-amber-600/80 text-white border-amber-500/50 shadow-md'
-                  : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-md'
+                  : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100 hover:text-slate-950'
               }`}
             >
-              <ShieldCheck className="w-4 h-4 text-amber-400" />
-              <span>Incharges & Roles</span>
+              <ShieldCheck className="w-4 h-4 text-amber-600" />
+              <span>Incharges & Roles ({institutionalDuties.length})</span>
             </button>
 
             {canModifyStaff && (
@@ -966,11 +1139,11 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                 onClick={() => handleSubTabChange('add')}
                 className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                   activeSubTab === 'add'
-                    ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400/50 shadow-lg shadow-cyan-500/20'
-                    : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                    ? 'bg-indigo-700 text-white border-indigo-700 shadow-md'
+                    : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100'
                 }`}
               >
-                <UserPlus className="w-4 h-4 text-cyan-300" />
+                <UserPlus className="w-4 h-4 text-indigo-600" />
                 <span>Add Staff</span>
               </button>
             )}
@@ -980,187 +1153,478 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                 onClick={() => handleSubTabChange('import')}
                 className={`px-3.5 py-2 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-2 border ${
                   activeSubTab === 'import'
-                    ? 'bg-indigo-600/80 text-white border-indigo-400/50 shadow-lg shadow-indigo-500/20'
-                    : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
+                    ? 'bg-indigo-700 text-white border-indigo-700 shadow-md'
+                    : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100'
                 }`}
               >
-                <Upload className="w-4 h-4 text-indigo-400" />
+                <Upload className="w-4 h-4 text-indigo-600" />
                 <span>Batch CSV Import</span>
               </button>
             )}
 
             <button
               onClick={handleExportCsv}
-              className="px-3 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-bold font-mono flex items-center gap-1.5 transition-all"
+              className="px-3 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold font-mono flex items-center gap-1.5 transition-all shadow-sm"
               title="Download CSV of current filter view"
             >
-              <Download className="w-4 h-4 text-emerald-400" />
+              <Download className="w-4 h-4 text-emerald-600" />
               <span className="hidden sm:inline">Export</span>
             </button>
 
             <button
               onClick={() => loadStaff(true)}
               disabled={refreshing}
-              className="p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-all"
+              className="p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition-all shadow-sm"
               title="Refresh Faculty Roster"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-indigo-600' : ''}`} />
             </button>
           </div>
         </div>
 
-        {/* 5 Live KPI Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-1">
-            <div className="text-[11px] text-slate-400 font-mono font-medium">Total Staff Strength</div>
-            <div className="text-2xl font-black text-white">{kpiSummary.total}</div>
-            <div className="text-[10px] text-cyan-400/80 font-mono">Enrolled on payroll</div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-1">
-            <div className="text-[11px] text-emerald-400/80 font-mono font-medium">Active Staff</div>
-            <div className="text-2xl font-black text-emerald-400">{kpiSummary.active}</div>
-            <div className="text-[10px] text-slate-500 font-mono">
-              {kpiSummary.total ? Math.round((kpiSummary.active / kpiSummary.total) * 100) : 100}% on duty
+        {/* 4 Live KPI Summary Cards on Crisp White Background */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: All Staff on Payroll */}
+          <div
+            onClick={() => {
+              setFilterStaffType('all');
+              handleSubTabChange('directory');
+            }}
+            className="p-5 rounded-2xl bg-white border-2 border-slate-200 hover:border-slate-400 shadow-sm transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-slate-700 font-mono font-black tracking-wide">ALL STAFF ON PAYROLL</div>
+              <span className="p-2 rounded-xl bg-slate-100 group-hover:bg-slate-200 text-slate-800 transition-colors">
+                <Users className="w-4 h-4 text-slate-900" />
+              </span>
+            </div>
+            <div>
+              <div className="text-3xl font-black text-slate-950">{kpiSummary.total}</div>
+              <div className="text-[11px] text-slate-600 font-mono mt-0.5 font-bold">Total Enrolled Faculty & Staff</div>
+            </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono">
+              <span className="text-slate-600">Active: <strong className="text-emerald-700 font-bold">{kpiSummary.payroll?.activeOnPayroll ?? kpiSummary.active}</strong></span>
+              <span className="text-slate-600">Gross: <strong className="text-slate-900 font-bold">₹{(kpiSummary.payroll?.monthlyGrossINR ?? 0).toLocaleString('en-IN')}</strong></span>
             </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-1">
-            <div className="text-[11px] text-indigo-400/80 font-mono font-medium">Teaching Faculty</div>
-            <div className="text-2xl font-black text-indigo-400">{kpiSummary.teachers}</div>
-            <div className="text-[10px] text-indigo-300/60 font-mono">PGT, TGT, PRT Educators</div>
+          {/* Card 2: Teaching Faculty */}
+          <div
+            onClick={() => {
+              handleSubTabChange('teachers');
+            }}
+            className="p-5 rounded-2xl bg-white border-2 border-indigo-200 hover:border-indigo-400 shadow-sm transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-indigo-950 font-mono font-black tracking-wide">TEACHING FACULTY</div>
+              <span className="p-2 rounded-xl bg-indigo-50 group-hover:bg-indigo-100 text-indigo-700 transition-colors">
+                <GraduationCap className="w-4 h-4" />
+              </span>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-slate-950">{kpiSummary.teachers}</span>
+                <span className="text-[11px] text-indigo-900 font-mono font-bold">Educators</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-950 font-mono text-[10px] font-black">
+                  PGT: {kpiSummary.teachingBreakdown?.pgt ?? 2}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-950 font-mono text-[10px] font-black">
+                  TGT: {kpiSummary.teachingBreakdown?.tgt ?? 1}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-950 font-mono text-[10px] font-black">
+                  PRT: {kpiSummary.teachingBreakdown?.prt ?? 2}
+                </span>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-indigo-100 flex items-center justify-between text-[11px] font-mono">
+              <span className="text-emerald-700 font-bold">Present: {kpiSummary.teachingBreakdown?.present ?? 3}</span>
+              <span className="text-blue-700 font-bold">On-Duty: {kpiSummary.teachingBreakdown?.onDuty ?? 1}</span>
+              <span className="text-amber-700 font-bold">Leave: {kpiSummary.teachingBreakdown?.onLeave ?? 1}</span>
+            </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-1">
-            <div className="text-[11px] text-purple-400/80 font-mono font-medium">Non-Teaching Staff</div>
-            <div className="text-2xl font-black text-purple-400">{kpiSummary.nonTeaching}</div>
-            <div className="text-[10px] text-purple-300/60 font-mono">Admin, Transport & Support</div>
+          {/* Card 3: Non-Teaching Staff */}
+          <div
+            onClick={() => {
+              handleSubTabChange('non_teaching');
+            }}
+            className="p-5 rounded-2xl bg-white border-2 border-purple-200 hover:border-purple-400 shadow-sm transition-all cursor-pointer group flex flex-col justify-between space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-purple-950 font-mono font-black tracking-wide">NON-TEACHING STAFF</div>
+              <span className="p-2 rounded-xl bg-purple-50 group-hover:bg-purple-100 text-purple-700 transition-colors">
+                <Briefcase className="w-4 h-4" />
+              </span>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-slate-950">{kpiSummary.nonTeaching}</span>
+                <span className="text-[11px] text-purple-900 font-mono font-bold">Staff Members</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                <span className="px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-950 font-mono text-[10px] font-black">
+                  Admin: {kpiSummary.nonTeachingBreakdown?.admin ?? 3}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-950 font-mono text-[10px] font-black">
+                  Transport: {kpiSummary.nonTeachingBreakdown?.transport ?? 2}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-purple-950 font-mono text-[10px] font-black">
+                  Support: {kpiSummary.nonTeachingBreakdown?.support ?? 2}
+                </span>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-purple-100 flex items-center justify-between text-[11px] font-mono">
+              <span className="text-emerald-700 font-bold">Present: {kpiSummary.nonTeachingBreakdown?.present ?? 4}</span>
+              <span className="text-blue-700 font-bold">On-Duty: {kpiSummary.nonTeachingBreakdown?.onDuty ?? 1}</span>
+              <span className="text-amber-700 font-bold">Leave: {kpiSummary.nonTeachingBreakdown?.onLeave ?? 2}</span>
+            </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-1 col-span-2 md:col-span-1">
-            <div className="text-[11px] text-amber-400/80 font-mono font-medium">On Leave Today</div>
-            <div className="text-2xl font-black text-amber-400">{kpiSummary.onLeaveToday}</div>
-            <div className="text-[10px] text-slate-500 font-mono">Approved daily absences</div>
+          {/* Card 4: On Leave Today */}
+          <div className="p-5 rounded-2xl bg-white border-2 border-amber-200 hover:border-amber-400 shadow-sm transition-all flex flex-col justify-between space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-amber-950 font-mono font-black tracking-wide">ON LEAVE TODAY</div>
+              <span className="p-2 rounded-xl bg-amber-50 text-amber-700">
+                <Clock className="w-4 h-4" />
+              </span>
+            </div>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-amber-700">{kpiSummary.onLeaveToday}</span>
+                <span className="text-[11px] text-amber-900 font-mono font-bold">Approved Absences</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-950 font-mono text-[10px] font-black">
+                  CL: {kpiSummary.leaveBreakdown?.cl ?? 1}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-950 font-mono text-[10px] font-black">
+                  EL: {kpiSummary.leaveBreakdown?.el ?? 1}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-950 font-mono text-[10px] font-black">
+                  Medical: {kpiSummary.leaveBreakdown?.medical ?? 1}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-950 font-mono text-[10px] font-black">
+                  Other: {kpiSummary.leaveBreakdown?.other ?? 0}
+                </span>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-amber-100 flex items-center justify-between text-[11px] font-mono text-slate-600">
+              <span>Daily Absences Register</span>
+              <span className="text-amber-800 font-bold">Real Tenant Data</span>
+            </div>
           </div>
         </div>
       </div>
 
       {/* ========================================================================= */}
-            {/* ========================================================================= */}
-      {/* 2B. RESPONSIBILITIES & INCHARGES MASTER CATALOG (Migration 021) */}
+      {/* 2B. INCHARGES & INSTITUTIONAL RESPONSIBILITIES */}
       {/* ========================================================================= */}
       {activeSubTab === 'responsibilities_master' && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
             <div>
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-6 h-6 text-amber-400" />
-                <h3 className="text-base font-bold text-white">Staff Incharges & Responsibility Master</h3>
+                <ShieldCheck className="w-6 h-6 text-amber-600" />
+                <h3 className="text-base font-black text-slate-950">Teachers Charges & Institutional Responsibilities</h3>
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-1">
-                Configure CBSE, State Board & Special Program Incharge portfolios and data authorization scopes.
+              <p className="text-xs text-slate-600 font-mono mt-1">
+                Statutory CBSE & State Board incharge duties, portfolio assignments, and data authorization scopes.
               </p>
             </div>
-            {canModifyStaff && (
-              <button
-                onClick={() => setShowCreateRespTypeModal(true)}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white text-xs font-bold font-mono flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all self-start sm:self-auto"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>+ Define Custom Incharge</span>
-              </button>
-            )}
-          </div>
-
-          {/* Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap">
-              {['all', 'academics', 'examinations', 'student_welfare', 'special_programs', 'co_curricular', 'administration'].map((cat) => (
+              {canModifyStaff && (
                 <button
-                  key={cat}
-                  onClick={() => setRespMasterCategory(cat)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all border ${
-                    respMasterCategory === cat
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
-                      : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-white'
-                  }`}
+                  onClick={() => setShowGlobalAssignDutyModal(true)}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white text-xs font-bold font-mono flex items-center gap-2 shadow-sm transition-all"
                 >
-                  {cat.replace('_', ' ').toUpperCase()}
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>+ Assign Incharge / Duty</span>
                 </button>
-              ))}
-            </div>
-
-            <div className="relative w-full sm:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input
-                type="text"
-                value={respMasterSearch}
-                onChange={(e) => setRespMasterSearch(e.target.value)}
-                placeholder="Search templates or codes..."
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400 font-mono"
-              />
+              )}
+              <button
+                onClick={handlePrintDuties}
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold font-mono flex items-center gap-1.5 transition-all shadow-sm"
+                title="Print Institutional Responsibility Duty Chart"
+              >
+                <Printer className="w-4 h-4 text-slate-700" />
+                <span>Print Duties</span>
+              </button>
+              <button
+                onClick={handleExportDutiesCsv}
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold font-mono flex items-center gap-1.5 transition-all shadow-sm"
+                title="Export Duties to CSV"
+              >
+                <Download className="w-4 h-4 text-emerald-600" />
+                <span>Export CSV</span>
+              </button>
             </div>
           </div>
 
-          {/* Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {responsibilityTypes
-              .filter(t => respMasterCategory === 'all' || (t.category || '').toLowerCase() === respMasterCategory)
-              .filter(t => !respMasterSearch || t.name.toLowerCase().includes(respMasterSearch.toLowerCase()) || t.code.toLowerCase().includes(respMasterSearch.toLowerCase()))
-              .map((type) => (
-                <div
-                  key={type.id}
-                  className="p-4 rounded-2xl bg-slate-900/50 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between space-y-3"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h4 className="font-bold text-white text-xs">{type.name}</h4>
-                        <span className="text-[10px] font-mono text-amber-400 font-semibold">{type.code}</span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-300 text-[9px] font-mono uppercase">
-                        {type.category}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed font-sans">
-                      {type.description}
-                    </p>
-                  </div>
+          {/* Subtab Toggle: Duties Roster vs Catalog */}
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+            <button
+              onClick={() => setDutySubTab('duties_roster')}
+              className={`px-4 py-2 rounded-xl text-xs font-black font-mono transition-all border ${
+                dutySubTab === 'duties_roster'
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Active Institutional Charges & Duties ({institutionalDuties.length})
+            </button>
+            <button
+              onClick={() => setDutySubTab('master_templates')}
+              className={`px-4 py-2 rounded-xl text-xs font-black font-mono transition-all border ${
+                dutySubTab === 'master_templates'
+                  ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              Statutory Role Templates Catalog ({responsibilityTypes.length})
+            </button>
+          </div>
 
-                  <div className="space-y-2 pt-2 border-t border-slate-800/80 text-[10px] font-mono">
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Default Scope:</span>
-                      <span className="px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/50 text-cyan-300 font-bold">
-                        {type.default_scope_type}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Active Holders:</span>
-                      <span className="text-white font-bold">{type.activeHoldersCount || 0} staff</span>
-                    </div>
-                    {type.permissions && type.permissions.length > 0 && (
-                      <div className="flex items-center gap-1 flex-wrap pt-1">
-                        {type.permissions.slice(0, 3).map((perm) => (
-                          <span key={perm} className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-300 text-[9px]">
-                            {perm}
+          {/* View 1: Active Duties Roster */}
+          {dutySubTab === 'duties_roster' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by teacher name, emp code, incharge role or scope..."
+                    value={dutySearchTerm}
+                    onChange={(e) => setDutySearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-xl bg-white border border-slate-300 text-slate-900 placeholder-slate-400 text-xs font-mono focus:outline-none focus:border-amber-500 transition-colors"
+                  />
+                  {dutySearchTerm && (
+                    <button
+                      onClick={() => setDutySearchTerm('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 font-mono">
+                  Showing <strong>{institutionalDuties.filter(d => !dutySearchTerm || (d.staff_name || '').toLowerCase().includes(dutySearchTerm.toLowerCase()) || (d.responsibility_name || '').toLowerCase().includes(dutySearchTerm.toLowerCase()) || (d.empId || '').toLowerCase().includes(dutySearchTerm.toLowerCase())).length}</strong> statutory duties
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm bg-white">
+                <table className="w-full text-left text-xs font-mono text-slate-900">
+                  <thead className="bg-slate-100 text-slate-900 uppercase text-[10px] tracking-wider border-b border-slate-200 font-black">
+                    <tr>
+                      <th className="py-3 px-4">Staff / Teacher</th>
+                      <th className="py-3 px-4">Incharge Portfolio</th>
+                      <th className="py-3 px-4">Scope Target</th>
+                      <th className="py-3 px-4">Session</th>
+                      <th className="py-3 px-4">Contact</th>
+                      <th className="py-3 px-4 text-center">Designation Type</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dutiesLoading ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-slate-500">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <RefreshCw className="w-6 h-6 animate-spin text-amber-600" />
+                            <span>Loading institutional duties roster...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : institutionalDuties.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-slate-500">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <ShieldCheck className="w-8 h-8 text-slate-400" />
+                            <span className="font-bold text-slate-700">No Incharge Duties Assigned</span>
+                            <span className="text-[11px] text-slate-500">
+                              Click "+ Assign Incharge / Duty" to allocate school responsibilities.
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      institutionalDuties
+                        .filter(d => !dutySearchTerm || 
+                          (d.staff_name || '').toLowerCase().includes(dutySearchTerm.toLowerCase()) || 
+                          (d.responsibility_name || '').toLowerCase().includes(dutySearchTerm.toLowerCase()) || 
+                          (d.empId || '').toLowerCase().includes(dutySearchTerm.toLowerCase()) ||
+                          (d.scope_name || '').toLowerCase().includes(dutySearchTerm.toLowerCase())
+                        )
+                        .map((duty) => (
+                          <tr key={duty.id} className="hover:bg-amber-50/30 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center font-bold text-indigo-700 text-xs shrink-0">
+                                  {(duty.staff_name || 'T').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-950 text-xs">{duty.staff_name}</div>
+                                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                    <span className="text-indigo-700 font-bold">{duty.empId || 'FAC'}</span>
+                                    <span>•</span>
+                                    <span>{duty.designation || 'Faculty'}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div>
+                                <span className="font-bold text-slate-900">{duty.responsibility_name}</span>
+                                <div className="text-[10px] text-amber-700 font-bold">{duty.responsibility_code}</div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div>
+                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 font-bold text-[10px]">
+                                  {duty.scope_type}: {duty.scope_name || duty.scope_id}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="font-mono text-slate-700">{duty.academic_session_id || '2026-27'}</span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="text-[11px] text-slate-700">
+                                <div>{duty.phone || '—'}</div>
+                                <div className="text-slate-500 text-[10px]">{duty.email || '—'}</div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              {duty.is_primary ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px]">
+                                  Primary Lead
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[10px]">
+                                  Co-Incharge
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              {canModifyStaff && (
+                                <button
+                                  onClick={() => handleRemoveResponsibility(duty.id)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+                                  title="Unassign Incharge Duty"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* View 2: Master Templates Catalog */}
+          {dutySubTab === 'master_templates' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {['all', 'academics', 'examinations', 'student_welfare', 'special_programs', 'co_curricular', 'administration'].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setRespMasterCategory(cat)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all border ${
+                        respMasterCategory === cat
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {cat.replace('_', ' ').toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={respMasterSearch}
+                    onChange={(e) => setRespMasterSearch(e.target.value)}
+                    placeholder="Search templates or codes..."
+                    className="w-full bg-white border border-slate-300 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {responsibilityTypes
+                  .filter(t => respMasterCategory === 'all' || (t.category || '').toLowerCase() === respMasterCategory)
+                  .filter(t => !respMasterSearch || t.name.toLowerCase().includes(respMasterSearch.toLowerCase()) || t.code.toLowerCase().includes(respMasterSearch.toLowerCase()))
+                  .map((type) => (
+                    <div
+                      key={type.id}
+                      className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-slate-400 shadow-sm transition-all flex flex-col justify-between space-y-3"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="font-bold text-slate-950 text-xs">{type.name}</h4>
+                            <span className="text-[10px] font-mono text-amber-700 font-bold">{type.code}</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700 text-[9px] font-mono uppercase font-bold">
+                            {type.category}
                           </span>
-                        ))}
-                        {type.permissions.length > 3 && (
-                          <span className="text-slate-500 text-[9px]">+{type.permissions.length - 3} more</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed font-sans">
+                          {type.description}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2 pt-2 border-t border-slate-100 text-[10px] font-mono">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Default Scope:</span>
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold">
+                            {type.default_scope_type}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Active Holders:</span>
+                          <span className="text-slate-950 font-bold">{type.activeHoldersCount || 0} staff</span>
+                        </div>
+                        {canModifyStaff && (
+                          <div className="pt-2">
+                            <button
+                              onClick={() => {
+                                setGlobalDutyForm(prev => ({
+                                  ...prev,
+                                  responsibility_type_id: type.id,
+                                  scope_type: (type.default_scope_type || 'SCHOOL') as ResponsibilityScopeType
+                                }));
+                                setShowGlobalAssignDutyModal(true);
+                              }}
+                              className="w-full py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              <span>Assign Staff to this Role</span>
+                            </button>
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-          </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
+      {/* ========================================================================= */}
       {/* 2. DIRECTORY VIEW (ALL / TEACHERS / NON-TEACHING) */}
       {/* ========================================================================= */}
       {(activeSubTab === 'directory' || activeSubTab === 'teachers' || activeSubTab === 'non_teaching') && (
-        <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-6">
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
           {/* Filters and Search Bar */}
           <div className="flex flex-col md:flex-row gap-3">
             {/* Search Input */}
@@ -1174,12 +1638,12 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-white placeholder-slate-500 text-xs font-mono focus:outline-none focus:border-cyan-500/50 transition-colors"
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-950 placeholder-slate-400 text-xs font-mono focus:outline-none focus:border-indigo-600 transition-colors shadow-sm font-semibold"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs"
                 >
                   ✕
                 </button>
@@ -1190,7 +1654,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             <select
               value={filterDepartment}
               onChange={(e) => { setFilterDepartment(e.target.value); setCurrentPage(1); }}
-              className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-mono focus:outline-none focus:border-cyan-500/50"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-900 text-xs font-mono font-bold focus:outline-none focus:border-indigo-600 shadow-sm"
             >
               {DEPARTMENTS.map(dept => (
                 <option key={dept} value={dept === 'All Departments' ? 'all' : dept}>{dept}</option>
@@ -1201,7 +1665,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             <select
               value={filterDesignation}
               onChange={(e) => { setFilterDesignation(e.target.value); setCurrentPage(1); }}
-              className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-mono focus:outline-none focus:border-cyan-500/50"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-900 text-xs font-mono font-bold focus:outline-none focus:border-indigo-600 shadow-sm"
             >
               {DESIGNATIONS.map(desig => (
                 <option key={desig} value={desig === 'All Designations' ? 'all' : desig}>{desig}</option>
@@ -1212,7 +1676,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             <select
               value={filterStatus}
               onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
-              className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-mono focus:outline-none focus:border-cyan-500/50"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-900 text-xs font-mono font-bold focus:outline-none focus:border-indigo-600 shadow-sm"
             >
               <option value="all">All Statuses</option>
               <option value="active">Active</option>
@@ -1224,7 +1688,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-300 text-xs font-mono focus:outline-none focus:border-cyan-500/50"
+              className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-900 text-xs font-mono font-bold focus:outline-none focus:border-indigo-600 shadow-sm"
             >
               <option value="name">Sort by Name</option>
               <option value="empId">Sort by Code</option>
@@ -1236,43 +1700,44 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             {/* Sort Order Toggle */}
             <button
               onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-              className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 text-slate-300 hover:text-white transition-all"
+              className="p-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 transition-all shadow-sm"
               title={`Sorting: ${sortOrder.toUpperCase()}`}
             >
-              <ArrowUpDown className="w-4 h-4 text-cyan-400" />
+              <ArrowUpDown className="w-4 h-4 text-indigo-600" />
             </button>
           </div>
 
           {/* Staff Table */}
-          <div className="overflow-x-auto rounded-2xl border border-slate-800">
-            <table className="w-full text-left text-xs font-mono text-slate-300">
-              <thead className="bg-slate-950/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm bg-white">
+            <table className="w-full text-left text-xs font-mono text-slate-900">
+              <thead className="bg-slate-100 text-slate-900 uppercase text-[10px] tracking-wider border-b border-slate-200 font-black">
                 <tr>
                   <th className="py-3.5 px-4">Staff Member</th>
-                  <th className="py-3.5 px-4">Designation & Type</th>
+                  <th className="py-3.5 px-4">Designation & Cadre</th>
                   <th className="py-3.5 px-4">Department & Subject</th>
                   <th className="py-3.5 px-4">Contact</th>
                   <th className="py-3.5 px-4">Experience & Join</th>
+                  <th className="py-3.5 px-4">Payroll Gross</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 bg-slate-900/30">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-500">
+                    <td colSpan={8} className="py-12 text-center text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
-                        <RefreshCw className="w-6 h-6 animate-spin text-cyan-400" />
-                        <span>Loading faculty roster...</span>
+                        <RefreshCw className="w-6 h-6 animate-spin text-indigo-600" />
+                        <span className="font-bold text-slate-700">Loading faculty roster...</span>
                       </div>
                     </td>
                   </tr>
                 ) : staffList.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-500">
+                    <td colSpan={8} className="py-12 text-center text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
-                        <Users className="w-8 h-8 text-slate-600" />
-                        <span className="text-slate-400 font-bold">No Staff Members Found</span>
+                        <Users className="w-8 h-8 text-slate-400" />
+                        <span className="text-slate-800 font-bold">No Staff Members Found</span>
                         <span className="text-[11px] text-slate-500">
                           Try adjusting search filters or enroll a new faculty member.
                         </span>
@@ -1288,23 +1753,23 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                     return (
                       <tr
                         key={member.id}
-                        className="hover:bg-slate-800/40 transition-colors group"
+                        className="hover:bg-indigo-50/30 transition-colors group"
                       >
                         {/* Member Name + Emp ID + Avatar */}
                         <td className="py-3.5 px-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500/20 to-cyan-500/20 border border-indigo-500/30 flex items-center justify-center font-bold text-cyan-300 text-xs shrink-0 shadow-inner">
+                            <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center font-bold text-indigo-700 text-xs shrink-0 shadow-sm">
                               {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                             </div>
                             <div>
                               <button
                                 onClick={() => handleOpenProfile(member.id)}
-                                className="font-bold text-white hover:text-cyan-400 text-xs transition-colors text-left flex items-center gap-1.5"
+                                className="font-black text-slate-950 hover:text-indigo-600 text-xs transition-colors text-left flex items-center gap-1.5"
                               >
                                 <span>{member.name}</span>
                               </button>
-                              <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
-                                <span className="text-cyan-400 font-bold">{member.empId}</span>
+                              <div className="flex items-center gap-2 text-[10px] text-slate-600 mt-0.5">
+                                <span className="text-indigo-700 font-black bg-indigo-50 px-1 py-0.2 rounded border border-indigo-200">{member.empId}</span>
                                 <span>•</span>
                                 <span>{member.gender || 'Not specified'}</span>
                               </div>
@@ -1315,12 +1780,12 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                         {/* Designation & Staff Type */}
                         <td className="py-3.5 px-4">
                           <div>
-                            <span className="font-medium text-slate-200">{member.designation}</span>
+                            <span className="font-bold text-slate-900">{member.designation}</span>
                             <div className="mt-1">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
                                 isTeacher
-                                  ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/30'
-                                  : 'bg-purple-950/80 text-purple-300 border-purple-500/30'
+                                  ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                                  : 'bg-purple-50 text-purple-800 border-purple-200'
                               }`}>
                                 {member.staffType || 'Staff'}
                               </span>
@@ -1331,10 +1796,10 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                         {/* Department & Specialization */}
                         <td className="py-3.5 px-4">
                           <div className="space-y-0.5">
-                            <div className="text-slate-300">{member.department}</div>
+                            <div className="text-slate-900 font-bold">{member.department}</div>
                             {member.subjectSpecialization && (
-                              <div className="text-[11px] text-cyan-300/80 flex items-center gap-1 truncate max-w-[200px]">
-                                <BookOpen className="w-3 h-3 text-cyan-400 shrink-0" />
+                              <div className="text-[11px] text-slate-700 font-medium flex items-center gap-1 truncate max-w-[200px]">
+                                <BookOpen className="w-3 h-3 text-indigo-600 shrink-0" />
                                 <span className="truncate">{member.subjectSpecialization}</span>
                               </div>
                             )}
@@ -1344,12 +1809,12 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                         {/* Contact */}
                         <td className="py-3.5 px-4">
                           <div className="space-y-1 text-[11px]">
-                            <div className="flex items-center gap-1.5 text-slate-300">
+                            <div className="flex items-center gap-1.5 text-slate-900 font-bold">
                               <Phone className="w-3 h-3 text-slate-500 shrink-0" />
                               <span>{member.phone}</span>
                             </div>
-                            <div className="flex items-center gap-1.5 text-slate-400 truncate max-w-[180px]">
-                              <Mail className="w-3 h-3 text-slate-500 shrink-0" />
+                            <div className="flex items-center gap-1.5 text-slate-600 truncate max-w-[180px]">
+                              <Mail className="w-3 h-3 text-slate-400 shrink-0" />
                               <span className="truncate">{member.email}</span>
                             </div>
                           </div>
@@ -1358,30 +1823,38 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                         {/* Experience & Qualification */}
                         <td className="py-3.5 px-4">
                           <div className="space-y-0.5 text-[11px]">
-                            <div className="text-slate-300">
+                            <div className="text-slate-900 font-bold">
                               {member.experienceYears ? `${member.experienceYears} yrs exp` : 'Fresher'}
                             </div>
-                            <div className="text-[10px] text-slate-400">
+                            <div className="text-[10px] text-slate-500 font-medium">
                               Joined {member.joiningDate || '—'}
                             </div>
                           </div>
                         </td>
 
+                        {/* Payroll Gross */}
+                        <td className="py-3.5 px-4">
+                          <div className="font-black text-slate-950 text-xs">
+                            ₹{(Number(member.salaryINR) || 50000).toLocaleString('en-IN')}
+                          </div>
+                          <div className="text-[10px] text-emerald-700 font-bold">Enrolled on Payroll</div>
+                        </td>
+
                         {/* Status Badge */}
                         <td className="py-3.5 px-4 text-center">
                           {isInactive ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-500/30">
-                              <XCircle className="w-2.5 h-2.5 text-rose-400" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-300 shadow-sm">
+                              <XCircle className="w-2.5 h-2.5 text-rose-600" />
                               Inactive
                             </span>
                           ) : isOnLeave ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-500/30">
-                              <Clock className="w-2.5 h-2.5 text-amber-400" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-sm">
+                              <Clock className="w-2.5 h-2.5 text-amber-600" />
                               On Leave
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/30">
-                              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 shadow-sm">
+                              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
                               Active
                             </span>
                           )}
@@ -1389,11 +1862,11 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
 
                         {/* Actions */}
                         <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5">
                             {/* 360° Profile Dossier */}
                             <button
                               onClick={() => handleOpenProfile(member.id)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 border border-slate-700 transition-colors"
+                              className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 hover:text-indigo-600 border border-slate-300 transition-colors shadow-sm"
                               title="View 360° Staff Profile"
                             >
                               <Eye className="w-3.5 h-3.5" />
@@ -1403,35 +1876,35 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                             {isTeacher && (
                               <button
                                 onClick={() => handleOpenAssignments(member)}
-                                className="p-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-500/40 transition-colors"
+                                className="p-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-colors shadow-sm"
                                 title="Manage Class & Subject Assignments"
                               >
-                                <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                                <BookOpen className="w-3.5 h-3.5" />
                               </button>
                             )}
 
-                            {/* Soft Deactivate / Reactivate */}
+                            {/* Soft Deactivate / Reactivate with Principal OTP */}
                             {canModifyStaff && (
                               <button
                                 onClick={() => handleToggleActive(member)}
                                 disabled={isDeactivatingId === member.id}
-                                className={`p-1.5 rounded-lg border transition-colors ${
+                                className={`p-1.5 rounded-lg border transition-colors shadow-sm ${
                                   isInactive
-                                    ? 'bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-amber-950/60 hover:bg-amber-900 text-amber-300 border-amber-500/30'
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                                    : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-300'
                                 }`}
-                                title={isInactive ? 'Reactivate Staff' : 'Soft Deactivate Staff'}
+                                title={isInactive ? 'Reactivate Staff Member' : 'Deactivate Staff (Requires Principal OTP)'}
                               >
                                 <Power className={`w-3.5 h-3.5 ${isDeactivatingId === member.id ? 'animate-spin' : ''}`} />
                               </button>
                             )}
 
-                            {/* Delete (Soft) */}
+                            {/* Delete (Soft) with Principal OTP */}
                             {canModifyStaff && (
                               <button
-                                onClick={() => handleDeleteStaff(member)}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/80 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 transition-colors"
-                                title="Remove Faculty Record"
+                                onClick={() => handleInitiateStaffRemoval(member)}
+                                className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-300 hover:border-rose-300 transition-colors shadow-sm"
+                                title="Remove Faculty Record (Requires Principal OTP)"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -3092,6 +3565,219 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* 9. GLOBAL ASSIGN INCHARGE RESPONSIBILITY MODAL */}
+      {/* ========================================================================= */}
+      {showGlobalAssignDutyModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white border border-slate-200 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] font-sans">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-amber-500 to-orange-600 text-white">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 text-white shadow-inner">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-black text-white text-base tracking-tight">Assign Institutional Responsibility / Incharge</h3>
+                  <p className="text-xs text-amber-100 font-mono">
+                    Allocate statutory school incharge duties to faculty & staff
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowGlobalAssignDutyModal(false)}
+                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAssignGlobalDuty} className="p-6 overflow-y-auto space-y-4 font-mono text-xs">
+              {/* Select Staff Member */}
+              <div className="space-y-1.5">
+                <label className="text-slate-900 font-black">Select Faculty / Staff Member *</label>
+                <select
+                  value={globalDutyForm.staffId}
+                  onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, staffId: e.target.value }))}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                  required
+                >
+                  <option value="">-- Choose Faculty Member --</option>
+                  {staffList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.empId}) • {s.designation} ({s.department})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Select Responsibility Template */}
+              <div className="space-y-1.5">
+                <label className="text-slate-900 font-black">Incharge Responsibility Role *</label>
+                <select
+                  value={globalDutyForm.responsibility_type_id}
+                  onChange={(e) => {
+                    const selected = responsibilityTypes.find(t => t.id === e.target.value);
+                    setGlobalDutyForm(prev => ({
+                      ...prev,
+                      responsibility_type_id: e.target.value,
+                      scope_type: (selected?.default_scope_type || 'SCHOOL') as ResponsibilityScopeType,
+                      scope_id: selected?.default_scope_type === 'SECTION' ? 'Class 9-A' : selected?.default_scope_type === 'DEPARTMENT' ? 'Academics' : selected?.default_scope_type === 'HOUSE' ? 'Tagore House' : 'sch-main',
+                      scope_name: selected?.default_scope_type === 'SECTION' ? 'Grade 9 - Section A' : selected?.default_scope_type === 'DEPARTMENT' ? 'Academic Department' : selected?.default_scope_type === 'HOUSE' ? 'Tagore House (Blue)' : 'Institution-wide'
+                    }));
+                  }}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                  required
+                >
+                  <option value="">-- Choose Statutory Incharge Portfolio --</option>
+                  {responsibilityTypes.map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.name} ({type.code}) • {type.category.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+                {responsibilityTypes.find(t => t.id === globalDutyForm.responsibility_type_id)?.description && (
+                  <p className="text-[11px] text-slate-600 italic">
+                    {responsibilityTypes.find(t => t.id === globalDutyForm.responsibility_type_id)?.description}
+                  </p>
+                )}
+              </div>
+
+              {/* Scope Hierarchy Type & Target */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-900 font-black">Scope Hierarchy Type</label>
+                  <select
+                    value={globalDutyForm.scope_type}
+                    onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, scope_type: e.target.value as any }))}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                  >
+                    <option value="SCHOOL">SCHOOL (Institution-wide)</option>
+                    <option value="SECTION">SECTION (Class & Section)</option>
+                    <option value="DEPARTMENT">DEPARTMENT (Academic Subject Dept)</option>
+                    <option value="CAMPUS">CAMPUS (Campus / Wing)</option>
+                    <option value="PROGRAM">PROGRAM (Special Initiative / ATL / FLN)</option>
+                    <option value="HOUSE">HOUSE (Student House)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-900 font-black">Academic Session</label>
+                  <input
+                    type="text"
+                    value={globalDutyForm.academic_session_id}
+                    onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, academic_session_id: e.target.value }))}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Target Scope Name */}
+              <div className="space-y-1.5">
+                <label className="text-slate-900 font-black">Scope Target / Wing Name *</label>
+                <input
+                  type="text"
+                  value={globalDutyForm.scope_name}
+                  onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, scope_name: e.target.value, scope_id: e.target.value }))}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                  placeholder="e.g. Senior Secondary Wing / Class 10-A / ATL Lab"
+                  required
+                />
+              </div>
+
+              {/* Start Date & Primary Incharge Checkbox */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-900 font-black">Effective Start Date</label>
+                  <input
+                    type="date"
+                    value={globalDutyForm.start_date}
+                    onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, start_date: e.target.value }))}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-bold focus:outline-none focus:border-amber-600 shadow-sm"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5 flex flex-col justify-end">
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900">
+                    <input
+                      type="checkbox"
+                      checked={globalDutyForm.is_primary}
+                      onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, is_primary: e.target.checked }))}
+                      className="rounded bg-white border-slate-300 text-amber-600 focus:ring-0"
+                    />
+                    <span className="text-xs font-black text-slate-950">Set as Primary Lead</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Official Appointment Notes */}
+              <div className="space-y-1.5">
+                <label className="text-slate-900 font-black">Official Appointment Notes / Circular Ref</label>
+                <textarea
+                  rows={2}
+                  value={globalDutyForm.notes}
+                  onChange={(e) => setGlobalDutyForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-medium placeholder-slate-400 focus:outline-none focus:border-amber-600 shadow-sm resize-none"
+                  placeholder="e.g. Appointed per School Academic Council Circular #14 for Session 2026-27"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setShowGlobalAssignDutyModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingGlobalDuty}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white font-bold transition-all shadow-sm flex items-center gap-2"
+                >
+                  {submittingGlobalDuty ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  <span>Confirm Duty Assignment</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 10. PRINCIPAL OTP SECURITY AUTHORIZATION MODAL */}
+      {/* ========================================================================= */}
+      <PrincipalOtpAuthModal
+        isOpen={showPrincipalOtpModal}
+        onClose={() => {
+          setShowPrincipalOtpModal(false);
+          setPendingProtectedAction(null);
+        }}
+        actionTitle={
+          pendingProtectedAction?.type === 'delete'
+            ? 'Permanent Removal / Unlisting from Faculty Roster'
+            : 'Faculty Soft Deactivation & Status Freeze'
+        }
+        actionDescription={
+          pendingProtectedAction?.type === 'delete'
+            ? 'This sensitive action requires Principal personal authorization. The employee will be unlisted from active teaching and payroll rosters.'
+            : 'Deactivating a faculty member halts live assignments and suspends ERP login access while preserving service history.'
+        }
+        targetDetails={
+          pendingProtectedAction?.member
+            ? {
+                empId: pendingProtectedAction.member.empId,
+                name: pendingProtectedAction.member.name,
+                designation: pendingProtectedAction.member.designation,
+                department: pendingProtectedAction.member.department
+              }
+            : undefined
+        }
+        onSuccess={handlePrincipalAuthConfirmed}
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

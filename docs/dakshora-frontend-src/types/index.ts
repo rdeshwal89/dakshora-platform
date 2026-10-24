@@ -723,12 +723,60 @@ export interface ErpStaffRecord {
   updated_at?: string;
 }
 
+export interface TeachingFacultyKPI {
+  total: number;
+  pgt: number;
+  tgt: number;
+  prt: number;
+  other: number;
+  present: number;
+  onDuty: number;
+  onLeave: number;
+}
+
+export interface NonTeachingStaffKPI {
+  total: number;
+  admin: number;
+  transport: number;
+  support: number;
+  present: number;
+  onDuty: number;
+  onLeave: number;
+}
+
+export interface LeaveBreakdownKPI {
+  total: number;
+  cl: number;
+  el: number;
+  medical: number;
+  other: number;
+}
+
+export interface PayrollKPI {
+  totalEnrolled: number;
+  activeOnPayroll: number;
+  monthlyGrossINR: number;
+}
+
 export interface StaffSummaryKPIs {
   total: number;
   active: number;
   teachers: number;
   nonTeaching: number;
   onLeaveToday: number;
+  teachingBreakdown?: TeachingFacultyKPI;
+  nonTeachingBreakdown?: NonTeachingStaffKPI;
+  leaveBreakdown?: LeaveBreakdownKPI;
+  payroll?: PayrollKPI;
+}
+
+export interface InstitutionalDutyRecord extends StaffResponsibilityRecord {
+  empId?: string;
+  designation?: string;
+  department?: string;
+  phone?: string;
+  email?: string;
+  photoUrl?: string | null;
 }
 
 export interface StaffListResponse {
