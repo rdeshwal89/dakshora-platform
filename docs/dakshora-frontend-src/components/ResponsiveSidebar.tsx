@@ -203,9 +203,9 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
         },
         {
           id: 'attendance',
-          label: t('nav.attendance', 'Attendance Hub'),
+          label: t('nav.attendance', 'Attendance & Biometrics'),
           icon: Calendar,
-          description: 'Classroom Roll-Call, Staff Register & Absentee Alerts'
+          description: 'Attendance Register, Biometric Punch Logs & Leave Tracker'
         },
         {
           id: 'timetable',

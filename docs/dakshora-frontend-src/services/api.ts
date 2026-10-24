@@ -26,6 +26,8 @@ import {
   StudentDailyAttendanceItem,
   StaffDailyAttendanceItem,
   AttendanceDashboardSummary,
+  BiometricTerminalItem,
+  BiometricPunchLogItem,
   MonthlyAttendanceGridData,
   LowAttendanceReportItem,
   AttendanceSettings,
@@ -1254,6 +1256,38 @@ export async function updateAttendanceSettings(settings: Partial<AttendanceSetti
   return makeApiCall<{ success: boolean; message: string; settings: AttendanceSettings }>('/api/erp/attendance/settings', {
     method: 'POST',
     body: JSON.stringify(settings)
+  });
+}
+
+export async function fetchBiometricLogs(params?: { date?: string; role?: string; search?: string }) {
+  const q = new URLSearchParams();
+  if (params?.date) q.append('date', params.date);
+  if (params?.role) q.append('role', params.role);
+  if (params?.search) q.append('search', params.search);
+  return makeApiCall<{
+    success: boolean;
+    date: string;
+    totalPunches: number;
+    terminals: BiometricTerminalItem[];
+    logs: BiometricPunchLogItem[];
+  }>(`/api/erp/attendance/biometric/logs?${q.toString()}`);
+}
+
+export async function syncBiometricTerminal(payload?: { date?: string; terminalId?: string }) {
+  return makeApiCall<{
+    success: boolean;
+    message: string;
+    stats: { date: string; staffSynced: number; studentSynced: number; totalPunchesProcessed: number };
+  }>('/api/erp/attendance/biometric/sync', {
+    method: 'POST',
+    body: JSON.stringify(payload || {})
+  });
+}
+
+export async function recordBiometricPunch(punch: Partial<BiometricPunchLogItem>) {
+  return makeApiCall<{ success: boolean; message: string; punch: BiometricPunchLogItem }>('/api/erp/attendance/biometric/punch', {
+    method: 'POST',
+    body: JSON.stringify(punch)
   });
 }
 

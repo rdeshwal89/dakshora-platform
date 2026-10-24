@@ -832,7 +832,23 @@ export interface StaffImportResult {
   }>;
 }
 
-export type AttendanceStatus = 'present' | 'absent' | 'late' | 'half_day' | 'leave' | 'on_leave';
+export type AttendanceStatus =
+  | 'present'
+  | 'absent'
+  | 'late'
+  | 'half_day'
+  | 'leave'
+  | 'on_leave'
+  | 'cl'
+  | 'casual_leave'
+  | 'el'
+  | 'earned_leave'
+  | 'medical'
+  | 'medical_leave'
+  | 'onduty'
+  | 'on_duty'
+  | 'other_leave'
+  | 'other';
 
 export interface ErpAttendanceRecord {
   id: string;
@@ -878,8 +894,43 @@ export interface StaffDailyAttendanceItem {
   staffType: string;
   date: string;
   status: AttendanceStatus;
+  leaveType?: string;
   remarks: string;
   marked_by?: string | null;
+  punchInTime?: string;
+  punchOutTime?: string;
+  verificationMode?: string;
+}
+
+export interface BiometricTerminalItem {
+  id: string;
+  name: string;
+  status: 'ONLINE' | 'OFFLINE';
+  ip: string;
+  type: string;
+  location: string;
+  punchesToday: number;
+}
+
+export interface BiometricPunchLogItem {
+  id: string;
+  punchId: string;
+  userId: string;
+  empId?: string;
+  rollNo?: string;
+  name: string;
+  role: 'staff' | 'student';
+  designationOrGrade: string;
+  departmentOrSection: string;
+  timestamp: string;
+  timeStr: string;
+  punchType: 'CHECK_IN' | 'CHECK_OUT';
+  verificationMode: 'FINGERPRINT' | 'FACE_RECOGNITION' | 'RFID_CARD';
+  terminalId: string;
+  terminalName: string;
+  location: string;
+  syncStatus: 'SYNCED' | 'PROCESSED' | 'PENDING';
+  organization_id?: string;
 }
 
 export interface AttendanceDashboardSummary {
@@ -900,6 +951,11 @@ export interface AttendanceDashboardSummary {
     absent: number;
     late: number;
     onLeave: number;
+    cl?: number;
+    el?: number;
+    medical?: number;
+    onduty?: number;
+    otherLeave?: number;
     attendancePercent: number;
   };
   classStats: Array<{

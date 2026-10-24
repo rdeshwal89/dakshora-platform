@@ -16740,8 +16740,14 @@ app.get("/api/erp/attendance/dashboard", (req, res) => {
   const presentStaff = todayStaffAtt.filter(a => a.status === "present").length;
   const absentStaff = todayStaffAtt.filter(a => a.status === "absent").length;
   const lateStaff = todayStaffAtt.filter(a => a.status === "late").length;
-  const onLeaveStaff = todayStaffAtt.filter(a => a.status === "on_leave" || a.status === "leave").length;
-  const staffRate = totalStaff > 0 ? Number(((presentStaff + lateStaff) / totalStaff * 100).toFixed(1)) : 100.0;
+  const clStaff = todayStaffAtt.filter(a => a.status === "cl" || a.status === "casual_leave").length;
+  const elStaff = todayStaffAtt.filter(a => a.status === "el" || a.status === "earned_leave").length;
+  const medicalStaff = todayStaffAtt.filter(a => a.status === "medical" || a.status === "medical_leave").length;
+  const ondutyStaff = todayStaffAtt.filter(a => a.status === "onduty" || a.status === "on_duty").length;
+  const otherLeaveStaff = todayStaffAtt.filter(a => a.status === "other_leave" || a.status === "other").length;
+  const genericLeaveStaff = todayStaffAtt.filter(a => a.status === "on_leave" || a.status === "leave").length;
+  const onLeaveStaff = clStaff + elStaff + medicalStaff + otherLeaveStaff + genericLeaveStaff;
+  const staffRate = totalStaff > 0 ? Number(((presentStaff + lateStaff + ondutyStaff) / totalStaff * 100).toFixed(1)) : 100.0;
 
   // 3. Class breakdown
   const classMap = {};
@@ -16787,6 +16793,11 @@ app.get("/api/erp/attendance/dashboard", (req, res) => {
       absent: absentStaff,
       late: lateStaff,
       onLeave: onLeaveStaff,
+      cl: clStaff,
+      el: elStaff,
+      medical: medicalStaff,
+      onduty: ondutyStaff,
+      otherLeave: otherLeaveStaff,
       attendancePercent: staffRate
     },
     classStats
@@ -17386,7 +17397,17 @@ async function recordStaffAttendanceDb(orgId, staffId, date, status, remarks, ma
     half_day: "half_day",
     "half-day": "half_day",
     leave: "leave",
-    on_leave: "leave"
+    on_leave: "leave",
+    cl: "leave",
+    casual_leave: "leave",
+    el: "leave",
+    earned_leave: "leave",
+    medical: "leave",
+    medical_leave: "leave",
+    onduty: "present",
+    on_duty: "present",
+    other: "leave",
+    other_leave: "leave"
   };
   const enumStatus = statusMap[(status || "").toLowerCase()] || "present";
 
@@ -17811,6 +17832,11 @@ app.get("/api/erp/attendance/staff/summary", async (req, res) => {
     let late = 0;
     let halfDay = 0;
     let leave = 0;
+    let cl = 0;
+    let el = 0;
+    let medical = 0;
+    let onduty = 0;
+    let otherLeave = 0;
     let absent = 0;
 
     stfRecords.forEach(r => {
@@ -17818,6 +17844,11 @@ app.get("/api/erp/attendance/staff/summary", async (req, res) => {
       if (st === "present") present++;
       else if (st === "late") late++;
       else if (st === "half_day" || st === "half-day") halfDay++;
+      else if (st === "cl" || st === "casual_leave") { cl++; leave++; }
+      else if (st === "el" || st === "earned_leave") { el++; leave++; }
+      else if (st === "medical" || st === "medical_leave") { medical++; leave++; }
+      else if (st === "onduty" || st === "on_duty") { onduty++; present++; }
+      else if (st === "other" || st === "other_leave") { otherLeave++; leave++; }
       else if (st === "leave" || st === "on_leave") leave++;
       else if (st === "absent") absent++;
       else present++;
@@ -17841,6 +17872,11 @@ app.get("/api/erp/attendance/staff/summary", async (req, res) => {
       present: present + late,
       halfDay,
       leave,
+      cl,
+      el,
+      medical,
+      onduty,
+      otherLeave,
       absent,
       payableDays,
       lopDays,
@@ -17853,6 +17889,341 @@ app.get("/api/erp/attendance/staff/summary", async (req, res) => {
     month,
     totalStaff: summary.length,
     summary
+  });
+});
+
+// 3j-2. BIOMETRIC LOGS & HARDWARE SYNCHRONIZATION ENDPOINTS
+let ERP_BIOMETRIC_LOGS = [
+  {
+    id: "bio-log-01",
+    punchId: "PUNCH-20261024-001",
+    userId: "stf-01",
+    empId: "EMP-DPS-001",
+    name: "Dr. R. K. Sharma",
+    role: "staff",
+    designationOrGrade: "Principal & Director",
+    departmentOrSection: "Administration",
+    timestamp: "2026-10-24T07:42:15.000Z",
+    timeStr: "07:42:15 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "FACE_RECOGNITION",
+    terminalId: "TERMINAL-01",
+    terminalName: "Main Gate Face Terminal #01",
+    location: "Main Campus Gate A",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-02",
+    punchId: "PUNCH-20261024-002",
+    userId: "stf-02",
+    empId: "EMP-DPS-002",
+    name: "Sunita Verma",
+    role: "staff",
+    designationOrGrade: "Vice Principal (Senior Wing)",
+    departmentOrSection: "Academics",
+    timestamp: "2026-10-24T07:46:30.000Z",
+    timeStr: "07:46:30 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "FINGERPRINT",
+    terminalId: "TERMINAL-02",
+    terminalName: "Admin Block Biometric Unit #02",
+    location: "Administrative Reception",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-03",
+    punchId: "PUNCH-20261024-003",
+    userId: "stf-04",
+    empId: "EMP-DPS-004",
+    name: "Pooja Malhotra",
+    role: "staff",
+    designationOrGrade: "PGT Physics & Timetable Incharge",
+    departmentOrSection: "Science Department",
+    timestamp: "2026-10-24T07:48:10.000Z",
+    timeStr: "07:48:10 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "FINGERPRINT",
+    terminalId: "TERMINAL-03",
+    terminalName: "Staff Room Biometric Terminal #03",
+    location: "Senior Staff Room Block B",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-04",
+    punchId: "PUNCH-20261024-004",
+    userId: "stf-05",
+    empId: "EMP-DPS-005",
+    name: "Anita Sharma",
+    role: "staff",
+    designationOrGrade: "PGT Mathematics & Class 10 Teacher",
+    departmentOrSection: "Mathematics Department",
+    timestamp: "2026-10-24T07:51:22.000Z",
+    timeStr: "07:51:22 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "RFID_CARD",
+    terminalId: "TERMINAL-01",
+    terminalName: "Main Gate Face Terminal #01",
+    location: "Main Campus Gate A",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-05",
+    punchId: "PUNCH-20261024-005",
+    userId: "stf-06",
+    empId: "EMP-DPS-006",
+    name: "Vikram Rathore",
+    role: "staff",
+    designationOrGrade: "TGT Social Studies & Discipline Incharge",
+    departmentOrSection: "Humanities",
+    timestamp: "2026-10-24T07:53:40.000Z",
+    timeStr: "07:53:40 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "FACE_RECOGNITION",
+    terminalId: "TERMINAL-01",
+    terminalName: "Main Gate Face Terminal #01",
+    location: "Main Campus Gate A",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-06",
+    punchId: "PUNCH-20261024-006",
+    userId: "std-101",
+    rollNo: "DPS-2026-101",
+    name: "Aarav Sharma",
+    role: "student",
+    designationOrGrade: "Class 10",
+    departmentOrSection: "Section A",
+    timestamp: "2026-10-24T07:44:05.000Z",
+    timeStr: "07:44:05 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "RFID_CARD",
+    terminalId: "TERMINAL-04",
+    terminalName: "Bus Bay & Gate RFID Turnstile #04",
+    location: "Student Gate 2",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-07",
+    punchId: "PUNCH-20261024-007",
+    userId: "std-102",
+    rollNo: "DPS-2026-102",
+    name: "Ananya Patel",
+    role: "student",
+    designationOrGrade: "Class 10",
+    departmentOrSection: "Section A",
+    timestamp: "2026-10-24T07:45:19.000Z",
+    timeStr: "07:45:19 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "RFID_CARD",
+    terminalId: "TERMINAL-04",
+    terminalName: "Bus Bay & Gate RFID Turnstile #04",
+    location: "Student Gate 2",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-08",
+    punchId: "PUNCH-20261024-008",
+    userId: "std-104",
+    rollNo: "DPS-2026-104",
+    name: "Rohan Gupta",
+    role: "student",
+    designationOrGrade: "Class 10",
+    departmentOrSection: "Section A",
+    timestamp: "2026-10-24T07:50:00.000Z",
+    timeStr: "07:50:00 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "FACE_RECOGNITION",
+    terminalId: "TERMINAL-01",
+    terminalName: "Main Gate Face Terminal #01",
+    location: "Main Campus Gate A",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  },
+  {
+    id: "bio-log-09",
+    punchId: "PUNCH-20261024-009",
+    userId: "std-105",
+    rollNo: "DPS-2026-105",
+    name: "Pooja Reddy",
+    role: "student",
+    designationOrGrade: "Class 10",
+    departmentOrSection: "Section A",
+    timestamp: "2026-10-24T08:12:45.000Z",
+    timeStr: "08:12:45 AM",
+    punchType: "CHECK_IN",
+    verificationMode: "RFID_CARD",
+    terminalId: "TERMINAL-04",
+    terminalName: "Bus Bay & Gate RFID Turnstile #04",
+    location: "Student Gate 2",
+    syncStatus: "SYNCED",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"
+  }
+];
+
+// GET /api/erp/attendance/biometric/logs
+app.get("/api/erp/attendance/biometric/logs", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { date = new Date().toISOString().split("T")[0], role = "all", search = "" } = req.query;
+
+  let list = ERP_BIOMETRIC_LOGS.filter(l => l.organization_id === orgId);
+  if (date) {
+    list = list.filter(l => l.timestamp.startsWith(date));
+  }
+  if (role && role !== "all") {
+    list = list.filter(l => l.role === role);
+  }
+  if (search) {
+    const s = search.toLowerCase();
+    list = list.filter(l =>
+      l.name.toLowerCase().includes(s) ||
+      (l.empId && l.empId.toLowerCase().includes(s)) ||
+      (l.rollNo && l.rollNo.toLowerCase().includes(s)) ||
+      l.terminalName.toLowerCase().includes(s)
+    );
+  }
+
+  const terminals = [
+    { id: "TERMINAL-01", name: "Main Gate Face Terminal #01", status: "ONLINE", ip: "192.168.1.101", type: "FACE/RFID", location: "Main Campus Gate A", punchesToday: list.filter(l => l.terminalId === "TERMINAL-01").length },
+    { id: "TERMINAL-02", name: "Admin Block Biometric Unit #02", status: "ONLINE", ip: "192.168.1.102", type: "FINGERPRINT", location: "Administrative Reception", punchesToday: list.filter(l => l.terminalId === "TERMINAL-02").length },
+    { id: "TERMINAL-03", name: "Staff Room Biometric Terminal #03", status: "ONLINE", ip: "192.168.1.103", type: "FINGERPRINT", location: "Senior Staff Room Block B", punchesToday: list.filter(l => l.terminalId === "TERMINAL-03").length },
+    { id: "TERMINAL-04", name: "Bus Bay & Gate RFID Turnstile #04", status: "ONLINE", ip: "192.168.1.104", type: "RFID", location: "Student Gate 2", punchesToday: list.filter(l => l.terminalId === "TERMINAL-04").length }
+  ];
+
+  res.json({
+    success: true,
+    date,
+    totalPunches: list.length,
+    terminals,
+    logs: list
+  });
+});
+
+// POST /api/erp/attendance/biometric/sync
+app.post("/api/erp/attendance/biometric/sync", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { date = new Date().toISOString().split("T")[0], terminalId } = req.body || {};
+
+  let targetLogs = ERP_BIOMETRIC_LOGS.filter(l => l.organization_id === orgId && l.timestamp.startsWith(date));
+  if (terminalId) {
+    targetLogs = targetLogs.filter(l => l.terminalId === terminalId);
+  }
+
+  let staffSynced = 0;
+  let studentSynced = 0;
+
+  for (const log of targetLogs) {
+    if (log.role === "staff") {
+      const existing = ERP_STAFF_ATTENDANCE.find(a =>
+        a.organization_id === orgId &&
+        (a.staffId === log.userId || a.staffId === log.empId) &&
+        a.attendanceDate === date
+      );
+      if (!existing) {
+        ERP_STAFF_ATTENDANCE.push({
+          id: `stf-att-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          staffId: log.userId,
+          attendanceDate: date,
+          status: "present",
+          remarks: `Biometric Punch (${log.timeStr}) via ${log.terminalName}`,
+          marked_by: "Biometric Sync Agent",
+          organization_id: orgId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+        staffSynced++;
+      }
+    } else if (log.role === "student") {
+      const existing = ERP_ATTENDANCE.find(a =>
+        a.organization_id === orgId &&
+        (a.studentId === log.userId || a.student_id === log.userId) &&
+        (a.attendanceDate === date || a.date === date)
+      );
+      if (!existing) {
+        ERP_ATTENDANCE.push({
+          id: `att-bio-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          studentId: log.userId,
+          studentName: log.name,
+          grade: log.designationOrGrade,
+          section: (log.departmentOrSection || "").replace("Section ", "") || "A",
+          attendanceDate: date,
+          date,
+          status: "present",
+          remarks: `Biometric Punch (${log.timeStr}) via ${log.terminalName}`,
+          marked_by: "Biometric Sync Agent",
+          organization_id: orgId
+        });
+        studentSynced++;
+      }
+    }
+    log.syncStatus = "SYNCED";
+  }
+
+  await recordAuditLog("erp.biometric_sync_executed", req.user?.email || "Admin", "biometric_terminal", date, req);
+
+  res.json({
+    success: true,
+    message: `Biometric synchronization completed for ${date}. Synced ${staffSynced} staff and ${studentSynced} students.`,
+    stats: {
+      date,
+      staffSynced,
+      studentSynced,
+      totalPunchesProcessed: targetLogs.length
+    }
+  });
+});
+
+// POST /api/erp/attendance/biometric/punch
+app.post("/api/erp/attendance/biometric/punch", (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { userId, name, role = "staff", empId, rollNo, designationOrGrade, departmentOrSection, verificationMode = "FINGERPRINT", terminalId = "TERMINAL-01" } = req.body || {};
+
+  if (!userId || !name) {
+    return res.status(400).json({ success: false, message: "userId and name are required" });
+  }
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+  const terminalNames = {
+    "TERMINAL-01": "Main Gate Face Terminal #01",
+    "TERMINAL-02": "Admin Block Biometric Unit #02",
+    "TERMINAL-03": "Staff Room Biometric Terminal #03",
+    "TERMINAL-04": "Bus Bay & Gate RFID Turnstile #04"
+  };
+
+  const newPunch = {
+    id: `bio-log-${Date.now()}`,
+    punchId: `PUNCH-${now.toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(100 + Math.random() * 900)}`,
+    userId,
+    empId,
+    rollNo,
+    name,
+    role,
+    designationOrGrade: designationOrGrade || (role === "staff" ? "Faculty" : "Student"),
+    departmentOrSection: departmentOrSection || (role === "staff" ? "Teaching" : "Section A"),
+    timestamp: now.toISOString(),
+    timeStr,
+    punchType: "CHECK_IN",
+    verificationMode,
+    terminalId,
+    terminalName: terminalNames[terminalId] || "Biometric Terminal",
+    location: "Campus Entrance",
+    syncStatus: "SYNCED",
+    organization_id: orgId
+  };
+
+  ERP_BIOMETRIC_LOGS.unshift(newPunch);
+
+  res.json({
+    success: true,
+    message: `Biometric punch recorded for ${name}`,
+    punch: newPunch
   });
 });
 
