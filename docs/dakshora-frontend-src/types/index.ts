@@ -35,16 +35,32 @@ export interface OrganizationRecord {
   id: string;
   name: string;
   slug: string;
+  instituteCode?: string;
+  institute_code?: string;
+  tenantCode?: string;
+  tenant_code?: string;
+  schoolCode?: string;
+  school_code?: string;
+  board?: string;
+  medium?: string;
+  schoolType?: string;
+  principalName?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  city?: string;
+  state?: string;
   industry?: string;
   plan?: string;
   status?: string;
   created_at?: string;
+  [key: string]: any;
 }
 
 export interface WebsiteRecord {
   id: string;
   name: string;
   domain?: string;
+  previewUrl?: string;
   template?: string;
   status?: string;
   organization_id?: string;
@@ -3751,6 +3767,7 @@ export interface PlatformSchool {
   id: string;
   name: string;
   schoolCode: string;
+  instituteCode?: string;
   organizationId: string;
   organizationName: string;
   campusesCount: number;

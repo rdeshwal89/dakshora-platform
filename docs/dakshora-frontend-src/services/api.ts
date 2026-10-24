@@ -526,7 +526,7 @@ export async function fetchOrganizations() {
   return makeApiCall<{ organizations: OrganizationRecord[] }>('/api/organizations');
 }
 
-export async function createOrganization(data: { name: string; slug: string; plan?: string }) {
+export async function createOrganization(data: { name: string; slug: string; plan?: string; instituteCode?: string }) {
   return makeApiCall<{ organization: OrganizationRecord }>('/api/organizations', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -556,27 +556,63 @@ export async function archiveOrganization(id: string) {
   });
 }
 
+export async function fetchNextInstituteCode() {
+  return makeApiCall<{
+    success: boolean;
+    nextInstituteCode: string;
+    instituteCode: string;
+    message: string;
+  }>('/api/admin/next-institute-code', {
+    headers: { ...superAdminHeaders }
+  });
+}
+
+export async function checkInstituteCodeAvailability(code: string) {
+  return makeApiCall<{
+    success: boolean;
+    valid: boolean;
+    code: string;
+    available: boolean;
+    message: string;
+  }>(`/api/admin/check-institute-code?code=${encodeURIComponent(code)}`, {
+    headers: { ...superAdminHeaders }
+  });
+}
+
 export async function onboardSchoolInstitution(data: {
   schoolName: string;
   principalName: string;
   email: string;
   phone: string;
+  instituteCode?: string;
   board?: string;
+  medium?: string;
+  schoolType?: string;
+  session?: string;
   city?: string;
   state?: string;
   plan?: string;
   mrr?: number;
   notes?: string;
+  requestedSlug?: string;
+  slug?: string;
 }) {
   return makeApiCall<{
     success: boolean;
     message: string;
     tenantId: string;
+    tenantCode?: string;
+    instituteCode?: string;
+    schoolCode?: string;
     organization: OrganizationRecord;
     credentials: {
       email: string;
       principalName: string;
-      initialPassword: string;
+      initialPassword?: string;
+      handoverPassword?: string;
+      activationToken?: string;
+      activationUrl?: string;
+      instituteCode?: string;
       role: string;
       loginUrl: string;
     };

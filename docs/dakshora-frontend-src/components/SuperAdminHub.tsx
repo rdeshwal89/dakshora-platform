@@ -42,8 +42,15 @@ import {
   Send,
   Sliders,
   ChevronRight,
-  HelpCircle
+  HelpCircle,
+  X,
+  Globe,
+  Building,
+  Phone,
+  Hash,
+  Dice5
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 import {
   createSuperAdmin,
   loginSuperAdmin,
@@ -76,7 +83,10 @@ import {
   enrollMfa,
   verifyMfa,
   getMfaStatus,
-  unenrollMfa
+  unenrollMfa,
+  onboardSchoolInstitution,
+  fetchNextInstituteCode,
+  checkInstituteCodeAvailability
 } from '../services/api';
 import {
   PlatformDashboardData,
@@ -520,7 +530,7 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
       shortName: schoolOrOrg.shortName || (schoolName.split(' ')[0] || 'DAKSHORA'),
       board: schoolOrOrg.board || 'CBSE (Central Board of Secondary Education)',
       affiliationNo: schoolOrOrg.affiliationNo || schoolOrOrg.affiliation_no || 'CBSE-AFF-202601',
-      schoolCode: schoolOrOrg.schoolCode || schoolOrOrg.school_code || schoolOrOrg.code || 'DKS-DEL-01',
+      schoolCode: schoolOrOrg.instituteCode || schoolOrOrg.institute_code || schoolOrOrg.schoolCode || schoolOrOrg.school_code || schoolOrOrg.tenant_code || '10001',
       motto: schoolOrOrg.motto || 'Excellence in Education',
       themeColor: schoolOrOrg.themeColor || 'indigo',
       principalName: schoolOrOrg.principalName || 'Principal',
@@ -749,6 +759,256 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
     }
   };
 
+  // =========================================================================
+  // 5-Digit Institute Code & New School Onboarding Modal State & Handlers
+  // =========================================================================
+  const [showNewSchoolModal, setShowNewSchoolModal] = useState(false);
+  const [isSubmittingOnboard, setIsSubmittingOnboard] = useState(false);
+  const [isValidatingCode, setIsValidatingCode] = useState(false);
+  const [codeAvailability, setCodeAvailability] = useState<{
+    checked: boolean;
+    valid: boolean;
+    available: boolean;
+    message?: string;
+  }>({ checked: false, valid: false, available: false });
+
+  const [onboardForm, setOnboardForm] = useState({
+    schoolName: '',
+    instituteCode: '',
+    board: 'CBSE',
+    medium: 'English',
+    schoolType: 'Senior Secondary School (K-12)',
+    schoolHeadRole: 'Principal',
+    principalName: '',
+    email: '',
+    phone: '',
+    password: '',
+    slug: '',
+    city: 'Jaipur',
+    state: 'Rajasthan',
+    plan: 'growth',
+    mrr: 12500,
+    session: '2026-27',
+    notes: ''
+  });
+
+  const [onboardResultModal, setOnboardResultModal] = useState<{
+    schoolName: string;
+    instituteCode: string;
+    tenantId: string;
+    subdomainUrl: string;
+    loginUrl: string;
+    email: string;
+    initialPassword?: string;
+    activationUrl?: string;
+    board: string;
+    city: string;
+  } | null>(null);
+  const [copiedKit, setCopiedKit] = useState(false);
+
+  const handleOpenNewSchoolModal = async () => {
+    const defaultPassword = `School@${Math.floor(1000 + Math.random() * 9000)}!`;
+    setOnboardForm({
+      schoolName: '',
+      instituteCode: '',
+      board: 'CBSE',
+      medium: 'English',
+      schoolType: 'Senior Secondary School (K-12)',
+      schoolHeadRole: 'Principal',
+      principalName: '',
+      email: '',
+      phone: '',
+      password: defaultPassword,
+      slug: '',
+      city: 'Jaipur',
+      state: 'Rajasthan',
+      plan: 'growth',
+      mrr: 12500,
+      session: '2026-27',
+      notes: ''
+    });
+    setCodeAvailability({ checked: false, valid: false, available: false });
+    setShowNewSchoolModal(true);
+
+    // Auto-fetch next available 5-digit code from backend
+    try {
+      const res = await fetchNextInstituteCode();
+      if (res.data?.success && res.data.nextInstituteCode) {
+        setOnboardForm(prev => ({ ...prev, instituteCode: res.data.nextInstituteCode }));
+        setCodeAvailability({
+          checked: true,
+          valid: true,
+          available: true,
+          message: `Next available 5-digit sequence: ${res.data.nextInstituteCode}`
+        });
+      }
+    } catch {
+      setOnboardForm(prev => ({ ...prev, instituteCode: '10002' }));
+    }
+  };
+
+  const handleGenerateNextCode = async () => {
+    setIsValidatingCode(true);
+    try {
+      const res = await fetchNextInstituteCode();
+      if (res.data?.success && res.data.nextInstituteCode) {
+        setOnboardForm(prev => ({ ...prev, instituteCode: res.data.nextInstituteCode }));
+        setCodeAvailability({
+          checked: true,
+          valid: true,
+          available: true,
+          message: `Allocated available 5-digit Institute Code: ${res.data.nextInstituteCode}`
+        });
+        onShowToast('info', '5-Digit Code Allocated', `Institute Code ${res.data.nextInstituteCode} is verified available.`);
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Code Allocation Error', err.message);
+    } finally {
+      setIsValidatingCode(false);
+    }
+  };
+
+  const handleInstituteCodeChange = async (val: string) => {
+    const clean = val.replace(/\D/g, '').slice(0, 5);
+    setOnboardForm(prev => ({ ...prev, instituteCode: clean }));
+
+    if (clean.length === 5) {
+      setIsValidatingCode(true);
+      try {
+        const res = await checkInstituteCodeAvailability(clean);
+        if (res.data?.success) {
+          setCodeAvailability({
+            checked: true,
+            valid: res.data.valid,
+            available: res.data.available,
+            message: res.data.message
+          });
+        }
+      } catch {
+        setCodeAvailability({ checked: true, valid: true, available: true, message: 'Valid 5-digit code.' });
+      } finally {
+        setIsValidatingCode(false);
+      }
+    } else {
+      setCodeAvailability({
+        checked: false,
+        valid: false,
+        available: false,
+        message: clean.length > 0 ? `Must be exactly 5 digits (${clean.length}/5 entered)` : undefined
+      });
+    }
+  };
+
+  const handleSchoolNameChange = (val: string) => {
+    const generatedSlug = val.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    setOnboardForm(prev => ({
+      ...prev,
+      schoolName: val,
+      slug: prev.slug === '' || prev.slug === prev.schoolName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        ? generatedSlug
+        : prev.slug
+    }));
+  };
+
+  const handleSubmitOnboardForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onboardForm.schoolName.trim() || onboardForm.schoolName.length < 3) {
+      onShowToast('error', 'Validation Error', 'School / Academy Name must be at least 3 characters.');
+      return;
+    }
+    if (!/^\d{5}$/.test(onboardForm.instituteCode)) {
+      onShowToast('error', 'Institute Code Error', 'Institute Code must be exactly 5 numeric digits (range: 10001–99999).');
+      return;
+    }
+    if (!onboardForm.principalName.trim()) {
+      onShowToast('error', 'Principal Name Required', 'Please enter Principal or Institutional Head name.');
+      return;
+    }
+    if (!onboardForm.email.trim() || !/^\S+@\S+\.\S+$/.test(onboardForm.email.trim())) {
+      onShowToast('error', 'Invalid Email', 'Please provide a valid official login email address.');
+      return;
+    }
+    const cleanPhone = onboardForm.phone.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      onShowToast('error', 'Invalid Phone', 'Please enter a valid 10-digit Indian mobile number for SMS/WhatsApp onboarding alerts.');
+      return;
+    }
+
+    setIsSubmittingOnboard(true);
+    try {
+      const res = await onboardSchoolInstitution({
+        schoolName: onboardForm.schoolName.trim(),
+        instituteCode: onboardForm.instituteCode.trim(),
+        principalName: onboardForm.principalName.trim(),
+        email: onboardForm.email.trim(),
+        phone: cleanPhone.slice(-10),
+        board: onboardForm.board,
+        medium: onboardForm.medium,
+        schoolType: onboardForm.schoolType,
+        session: onboardForm.session,
+        city: onboardForm.city,
+        state: onboardForm.state,
+        plan: onboardForm.plan,
+        mrr: onboardForm.mrr,
+        notes: onboardForm.notes,
+        requestedSlug: onboardForm.slug.trim()
+      });
+
+      if (res.data?.success) {
+        confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+        setShowNewSchoolModal(false);
+        setOnboardResultModal({
+          schoolName: onboardForm.schoolName.trim(),
+          instituteCode: res.data.instituteCode || onboardForm.instituteCode.trim(),
+          tenantId: res.data.tenantId,
+          subdomainUrl: res.data.website?.previewUrl || res.data.website?.domain || `https://${onboardForm.slug || 'school'}.school.dakshora.app`,
+          loginUrl: res.data.credentials?.loginUrl || 'https://dakshora.co.in/portal',
+          email: onboardForm.email.trim(),
+          initialPassword: onboardForm.password || res.data.credentials?.initialPassword || 'School@2026!',
+          activationUrl: res.data.credentials?.activationUrl,
+          board: onboardForm.board,
+          city: onboardForm.city
+        });
+
+        onShowToast(
+          'success',
+          'School Tenant Onboarded! 🏫🎉',
+          `Created '${onboardForm.schoolName}' with 5-Digit Institute Code ${res.data.instituteCode || onboardForm.instituteCode}.`
+        );
+
+        loadSchools();
+        loadOrganizations();
+        loadDashboard();
+      } else {
+        onShowToast('error', 'Onboarding Failed', res.data?.message || 'Could not provision school tenant.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Onboarding Error', err.message);
+    } finally {
+      setIsSubmittingOnboard(false);
+    }
+  };
+
+  const handleCopyHandoverKit = () => {
+    if (!onboardResultModal) return;
+    const kitText = `*DAKSHORA 2.0 — INSTITUTIONAL ONBOARDING HANDOVER KIT* 🏫
+--------------------------------------------------------
+🏛️ *School Name:* ${onboardResultModal.schoolName}
+🔢 *5-Digit Institute Code:* ${onboardResultModal.instituteCode}
+🌐 *Official Web Portal:* ${onboardResultModal.subdomainUrl}
+📋 *Board & City:* ${onboardResultModal.board} • ${onboardResultModal.city}
+🔑 *Principal Admin Login:* ${onboardResultModal.email}
+🔒 *Initial Master Password:* ${onboardResultModal.initialPassword || 'Provided in email'}
+🔗 *Direct ERP Cockpit:* ${onboardResultModal.loginUrl}
+${onboardResultModal.activationUrl ? `⚡ *Activation Link:* ${onboardResultModal.activationUrl}\n` : ''}--------------------------------------------------------
+_Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
+
+    navigator.clipboard.writeText(kitText);
+    setCopiedKit(true);
+    setTimeout(() => setCopiedKit(false), 2500);
+    onShowToast('success', 'Handover Kit Copied! 📋', 'Credentials formatted and copied to clipboard.');
+  };
+
   // Legacy client creation
   const handleCreateClientAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -872,6 +1132,16 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleOpenNewSchoolModal}
+            className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:brightness-110 text-white text-xs font-mono font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/25 cursor-pointer transition-all"
+            title="Create a new school tenant with a unique 5-Digit Institute Code"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Onboard New School (5-Digit Code)</span>
+          </button>
+
           <button
             onClick={() => setShowSupportModal(true)}
             className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-mono font-bold transition-all flex items-center gap-2 shadow-xs cursor-pointer"
@@ -1056,7 +1326,7 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
             const demoSchool = schools.find(s => s.organizationId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' || s.name?.toLowerCase().includes('dakshora')) || {
               id: 'e078639d-f988-49bc-8dca-30ef652cf41f',
               name: 'Dakshora Academy, New Delhi',
-              schoolCode: 'DKS-DEL-01',
+              schoolCode: '10001',
               organizationId: 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e',
               organizationName: 'Dakshora Academy New Delhi',
               board: 'CBSE',
@@ -1092,7 +1362,7 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
                           Affiliation: <strong>CBSE-AFF-202601</strong>
                         </span>
                         <span className="text-xs font-mono text-purple-300 bg-white/10 px-3 py-1 rounded-xl border border-white/10">
-                          Code: <strong>{demoSchool.schoolCode || 'DKS-DEL-01'}</strong>
+                          Code: <strong>{demoSchool.schoolCode || '10001'}</strong>
                         </span>
                       </div>
                     </div>
@@ -1186,6 +1456,15 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleOpenNewSchoolModal}
+                        className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white text-xs font-mono font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Onboard School Campus</span>
+                      </button>
+
                       <button
                         onClick={loadSchools}
                         className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer"
@@ -1400,6 +1679,15 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrgs ? 'animate-spin' : ''}`} />
                 <span>Filter</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenNewSchoolModal}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Tenant (5-Digit Code)</span>
               </button>
             </div>
           </div>
@@ -1711,13 +1999,24 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
               <h3 className="text-sm font-bold text-slate-900">Multi-Tenant Onboarding Progress Tracker</h3>
               <p className="text-xs text-slate-500 font-mono">Monitor tenant onboarding checklist, step progress, and activations.</p>
             </div>
-            <button
-              onClick={loadOnboarding}
-              className="px-3.5 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-700 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOnboarding ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenNewSchoolModal}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:brightness-110 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Onboard School (5-Digit Code)</span>
+              </button>
+
+              <button
+                onClick={loadOnboarding}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-mono font-bold text-slate-700 shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOnboarding ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3">
@@ -2548,6 +2847,526 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* 5-DIGIT INSTITUTE CODE NEW SCHOOL ONBOARDING MODAL (SUPERADMIN PROVISIONING) */}
+      {/* ===================================================================== */}
+      {showNewSchoolModal && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-4xl w-full border border-slate-200 shadow-2xl overflow-hidden my-6 animate-in zoom-in-95">
+            {/* Header */}
+            <div className="p-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/25">
+                  <GraduationCap className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black tracking-tight text-white">
+                      New School Onboarding & Tenant Provisioning
+                    </h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      5-Digit Code
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 font-mono mt-0.5">
+                    Allocate unique 5-Digit Institute Code, provision isolated tenant schema & generate Principal credentials.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewSchoolModal(false)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleSubmitOnboardForm} className="p-6 space-y-6 text-xs font-mono max-h-[78vh] overflow-y-auto">
+              {/* SECTION 1: INSTITUTIONAL IDENTITY & 5-DIGIT INSTITUTE CODE */}
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                  <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    <span>1. Institutional Identity & 5-Digit Institute Code</span>
+                  </span>
+                  <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                    Mandatory ERP Master Shortcode
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* School / Academy Name */}
+                  <div className="md:col-span-2">
+                    <label className="block text-slate-700 font-bold mb-1">
+                      School / Academy Full Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={onboardForm.schoolName}
+                      onChange={(e) => handleSchoolNameChange(e.target.value)}
+                      placeholder="e.g. Tagore International Public Senior Secondary School"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-sans font-semibold focus:outline-none focus:border-indigo-500 shadow-xs"
+                      required
+                    />
+                  </div>
+
+                  {/* 5-Digit Institute Code */}
+                  <div className="p-4 rounded-2xl bg-white border-2 border-indigo-200 md:col-span-2 shadow-xs space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <label className="block text-slate-900 font-black text-xs uppercase tracking-wide flex items-center gap-1.5">
+                          <Hash className="w-4 h-4 text-indigo-600" />
+                          <span>5-Digit Institute Code (संस्था कोड) *</span>
+                        </label>
+                        <p className="text-[11px] text-slate-500 font-sans mt-0.5">
+                          Unique 5-digit number (10001–99999) used for Student Admission IDs (e.g. 10001-2026-0001), Staff IDs, and Subdomain routing.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleGenerateNextCode}
+                        disabled={isValidatingCode}
+                        className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-300 flex items-center gap-1.5 transition-all self-start sm:self-auto cursor-pointer shadow-xs disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isValidatingCode ? 'animate-spin' : ''}`} />
+                        <span>🎲 Auto-Generate Next Code</span>
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+                      <div className="relative w-full sm:w-56">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={5}
+                          value={onboardForm.instituteCode}
+                          onChange={(e) => handleInstituteCodeChange(e.target.value)}
+                          placeholder="10002"
+                          className="w-full bg-slate-50 border-2 border-indigo-400 rounded-xl px-4 py-2 text-center text-lg font-mono font-black tracking-widest text-indigo-900 focus:outline-none focus:border-indigo-600 focus:bg-white shadow-inner"
+                          required
+                        />
+                      </div>
+
+                      <div className="text-xs">
+                        {isValidatingCode ? (
+                          <div className="flex items-center gap-1.5 text-indigo-600">
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Verifying 5-digit code uniqueness in database...</span>
+                          </div>
+                        ) : codeAvailability.checked && codeAvailability.valid && codeAvailability.available ? (
+                          <div className="flex items-center gap-1.5 text-emerald-700 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-300">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>✓ Code {onboardForm.instituteCode} is available for allocation.</span>
+                          </div>
+                        ) : codeAvailability.checked && !codeAvailability.available ? (
+                          <div className="flex items-center gap-1.5 text-rose-700 font-bold bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-300">
+                            <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span>❌ Code {onboardForm.instituteCode} is already assigned to another school.</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-500 font-mono text-[11px]">
+                            {onboardForm.instituteCode.length > 0 
+                              ? `Enter ${5 - onboardForm.instituteCode.length} more digit(s) for 5-digit code` 
+                              : 'Enter 5 numeric digits (e.g. 10002) or click Auto-Generate'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Board */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Affiliation Board *
+                    </label>
+                    <select
+                      value={onboardForm.board}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, board: e.target.value }))}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="CBSE">CBSE (Central Board of Secondary Education)</option>
+                      <option value="ICSE">ICSE / CISCE Board</option>
+                      <option value="RBSE">RBSE (Rajasthan Board of Secondary Education)</option>
+                      <option value="State Board">State Board (Government / Recognized)</option>
+                      <option value="IB">IB (International Baccalaureate)</option>
+                      <option value="Cambridge">Cambridge International (CIE)</option>
+                    </select>
+                  </div>
+
+                  {/* Language Medium */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Instruction Medium *
+                    </label>
+                    <select
+                      value={onboardForm.medium}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, medium: e.target.value }))}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="English">English Medium</option>
+                      <option value="Hindi">Hindi Medium (हिंदी माध्यम)</option>
+                      <option value="Bilingual">Bilingual (English + Hindi)</option>
+                    </select>
+                  </div>
+
+                  {/* School Level */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Institutional Category *
+                    </label>
+                    <select
+                      value={onboardForm.schoolType}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, schoolType: e.target.value }))}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="Senior Secondary School (K-12)">Senior Secondary School (Nursery to 12th)</option>
+                      <option value="Secondary School (K-10)">Secondary School (Nursery to 10th)</option>
+                      <option value="Primary School (Pre-K to 5th)">Primary & Pre-School (Nursery to 5th)</option>
+                      <option value="Higher Secondary & Junior College">Higher Secondary Academy & Junior College</option>
+                    </select>
+                  </div>
+
+                  {/* Subdomain Slug */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Tenant Subdomain Slug *
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={onboardForm.slug}
+                        onChange={(e) => setOnboardForm(prev => ({ ...prev, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))}
+                        placeholder="tagore-academy"
+                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-indigo-700 font-bold focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono mt-1 block">
+                      Portal URL: https://{onboardForm.slug || 'school'}.school.dakshora.app
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: PRINCIPAL & INSTITUTIONAL HEAD CREDENTIALS */}
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                  <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                    <span>2. Institutional Head (Principal / Executive Admin Credentials)</span>
+                  </span>
+                  <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    Full Admin Access
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {/* Principal Name */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Principal / Director Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={onboardForm.principalName}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, principalName: e.target.value }))}
+                      placeholder="Dr. Rajesh Sharma"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 font-sans font-semibold focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Official Email */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Official Login Email (User ID) *
+                    </label>
+                    <input
+                      type="email"
+                      value={onboardForm.email}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, email: e.target.value.toLowerCase().trim() }))}
+                      placeholder="principal@school.edu.in"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-cyan-700 font-bold focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Mobile Phone */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      10-Digit Mobile Phone (SMS/WhatsApp) *
+                    </label>
+                    <div className="flex items-center">
+                      <span className="px-2.5 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-l-xl border border-r-0 border-slate-300">
+                        +91
+                      </span>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        value={onboardForm.phone}
+                        onChange={(e) => setOnboardForm(prev => ({ ...prev, phone: e.target.value.replace(/\D/g, '') }))}
+                        placeholder="9829012345"
+                        className="w-full bg-white border border-slate-300 rounded-r-xl px-3 py-2 text-xs font-mono text-slate-900 font-bold focus:outline-none focus:border-emerald-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* Initial Password */}
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-700 font-bold text-xs">
+                        Initial Master Password (हैंडओवर पासवर्ड) *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setOnboardForm(prev => ({ ...prev, password: `School@${Math.floor(1000 + Math.random() * 9000)}!` }))}
+                        className="text-[10px] text-emerald-600 hover:text-emerald-700 font-bold underline cursor-pointer"
+                      >
+                        🎲 Auto-Generate New Password
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={onboardForm.password}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, password: e.target.value }))}
+                      placeholder="School@2026!"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-mono text-amber-700 font-bold focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: LOCATION, COMMERCIAL TIER & SESSION */}
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                  <span className="font-bold text-slate-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-purple-600" />
+                    <span>3. Campus Coordinates & SaaS Subscription Plan</span>
+                  </span>
+                  <span className="text-[10px] text-purple-700 font-bold bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200">
+                    Session 2026-27 Active
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* City */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">City *</label>
+                    <input
+                      type="text"
+                      value={onboardForm.city}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, city: e.target.value }))}
+                      placeholder="Jaipur"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 font-sans focus:outline-none focus:border-purple-500"
+                      required
+                    />
+                  </div>
+
+                  {/* State */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">State *</label>
+                    <input
+                      type="text"
+                      value={onboardForm.state}
+                      onChange={(e) => setOnboardForm(prev => ({ ...prev, state: e.target.value }))}
+                      placeholder="Rajasthan"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 font-sans focus:outline-none focus:border-purple-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Plan */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">SaaS Plan Tier</label>
+                    <select
+                      value={onboardForm.plan}
+                      onChange={(e) => {
+                        const p = e.target.value;
+                        setOnboardForm(prev => ({
+                          ...prev,
+                          plan: p,
+                          mrr: p === 'enterprise' ? 24999 : p === 'growth' ? 12500 : 4999
+                        }));
+                      }}
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-purple-500"
+                    >
+                      <option value="growth">Growth Plan (₹12,500/mo) - Recommended</option>
+                      <option value="starter">Starter Plan (₹4,999/mo)</option>
+                      <option value="enterprise">Enterprise Campus (₹24,999/mo)</option>
+                    </select>
+                  </div>
+
+                  {/* Academic Session */}
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">Academic Session</label>
+                    <input
+                      type="text"
+                      value={onboardForm.session}
+                      disabled
+                      className="w-full bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-700 font-bold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Form Actions */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-200">
+                <div className="text-[11px] text-slate-500 font-mono">
+                  ✓ Automatically creates Database Schema, 2026-27 Session, 16 Modules & SMS Dispatch.
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewSchoolModal(false)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-xs font-bold cursor-pointer transition-all"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingOnboard || !onboardForm.instituteCode || onboardForm.instituteCode.length !== 5}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:brightness-110 text-white font-mono font-black text-xs shadow-lg shadow-emerald-600/25 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingOnboard ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Provisioning Tenant & Allocating Code...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Provision Tenant with Code {onboardForm.instituteCode || '-----'} 🚀</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* POST-ONBOARDING SUCCESS & HANDOVER KIT MODAL */}
+      {/* ===================================================================== */}
+      {onboardResultModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-3xl max-w-2xl w-full border border-emerald-500/40 shadow-2xl p-6 sm:p-8 space-y-6 animate-in zoom-in-95 text-xs font-mono">
+            {/* Header */}
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/25">
+                <Check className="w-8 h-8 stroke-[3]" />
+              </div>
+              <h2 className="text-xl font-black text-white tracking-tight">
+                School Tenant Provisioned Successfully! 🏫🎉
+              </h2>
+              <p className="text-slate-300">
+                Official institutional tenant is active on Dakshora ERP Session 2026–27.
+              </p>
+            </div>
+
+            {/* 5-Digit Institute Code Highlight Badge */}
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-emerald-950/80 border border-emerald-500/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+              <div>
+                <span className="text-[10px] text-emerald-400 uppercase font-bold tracking-wider block">
+                  Official 5-Digit Institute Code
+                </span>
+                <span className="text-3xl font-black text-emerald-300 tracking-widest font-mono">
+                  {onboardResultModal.instituteCode}
+                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Assigned master shortcode for {onboardResultModal.schoolName}.
+                </p>
+              </div>
+
+              <div className="text-right">
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  Tenant Active ✓
+                </span>
+                <span className="block text-[10px] text-slate-400 mt-1">
+                  ID: <code className="text-slate-300">{onboardResultModal.tenantId.slice(0, 8)}...</code>
+                </span>
+              </div>
+            </div>
+
+            {/* Handover Details Box */}
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-slate-400">School Institution:</span>
+                <span className="text-white font-bold">{onboardResultModal.schoolName}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-slate-400">Principal User ID (Email):</span>
+                <span className="text-cyan-400 font-bold">{onboardResultModal.email}</span>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-slate-400">Initial Master Password:</span>
+                <span className="text-amber-400 font-bold font-mono text-sm tracking-wider">
+                  {onboardResultModal.initialPassword || 'Provided in invitation email'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-slate-400">Board & City:</span>
+                <span className="text-slate-300">{onboardResultModal.board} • {onboardResultModal.city}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Official Portal URL:</span>
+                <span className="text-indigo-400 underline">{onboardResultModal.subdomainUrl}</span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCopyHandoverKit}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition-all cursor-pointer"
+              >
+                {copiedKit ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-slate-400" />}
+                <span>{copiedKit ? 'Copied to Clipboard! ✓' : 'Copy Handover Kit (WhatsApp/Email)'}</span>
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setOnboardResultModal(null)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-bold cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOnboardResultModal(null);
+                    if (onSwitchToSchool) {
+                      onSwitchToSchool({
+                        id: `sch-${onboardResultModal.instituteCode}`,
+                        organizationId: onboardResultModal.tenantId,
+                        name: onboardResultModal.schoolName,
+                        schoolCode: onboardResultModal.instituteCode
+                      });
+                    } else {
+                      window.open(`/portal?school=${onboardResultModal.instituteCode}`, '_blank');
+                    }
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Launch School Cockpit 🚀</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

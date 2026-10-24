@@ -131,6 +131,9 @@ let IN_MEMORY_ORGANIZATIONS = [
     id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     name: "Dakshora Academy New Delhi",
     slug: "dakshora-academy",
+    tenant_code: "10001",
+    institute_code: "10001",
+    school_code: "10001",
     plan: "enterprise",
     status: "active",
     created_at: new Date().toISOString()
@@ -2874,13 +2877,36 @@ app.get("/api/organizations", requireAuth, async (req, res) => {
 
 app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { name, slug, plan } = req.body;
+    const { name, slug, plan, instituteCode, institute_code, board, city, state } = req.body;
     if (!name || !slug) return res.status(400).json({ success: false, message: "Name and Slug are required" });
+
+    // 5-Digit Institute Code Validation & Allocation
+    let cleanInstituteCode = (instituteCode || institute_code || "").toString().trim();
+    if (cleanInstituteCode) {
+      if (!/^\d{5}$/.test(cleanInstituteCode)) {
+        return res.status(400).json({ success: false, message: "Institute Code must be exactly 5 numeric digits (10001–99999)." });
+      }
+      const isAvail = await isInstituteCodeAvailable(cleanInstituteCode, supabase);
+      if (!isAvail) {
+        return res.status(400).json({ success: false, message: `Institute Code '${cleanInstituteCode}' is already registered with another school tenant.` });
+      }
+    } else {
+      cleanInstituteCode = await generateUnique5DigitInstituteCode(supabase);
+    }
 
     const newOrg = {
       id: crypto.randomUUID(),
       name: name.trim(),
       slug: slug.toLowerCase().trim(),
+      institute_code: cleanInstituteCode,
+      instituteCode: cleanInstituteCode,
+      school_code: cleanInstituteCode,
+      schoolCode: cleanInstituteCode,
+      tenant_code: cleanInstituteCode,
+      tenantCode: cleanInstituteCode,
+      board: board || "CBSE",
+      city: city || "New Delhi",
+      state: state || "Delhi",
       plan: plan || "growth",
       status: "active",
       industry: "Education",
@@ -2908,6 +2934,10 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
         await supabase.from("schools").insert([{
           organization_id: newOrg.id,
           name: newOrg.name,
+          school_code: cleanInstituteCode,
+          board: board || "CBSE",
+          city: city || "New Delhi",
+          state: state || "Delhi",
           status: "active",
           created_at: newOrg.created_at,
           updated_at: newOrg.updated_at
@@ -3107,6 +3137,115 @@ async function generateUniqueTenantCode(supabaseClient) {
     }
   }
   return `${Date.now().toString().slice(-10)}`;
+}
+
+// =========================================================================
+// SaaS ERP 5-Digit Unique Institute Code Engine (10001 - 99999)
+// Used across multi-tenant school onboarding, student admission prefixes & tenant routing
+// =========================================================================
+
+// Check if a 5-digit Institute Code is available across DB and in-memory caches
+async function isInstituteCodeAvailable(code, supabaseClient) {
+  if (!code || !/^\d{5}$/.test(String(code).trim())) return false;
+  const clean = String(code).trim();
+
+  // In-memory check across organizations, settings, and schools
+  const inMemOrg = (typeof IN_MEMORY_ORGANIZATIONS !== "undefined" && IN_MEMORY_ORGANIZATIONS.some(o => 
+    String(o.institute_code || o.instituteCode || o.school_code || o.schoolCode || o.tenant_code || o.tenantCode) === clean
+  ));
+  if (inMemOrg) return false;
+
+  const inMemErp = (typeof ERP_ORGANIZATIONS !== "undefined" && ERP_ORGANIZATIONS.some(o => 
+    String(o.institute_code || o.instituteCode || o.school_code || o.schoolCode || o.tenant_code || o.tenantCode) === clean
+  ));
+  if (inMemErp) return false;
+
+  const inMemSchools = (typeof ERP_SCHOOLS !== "undefined" && ERP_SCHOOLS.some(s => 
+    String(s.school_code || s.schoolCode || s.institute_code || s.instituteCode) === clean
+  ));
+  if (inMemSchools) return false;
+
+  if (typeof ERP_SETTINGS !== "undefined" && String(ERP_SETTINGS.schoolCode) === clean) {
+    return false;
+  }
+
+  // Database check
+  if (supabaseClient) {
+    try {
+      const { data: schoolMatch } = await supabaseClient
+        .from("schools")
+        .select("id")
+        .eq("school_code", clean)
+        .maybeSingle();
+      if (schoolMatch) return false;
+
+      const { data: settingMatch } = await supabaseClient
+        .from("tenant_settings")
+        .select("id")
+        .eq("settings_key", "institute_code")
+        .contains("settings_value", { code: clean })
+        .maybeSingle();
+      if (settingMatch) return false;
+    } catch (_) {}
+  }
+  return true;
+}
+
+// Generate unique 5-digit Institute Code (10001 - 99999) with sequential continuity
+async function generateUnique5DigitInstituteCode(supabaseClient, preferredCode = null) {
+  // If a valid preferred 5-digit code was supplied and available, use it!
+  if (preferredCode && /^\d{5}$/.test(String(preferredCode).trim())) {
+    const cleanPref = String(preferredCode).trim();
+    if (await isInstituteCodeAvailable(cleanPref, supabaseClient)) {
+      return cleanPref;
+    }
+  }
+
+  // Scan all existing codes to find highest 5-digit code used
+  let maxCode = 10000;
+  const checkCode = (c) => {
+    if (c && /^\d{5}$/.test(String(c).trim())) {
+      const num = parseInt(String(c).trim(), 10);
+      if (num >= 10000 && num <= 99999 && num > maxCode) maxCode = num;
+    }
+  };
+
+  if (typeof IN_MEMORY_ORGANIZATIONS !== "undefined") {
+    IN_MEMORY_ORGANIZATIONS.forEach(o => {
+      checkCode(o.institute_code || o.instituteCode || o.school_code || o.schoolCode || o.tenant_code || o.tenantCode);
+    });
+  }
+  if (typeof ERP_ORGANIZATIONS !== "undefined") {
+    ERP_ORGANIZATIONS.forEach(o => {
+      checkCode(o.institute_code || o.instituteCode || o.school_code || o.schoolCode || o.tenant_code || o.tenantCode);
+    });
+  }
+  if (typeof ERP_SCHOOLS !== "undefined") {
+    ERP_SCHOOLS.forEach(s => {
+      checkCode(s.school_code || s.schoolCode || s.institute_code || s.instituteCode);
+    });
+  }
+  if (typeof ERP_SETTINGS !== "undefined") {
+    checkCode(ERP_SETTINGS.schoolCode);
+  }
+
+  // Try sequential candidates: maxCode + 1, maxCode + 2, etc.
+  for (let candidate = maxCode + 1; candidate <= 99999; candidate++) {
+    const candStr = String(candidate);
+    if (await isInstituteCodeAvailable(candStr, supabaseClient)) {
+      return candStr;
+    }
+  }
+
+  // Fallback: Random search within 10001 - 99999
+  for (let i = 0; i < 50; i++) {
+    const randCode = String(crypto.randomInt(10001, 99999));
+    if (await isInstituteCodeAvailable(randCode, supabaseClient)) {
+      return randCode;
+    }
+  }
+
+  return String(10000 + (Date.now() % 89999));
 }
 
 // Phase 8: Generate unique collision-resistant 8-digit student ID starting with current year (e.g. 20260001, 20260002)
@@ -3538,6 +3677,51 @@ app.post("/api/admin/resend-activation", requireAuth, requireSuperAdmin, async (
   });
 });
 
+// =========================================================================
+// 5-Digit Institute Code Validation & Next Sequence API
+// =========================================================================
+
+app.get(["/api/admin/next-institute-code", "/api/erp/admin/next-institute-code", "/api/superadmin/next-institute-code"], async (req, res) => {
+  try {
+    const nextCode = await generateUnique5DigitInstituteCode(supabase);
+    res.json({
+      success: true,
+      nextInstituteCode: nextCode,
+      instituteCode: nextCode,
+      message: `Next available 5-digit Institute Code: ${nextCode}`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to generate next institute code", error: err.message });
+  }
+});
+
+app.get(["/api/admin/check-institute-code", "/api/erp/admin/check-institute-code", "/api/superadmin/check-institute-code"], async (req, res) => {
+  try {
+    const rawCode = String(req.query.code || "").trim();
+    if (!rawCode || !/^\d{5}$/.test(rawCode)) {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        available: false,
+        message: "Institute Code must be exactly 5 numeric digits (range: 10001–99999)."
+      });
+    }
+
+    const available = await isInstituteCodeAvailable(rawCode, supabase);
+    res.json({
+      success: true,
+      valid: true,
+      code: rawCode,
+      available,
+      message: available 
+        ? `Institute Code ${rawCode} is valid and available for allocation.` 
+        : `Institute Code ${rawCode} is already assigned to another school tenant.`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Error checking institute code", error: err.message });
+  }
+});
+
 // SuperAdmin Dynamic School Onboarding Wizard
 app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/superadmin/schools/onboard", "/api/superadmin/onboard-school"], requireAuth, requireSuperAdmin, async (req, res) => {
   let rollbackOps = [];
@@ -3564,7 +3748,12 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       state = "Rajasthan",
       plan = "growth",
       mrr,
-      notes
+      notes,
+      instituteCode,
+      institute_code,
+      schoolCode,
+      code,
+      session = "2026-27"
     } = req.body || {};
 
     const cleanPrincipalName = (principalName || headName || "Principal").trim();
@@ -3583,6 +3772,30 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       return res.status(400).json({ success: false, message: "A valid 10-digit Indian mobile number is required." });
     }
     const cleanPhone = rawPhone.slice(-10);
+
+    // 5-Digit Institute Code Validation & Allocation
+    let cleanInstituteCode = (instituteCode || institute_code || schoolCode || code || "").toString().trim();
+    if (cleanInstituteCode) {
+      if (!/^\d{5}$/.test(cleanInstituteCode)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Institute Code. Must be exactly 5 numeric digits (range: 10001 to 99999)."
+        });
+      }
+      const isAvail = await isInstituteCodeAvailable(cleanInstituteCode, supabase);
+      if (!isAvail) {
+        return res.status(400).json({
+          success: false,
+          message: `Institute Code '${cleanInstituteCode}' is already registered with another school tenant. Please enter a different 5-digit code or auto-generate.`
+        });
+      }
+    } else {
+      cleanInstituteCode = await generateUnique5DigitInstituteCode(supabase);
+    }
+
+    // Determine tenantCode: if instituteCode was explicitly provided, use it as primary tenantCode; else generate 10-digit code
+    const isExplicitInstituteCode = Boolean(instituteCode || institute_code || schoolCode || code);
+    const tenantCode = isExplicitInstituteCode ? cleanInstituteCode : await generateUniqueTenantCode(supabase);
 
     // Validate Board from Catalogue
     const matchedBoard = BOARD_CATALOGUE.find(b => b.code.toLowerCase() === board.toLowerCase() || b.id.toLowerCase() === board.toLowerCase()) || { code: board.toUpperCase() };
@@ -3609,9 +3822,8 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       }
     }
 
-    // Atomic Identifiers: UUID + 10-Digit Tenant Code + Activation Token
+    // Atomic Identifiers: UUID + 5-Digit Institute Code / Tenant Code + Activation Token
     const newOrgId = crypto.randomUUID();
-    const tenantCode = await generateUniqueTenantCode(supabase);
     const rawActivationToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(rawActivationToken).digest("hex");
     const tokenExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -3634,13 +3846,13 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       rollbackOps.push(async () => { await supabase.from("organizations").delete().eq("id", newOrgId); });
     }
 
-    // 2. Insert into public.schools (storing 10-digit tenant code in school_code)
+    // 2. Insert into public.schools (storing 5-digit institute code / tenant code in school_code)
     const schoolId = crypto.randomUUID();
     if (supabase) {
       const { error: schErr } = await supabase.from("schools").insert([{
         id: schoolId,
         organization_id: newOrgId,
-        school_code: tenantCode,
+        school_code: cleanInstituteCode,
         name: rawSchoolName,
         short_name: rawSchoolName.slice(0, 10).toUpperCase(),
         board: matchedBoard.code,
@@ -3885,7 +4097,11 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       id: newOrgId,
       name: rawSchoolName,
       slug: orgSlug,
-      tenant_code: tenantCode,
+      institute_code: cleanInstituteCode,
+      instituteCode: cleanInstituteCode,
+      school_code: cleanInstituteCode,
+      schoolCode: cleanInstituteCode,
+      tenant_code: cleanInstituteCode,
       tenantCode: tenantCode,
       board: matchedBoard.code,
       medium,
@@ -3916,7 +4132,7 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
     IN_MEMORY_WEBSITES.unshift(newSite);
 
     // 10. Multi-channel Notification Dispatch (SMS, WhatsApp, Email)
-    const smsWelcomeText = `Congratulations ${cleanPrincipalName}! ${rawSchoolName} (Code: ${tenantCode}) is provisioned on DAKSHORA 2.0. Activate your account: ${activationUrl} | Support: +918796347851`;
+    const smsWelcomeText = `Congratulations ${cleanPrincipalName}! ${rawSchoolName} (Institute Code: ${cleanInstituteCode}) is provisioned on DAKSHORA 2.0. Activate your account: ${activationUrl} | Support: +918796347851`;
     let smsDispatch = null;
     try {
       smsDispatch = await dispatchLiveGatewayMessage({
@@ -3931,7 +4147,7 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
 
     let waDispatch = null;
     try {
-      const waText = `🏫 *Congratulations ${cleanPrincipalName}!*\n\n*${rawSchoolName}* has been successfully registered on *DAKSHORA 2.0 School ERP*.\n\n📋 *Public Tenant Code:* \`${tenantCode}\`\n🏛️ *Board:* ${matchedBoard.code} (${medium} Medium)\n🌐 *Website URL:* https://${siteDomain}\n\n🔐 *Activate Your Account & Set Password:*\n👉 ${activationUrl}\n\n_Security Notice: Do not share this link. It will expire in 7 days._\n\n- DAKSHORA 2.0 Operations Team`;
+      const waText = `🏫 *Congratulations ${cleanPrincipalName}!*\n\n*${rawSchoolName}* has been successfully registered on *DAKSHORA 2.0 School ERP*.\n\n🏛️ *Institute Code:* \`${cleanInstituteCode}\`\n📋 *Tenant Code:* \`${tenantCode}\`\n🏛️ *Board:* ${matchedBoard.code} (${medium} Medium)\n🌐 *Website URL:* https://${siteDomain}\n\n🔐 *Activate Your Account & Set Password:*\n👉 ${activationUrl}\n\n_Security Notice: Do not share this link. It will expire in 7 days._\n\n- DAKSHORA 2.0 Operations Team`;
       waDispatch = await dispatchLiveGatewayMessage({
         channel: "whatsapp",
         recipientContact: cleanPhone,
@@ -3952,6 +4168,7 @@ Congratulations! ${rawSchoolName} has been successfully provisioned on the DAKSH
 Institution Details:
 --------------------------------------------------------
 • School Name: ${rawSchoolName}
+• 5-Digit Institute Code: ${cleanInstituteCode}
 • Public Tenant Code: ${tenantCode}
 • Canonical Tenant ID: ${newOrgId}
 • Affiliation Board: ${matchedBoard.code} (${medium} Medium)
@@ -3991,17 +4208,26 @@ https://dakshora.co.in`;
 
     res.json({
       success: true,
-      message: `Congratulations! ${rawSchoolName} has been successfully registered on Dakshora School ERP. 🏫🎉`,
+      message: `Congratulations! ${rawSchoolName} (Institute Code: ${cleanInstituteCode}) has been successfully registered on Dakshora School ERP. 🏫🎉`,
       tenantId: newOrgId,
       tenantCode,
-      organization: newOrg,
+      instituteCode: cleanInstituteCode,
+      schoolCode: cleanInstituteCode,
+      organization: {
+        ...newOrg,
+        instituteCode: cleanInstituteCode,
+        institute_code: cleanInstituteCode,
+        schoolCode: cleanInstituteCode
+      },
       credentials: {
         email: cleanEmail,
         principalName: cleanPrincipalName,
         headRole: schoolHeadRole,
         initialPassword: null,
+        handoverPassword: initialPassword,
         activationToken: rawActivationToken,
         activationUrl,
+        instituteCode: cleanInstituteCode,
         role: "school-admin",
         loginUrl: "https://dakshora.co.in/portal"
       },
@@ -41543,7 +41769,8 @@ app.get("/api/admin/schools", async (req, res) => {
           return {
             id: s.id,
             name: s.name,
-            schoolCode: s.school_code || (isDemo ? "DPS-VK-894" : "SCH-01"),
+            schoolCode: s.school_code || (isDemo ? "10001" : "10001"),
+            instituteCode: s.school_code || (isDemo ? "10001" : "10001"),
             organizationId: s.organization_id,
             organizationName: org.name || s.name,
             board: s.board || "CBSE",
@@ -41566,13 +41793,15 @@ app.get("/api/admin/schools", async (req, res) => {
       const sub = SAAS_SUBSCRIPTIONS.find(s => s.organization_id === org.id) || { plan_id: org.plan || "starter", status: "active" };
 
       const isDemo = org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+      const code = isDemo ? (ERP_SETTINGS.schoolCode || "10001") : (org.institute_code || org.school_code || org.tenant_code || "10001");
       return {
         id: `sch-${org.slug}`,
-        name: isDemo ? (ERP_SETTINGS.schoolName || "Delhi Public Heritage School") : org.name,
-        schoolCode: isDemo ? (ERP_SETTINGS.schoolCode || "DPS-VK-894") : (org.tenant_code || `SCH-${org.slug.slice(0, 3).toUpperCase()}`),
+        name: isDemo ? (ERP_SETTINGS.schoolName || "Dakshora Academy New Delhi") : org.name,
+        schoolCode: code,
+        instituteCode: code,
         organizationId: org.id,
         organizationName: org.name,
-        campusesCount: campuses.length,
+        campusesCount: campuses.length || 1,
         currentSession: ERP_SETTINGS.activeSession || "2026-27",
         studentCount: students.length,
         staffCount: staff.length,
