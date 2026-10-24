@@ -57,6 +57,8 @@ interface LiveDashboardHubProps {
   activeSession: string;
   organizationId?: string;
   currentStaffId?: string;
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
   onNavigateModule: (module: ErpModule, extraState?: any) => void;
   onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
   onShowPrincipalProfile?: () => void;
@@ -67,6 +69,8 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
   activeSession,
   organizationId: propOrgId,
   currentStaffId,
+  selectedDate: propSelectedDate,
+  onDateChange,
   onNavigateModule,
   onShowToast,
   onShowPrincipalProfile
@@ -82,7 +86,9 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
     return '';
   })();
   // State
-  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [localSelectedDate, setLocalSelectedDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const selectedDate = propSelectedDate !== undefined ? propSelectedDate : localSelectedDate;
+  const setSelectedDate = onDateChange || setLocalSelectedDate;
   const [trendRange, setTrendRange] = useState<7 | 30>(7);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -458,80 +464,47 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
               </button>
             </div>
 
-            {/* Right: Date Picker, Quick Action Modals & Controls */}
+            {/* Right: Telemetry Refresh, Quick Action Modals & Controls */}
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-              {/* Date Selector */}
-              <div className="inline-flex items-center gap-1 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-xl text-xs font-mono">
-                <Calendar className="w-3.5 h-3.5 text-purple-600" />
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="bg-transparent text-slate-800 focus:outline-none text-xs font-mono font-medium cursor-pointer"
-                />
-              </div>
-
-              {!isToday && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
-                  className="px-2 py-1 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-mono font-bold transition-all cursor-pointer"
-                >
-                  Today
-                </button>
-              )}
-
               {/* Refresh Live Metrics */}
               <button
                 type="button"
                 onClick={() => loadDashboard(true)}
                 disabled={refreshing}
-                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 hover:text-slate-900 transition-all disabled:opacity-50 cursor-pointer"
-                title="Refresh Live Metrics"
+                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-mono font-bold flex items-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer shadow-xs active:scale-95"
+                title="Refresh Live Metrics & Telemetry"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-purple-600' : ''}`} />
-              </button>
-
-              {/* Enroll Student Button */}
-              <button
-                type="button"
-                onClick={() => onNavigateModule('students', { showAddStudent: true })}
-                className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white text-xs font-bold font-mono flex items-center gap-1 shadow-sm transition-all hover:scale-105 active:scale-95 cursor-pointer"
-                title="Direct New Student Enrollment"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Enroll Student</span>
+                <RefreshCw className={`w-3.5 h-3.5 text-purple-600 ${refreshing ? 'animate-spin' : ''}`} />
+                <span className="hidden xl:inline">Refresh</span>
               </button>
 
               {/* 👨‍🏫 Class Teachers Directory 1-Click Button */}
               <button
                 type="button"
                 onClick={() => setShowClassTeachersModal(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
                 title="View Class Teachers List (Nursery to 12th) & Print PDF"
               >
                 <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="hidden sm:inline">Class Teachers (Nur-12)</span>
-                <span className="sm:hidden">Teachers</span>
+                <span>Class Teachers (Nur-12)</span>
               </button>
 
               {/* 📋 Teachers Charges & Duties 1-Click Button */}
               <button
                 type="button"
                 onClick={() => setShowTeacherPortfoliosModal(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
                 title="View Teachers Charges, Responsibilities & Print Office Order"
               >
                 <Award className="w-3.5 h-3.5 text-purple-600" />
-                <span className="hidden sm:inline">Charges & Duties</span>
-                <span className="sm:hidden">Duties</span>
+                <span>Charges & Duties</span>
               </button>
 
               {/* ✨ AI Briefing Toggle Button */}
               <button
                 type="button"
                 onClick={() => setWidgetSettings((prev) => ({ ...prev, aiBriefing: !prev.aiBriefing }))}
-                className={`px-2.5 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 border transition-all cursor-pointer shadow-xs active:scale-95 ${
                   widgetSettings.aiBriefing
                     ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-600/30'
                     : 'bg-slate-100 hover:bg-slate-200 text-purple-700 border-purple-200'
@@ -539,32 +512,23 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
                 title="Toggle DAKSHORA AI Executive Briefing"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">AI Briefing</span>
+                <span>AI Briefing</span>
                 {widgetSettings.aiBriefing && <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse"></span>}
               </button>
-
-              {/* Principal Executive Profile Modal Trigger */}
-              {onShowPrincipalProfile && (
-                <button
-                  type="button"
-                  onClick={onShowPrincipalProfile}
-                  className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
-                  title="View Principal & Head of Institution Profile Dossier"
-                >
-                  <UserCheck className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="hidden xl:inline">Principal Profile ↗</span>
-                </button>
-              )}
 
               {/* Customize Cockpit */}
               <button
                 type="button"
                 onClick={() => setShowWidgetConfig(!showWidgetConfig)}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono flex items-center gap-1.5 border border-slate-200 transition-all cursor-pointer"
+                className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 border transition-all cursor-pointer shadow-xs active:scale-95 ${
+                  showWidgetConfig
+                    ? 'bg-slate-800 text-white border-slate-800'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                }`}
                 title="Configure Dashboard Widgets"
               >
                 <Sliders className="w-3.5 h-3.5 text-purple-600" />
-                <span className="hidden lg:inline">Customize</span>
+                <span>Customize</span>
               </button>
             </div>
           </div>

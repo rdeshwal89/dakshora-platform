@@ -769,6 +769,9 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
   const [showSchoolInfoModal, setShowSchoolInfoModal] = useState(false);
   const [showPrincipalProfileModal, setShowPrincipalProfileModal] = useState(false);
 
+  // Live Active Date (Synced with Header Date Picker and LiveDashboardHub)
+  const [activeDate, setActiveDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+
   // Ctrl+K / Cmd+K Global Search Keyboard Shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1161,27 +1164,69 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
               {/* Header Title: Principal & Management Command Cockpit with Live Date Button */}
               {activeModule === 'dashboard' ? (
                 <div className="flex items-center gap-2.5 truncate">
-                  <div className="flex items-center gap-2 truncate">
-                    <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
-                      <LayoutDashboard className="w-3.5 h-3.5" />
-                    </div>
-                    <span className="text-white font-extrabold text-sm sm:text-base tracking-tight truncate">
-                      Principal & Management Command Cockpit
-                    </span>
-                  </div>
-
-                  {/* Live Date Button */}
+                  {/* Click Title to View Principal & Management Profile */}
                   <button
                     type="button"
-                    onClick={() => setShowSchoolInfoModal(true)}
-                    className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-mono transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                    title="Click to view School Calendar & Dossier"
+                    onClick={() => setShowPrincipalProfileModal(true)}
+                    className="flex items-center gap-2 truncate group cursor-pointer text-left focus:outline-none focus:ring-2 focus:ring-indigo-500/50 rounded-xl p-1 -m-1 transition-all hover:bg-slate-800/60"
+                    title="Click to view Principal & Management Executive Profile Dossier"
                   >
-                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="font-semibold text-slate-200">
-                      {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0 group-hover:scale-105 transition-transform">
+                      <LayoutDashboard className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-white font-extrabold text-sm sm:text-base tracking-tight truncate group-hover:text-indigo-300 transition-colors">
+                      Principal & Management Command Cockpit
+                    </span>
+                    <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono text-indigo-300 bg-indigo-950/80 border border-indigo-700/50 group-hover:border-indigo-400 transition-colors">
+                      Profile ↗
                     </span>
                   </button>
+
+                  {/* Live Date Button with Native Calendar Date Picker */}
+                  <div className="relative hidden sm:inline-flex items-center">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-mono transition-all cursor-pointer shadow-xs active:scale-95 shrink-0 group"
+                      title="Click to open calendar date picker"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-emerald-400 group-hover:text-emerald-300" />
+                      <span className="font-semibold text-slate-200 group-hover:text-white">
+                        {new Date(activeDate).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                      </span>
+                    </button>
+                    <input
+                      type="date"
+                      value={activeDate}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setActiveDate(e.target.value);
+                          onShowToast('info', `Active Date Updated: ${e.target.value}`, 'Refreshing live register metrics for selected date');
+                        }
+                      }}
+                      onClick={(e) => {
+                        try {
+                          (e.target as any).showPicker?.();
+                        } catch (_) {}
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                      title="Click to open calendar date picker"
+                    />
+                  </div>
+
+                  {activeDate !== new Date().toISOString().split('T')[0] && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const todayStr = new Date().toISOString().split('T')[0];
+                        setActiveDate(todayStr);
+                        onShowToast('info', 'Returned to Today', `Date reset to ${todayStr}`);
+                      }}
+                      className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-lg bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:text-emerald-200 text-[10px] font-mono font-bold cursor-pointer transition-all shadow-xs"
+                      title="Reset calendar date to Today"
+                    >
+                      Today
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs font-mono truncate">
@@ -1414,6 +1459,8 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
             activeSession={activeSession}
             organizationId={effectiveOrgId}
             currentStaffId={activeRole === 'teacher' ? 'stf-05' : undefined}
+            selectedDate={activeDate}
+            onDateChange={setActiveDate}
             onNavigateModule={(mod, extra) => {
               setActiveModule(mod);
               if (extra?.showAddStudent) setShowAddStudent(true);
