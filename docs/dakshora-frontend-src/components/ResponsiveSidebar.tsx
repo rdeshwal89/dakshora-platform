@@ -633,7 +633,7 @@ export const ResponsiveSidebar: React.FC<ResponsiveSidebarProps> = ({
         className={`hidden lg:flex flex-col shrink-0 bg-slate-950 text-slate-200 border-r border-slate-800/90 shadow-xl transition-all duration-300 ease-in-out relative z-20 ${
           isDesktopCollapsed ? 'w-20' : 'w-64'
         }`}
-        style={{ height: 'calc(100vh - 65px)', position: 'sticky', top: '65px' }}
+        style={{ height: '100vh', position: 'sticky', top: '0px' }}
       >
         {renderSidebarContent(isDesktopCollapsed, false)}
       </aside>

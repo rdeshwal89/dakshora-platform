@@ -1076,7 +1076,7 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
 
 
   return (
-    <div className="flex min-h-[calc(100vh-65px)] w-full bg-slate-950 text-slate-100">
+    <div className="flex min-h-screen w-full bg-slate-950 text-slate-100">
       {/* ─────────────────────────────────────────────────────────────
           1. PERSISTENT RESPONSIVE ENTERPRISE SIDEBAR & MOBILE DRAWER
          ───────────────────────────────────────────────────────────── */}
@@ -1158,45 +1158,52 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
                 )}
               </button>
 
-              {/* Breadcrumbs */}
-              <div className="flex items-center gap-2 text-xs font-mono truncate">
-                <button
-                  type="button"
-                  onClick={() => setShowSchoolInfoModal(true)}
-                  className="text-slate-300 hover:text-white font-medium hover:underline truncate max-w-[120px] sm:max-w-[200px] cursor-pointer flex items-center gap-1.5 transition-colors group text-left"
-                  title="Click to view full School Information card"
-                >
-                  <Building2 className="w-3.5 h-3.5 text-cyan-400 shrink-0 group-hover:scale-110 transition-transform" />
-                  <span className="truncate">{schoolBrand.schoolName}</span>
-                </button>
-                <span className="text-slate-600">/</span>
-                {activeModule === 'dashboard' ? (
-                  <span className="text-white font-bold capitalize flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block animate-pulse"></span>
-                    Dashboard
-                  </span>
-                ) : (
-                  <div className="flex items-center gap-1.5 truncate">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveModule('dashboard');
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                      }}
-                      className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline cursor-pointer flex items-center gap-1 transition-colors"
-                      title="Return to Dashboard (Esc)"
-                    >
-                      <ArrowLeft className="w-3 h-3" />
-                      <span>Dashboard</span>
-                    </button>
-                    <span className="text-slate-600">/</span>
-                    <span className="text-white font-bold capitalize flex items-center gap-1.5 truncate">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
-                      {activeModule.replace('_', ' ')}
+              {/* Header Title: Principal & Management Command Cockpit with Live Date Button */}
+              {activeModule === 'dashboard' ? (
+                <div className="flex items-center gap-2.5 truncate">
+                  <div className="flex items-center gap-2 truncate">
+                    <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+                      <LayoutDashboard className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-white font-extrabold text-sm sm:text-base tracking-tight truncate">
+                      Principal & Management Command Cockpit
                     </span>
                   </div>
-                )}
-              </div>
+
+                  {/* Live Date Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowSchoolInfoModal(true)}
+                    className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-mono transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                    title="Click to view School Calendar & Dossier"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="font-semibold text-slate-200">
+                      {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-xs font-mono truncate">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModule('dashboard');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="text-cyan-400 hover:text-cyan-300 font-bold hover:underline cursor-pointer flex items-center gap-1 transition-colors"
+                    title="Return to Dashboard (Esc)"
+                  >
+                    <ArrowLeft className="w-3 h-3" />
+                    <span>Cockpit</span>
+                  </button>
+                  <span className="text-slate-600">/</span>
+                  <span className="text-white font-bold capitalize flex items-center gap-1.5 truncate">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
+                    {activeModule.replace('_', ' ')}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Right Controls */}
