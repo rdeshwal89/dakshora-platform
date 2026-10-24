@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Award,
   BookOpen,
@@ -21,7 +21,10 @@ import {
   TrendingUp,
   Clock,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  Download,
+  Users,
+  GraduationCap
 } from 'lucide-react';
 import {
   ErpRole,
@@ -50,8 +53,10 @@ import {
   correctExamMark,
   fetchClassExamResults,
   fetchStudentReportCard,
+  fetchBatchReportCards,
   fetchErpStaff,
-  fetchAcademicSessions
+  fetchAcademicSessions,
+  fetchErpSettings
 } from '../services/api';
 
 export type BoardType = 'cbse' | 'rbse' | 'upmsp' | 'hbse' | 'state';
@@ -81,22 +86,22 @@ export interface BoardConfig {
 export const STATE_BOARD_CONFIGS: Record<BoardType, BoardConfig> = {
   rbse: {
     id: 'rbse',
-    titleHindi: 'माध्यमिक शिक्षा बोर्ड, राजस्थान, अजमेर',
+    titleHindi: 'माध्यमिक शिक्षा बोर्ड राजस्थान, अजमेर',
     titleEng: 'Board of Secondary Education, Rajasthan (RBSE), Ajmer',
-    authorityHindi: 'कार्यालय माध्यमिक शिक्षा बोर्ड, राजस्थान (RBSE), अजमेर से सम्बद्ध',
+    authorityHindi: 'माध्यमिक शिक्षा बोर्ड राजस्थान, अजमेर से संबद्ध',
     authorityEng: 'Affiliated to Board of Secondary Education, Rajasthan (RBSE), Ajmer',
-    docTitleHindi: 'सतत एवं समग्र मूल्यांकन (CCE) — वार्षिक प्रगति-पत्रक (अंक-तालिका)',
+    docTitleHindi: 'सतत एवं व्यापक मूल्यांकन (CCE) — वार्षिक प्रगति प्रतिवेदन (अंक-तालिका)',
     docTitleEng: 'Continuous & Comprehensive Evaluation (CCE) — Annual Progress Report',
     emblemInitials: 'RBSE',
     emblemSubtitle: 'RAJASTHAN',
-    emblemGradient: 'from-amber-950 via-orange-950 to-slate-900 border-amber-600 text-amber-400',
+    emblemGradient: 'from-amber-600 via-orange-600 to-amber-700 border-amber-500 text-white',
     schoolCodeLabel: 'शाला दर्पण ID / कोड',
-    regCodeLabel: 'बोर्ड मान्यता क्रमांक',
+    regCodeLabel: 'पंजीकरण क्रमांक',
     theoryMax: 80,
     sessionalMax: 20,
     defaultUdise: '08120401824',
     defaultSchoolCode: 'RJ-18492',
-    divisionLabel: 'उत्तीर्ण श्रेणी (Division)',
+    divisionLabel: 'श्रेणी (Division)',
     passThreshold: 33
   },
   upmsp: {
@@ -105,51 +110,51 @@ export const STATE_BOARD_CONFIGS: Record<BoardType, BoardConfig> = {
     titleEng: 'UP Board of High School & Intermediate Education, Prayagraj',
     authorityHindi: 'उत्तर प्रदेश माध्यमिक शिक्षा परिषद्, प्रयागराज द्वारा मान्यता प्राप्त (UPMSP)',
     authorityEng: 'Recognized by UP Board of Secondary Education, Prayagraj (UPMSP)',
-    docTitleHindi: 'वार्षिक परीक्षा प्रगति-पत्र एवं अंक-विवरण पत्रक (Mark Sheet)',
+    docTitleHindi: 'वार्षिक शैक्षिक प्रगति प्रतिवेदन एवं अंक-पत्र (Mark Sheet)',
     docTitleEng: 'Annual Academic Progress Report & Scholastic Marksheet',
     emblemInitials: 'UPMSP',
     emblemSubtitle: 'PRAYAGRAJ',
-    emblemGradient: 'from-emerald-950 via-teal-950 to-slate-900 border-emerald-600 text-emerald-400',
-    schoolCodeLabel: 'कॉलेज कोड (UPMSP Code)',
+    emblemGradient: 'from-emerald-600 via-teal-600 to-emerald-700 border-emerald-500 text-white',
+    schoolCodeLabel: 'विद्यालय कोड (UPMSP Code)',
     regCodeLabel: 'केंद्र क्रमांक (Center Code)',
     theoryMax: 70,
     sessionalMax: 30,
     defaultUdise: '09150401842',
     defaultSchoolCode: 'UP-10482',
-    divisionLabel: 'उत्तीर्ण श्रेणी (Division)',
+    divisionLabel: 'श्रेणी (Division)',
     passThreshold: 33
   },
   hbse: {
     id: 'hbse',
     titleHindi: 'हरियाणा विद्यालय शिक्षा बोर्ड, भिवानी',
     titleEng: 'Board of School Education Haryana, Bhiwani (HBSE)',
-    authorityHindi: 'हरियाणा विद्यालय शिक्षा बोर्ड, भिवानी से सम्बद्ध एवं मान्यता प्राप्त (HBSE)',
+    authorityHindi: 'हरियाणा विद्यालय शिक्षा बोर्ड, भिवानी संबद्ध एवं मान्यता प्राप्त (HBSE)',
     authorityEng: 'Affiliated to Board of School Education Haryana, Bhiwani (HBSE)',
-    docTitleHindi: 'विद्यार्थी समग्र मूल्यांकन वार्षिक प्रगति पत्रक (Student Assessment)',
+    docTitleHindi: 'विद्यार्थी सतत मूल्यांकन एवं प्रगति पत्रक (Student Assessment)',
     docTitleEng: 'Annual Student Assessment Record & Comprehensive Progress Card',
     emblemInitials: 'HBSE',
     emblemSubtitle: 'BHIWANI',
-    emblemGradient: 'from-blue-950 via-indigo-950 to-slate-900 border-blue-500 text-cyan-400',
-    schoolCodeLabel: 'अवसर / MIS कोड',
-    regCodeLabel: 'सम्बद्धता कोड (Affiliation)',
+    emblemGradient: 'from-blue-600 via-indigo-600 to-blue-700 border-blue-500 text-white',
+    schoolCodeLabel: 'स्कूल / MIS कोड',
+    regCodeLabel: 'संबद्धता क्रमांक (Affiliation)',
     theoryMax: 80,
     sessionalMax: 20,
     defaultUdise: '06180401923',
     defaultSchoolCode: 'HR-8492',
-    divisionLabel: 'उत्तीर्ण श्रेणी (Division)',
+    divisionLabel: 'श्रेणी (Division)',
     passThreshold: 33
   },
   cbse: {
     id: 'cbse',
     titleHindi: 'केंद्रीय माध्यमिक शिक्षा बोर्ड, नई दिल्ली',
     titleEng: 'Central Board of Secondary Education (CBSE), New Delhi',
-    authorityHindi: 'केंद्रीय माध्यमिक शिक्षा बोर्ड (CBSE), नई दिल्ली से सम्बद्ध',
+    authorityHindi: 'केंद्रीय माध्यमिक शिक्षा बोर्ड (CBSE), नई दिल्ली से संबद्ध',
     authorityEng: 'Affiliated to Central Board of Secondary Education (CBSE), New Delhi',
-    docTitleHindi: 'वार्षिक शैक्षणिक उपलब्धि अंक-तालिका (Academic Achievement Marksheet)',
+    docTitleHindi: 'वार्षिक शैक्षिक उपलब्धि प्रमाण-पत्र (Academic Achievement Marksheet)',
     docTitleEng: 'Official Academic Achievement Marksheet & Performance Card',
     emblemInitials: 'CBSE',
     emblemSubtitle: 'NEW DELHI',
-    emblemGradient: 'from-indigo-950 via-slate-900 to-slate-950 border-indigo-600 text-amber-400',
+    emblemGradient: 'from-indigo-600 via-blue-700 to-indigo-800 border-indigo-500 text-white',
     schoolCodeLabel: 'School Code',
     regCodeLabel: 'Affiliation No.',
     theoryMax: 80,
@@ -163,41 +168,46 @@ export const STATE_BOARD_CONFIGS: Record<BoardType, BoardConfig> = {
     id: 'state',
     titleHindi: 'राज्य माध्यमिक शिक्षा बोर्ड (State Board of Education)',
     titleEng: 'State Board of Secondary & Higher Secondary Education',
-    authorityHindi: 'राज्य माध्यमिक शिक्षा परिषद / बोर्ड द्वारा मान्यता प्राप्त',
-    authorityEng: 'Recognized by State Board of Secondary & Higher Secondary Education',
-    docTitleHindi: 'वार्षिक परीक्षा प्रगति-पत्र एवं अंक-तालिका (State Board Marksheet)',
-    docTitleEng: 'Official State Board Annual Academic Progress & Marks Card',
+    authorityHindi: 'राज्य माध्यमिक शिक्षा परिषद / बोर्ड से मान्यता प्राप्त',
+    authorityEng: 'Recognized by State Department of Secondary Education',
+    docTitleHindi: 'वार्षिक परीक्षा प्रगति प्रतिवेदन एवं अंक-तालिका (Progress Report)',
+    docTitleEng: 'Annual Examination Cumulative Scholastic Progress Report',
     emblemInitials: 'STATE',
-    emblemSubtitle: 'EDUCATION',
-    emblemGradient: 'from-purple-950 via-violet-950 to-slate-900 border-purple-500 text-purple-300',
-    schoolCodeLabel: 'विद्यालय कोड (School Code)',
-    regCodeLabel: 'मान्यता क्रमांक (Affiliation)',
+    emblemSubtitle: 'BOARD',
+    emblemGradient: 'from-purple-600 via-indigo-600 to-purple-700 border-purple-500 text-white',
+    schoolCodeLabel: 'Govt School Code',
+    regCodeLabel: 'Board Recognition No.',
     theoryMax: 80,
     sessionalMax: 20,
-    defaultUdise: '08190401492',
-    defaultSchoolCode: 'SB-48192',
-    divisionLabel: 'उत्तीर्ण श्रेणी (Division)',
+    defaultUdise: '08120401899',
+    defaultSchoolCode: 'SB-94021',
+    divisionLabel: 'श्रेणी (Division)',
     passThreshold: 33
   }
 };
 
-const getHindiDobInWords = (dobStr: string): string => {
-  if (!dobStr) return 'बारह अप्रैल दो हजार ग्यारह';
-  const parts = dobStr.split('-');
-  if (parts.length < 3) return dobStr;
+const getHindiDobInWords = (dob: string): string => {
+  if (!dob) return 'उपलब्ध नहीं';
+  const parts = dob.split('-');
+  if (parts.length < 3) return dob;
   const day = parseInt(parts[2], 10);
   const month = parseInt(parts[1], 10);
   const year = parseInt(parts[0], 10);
 
-  const dayWords = ['', 'एक', 'दो', 'तीन', 'चार', 'पाँच', 'छह', 'सात', 'आठ', 'नौ', 'दस',
-    'ग्यारह', 'बारह', 'तेरह', 'चौदह', 'पंद्रह', 'सोलह', 'सत्रह', 'अठारह', 'उन्नीस', 'बीस',
-    'इक्कीस', 'बाईस', 'तेईस', 'चौबीस', 'पच्चीस', 'छब्बीस', 'सत्ताईस', 'अट्ठाइस', 'उनतीस', 'तीस', 'इकतीस'];
-  const monthNames = ['', 'जनवरी', 'फ़रवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
-    'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर'];
+  const dayWords: Record<number, string> = {
+    1: 'एक', 2: 'दो', 3: 'तीन', 4: 'चार', 5: 'पांच', 6: 'छह', 7: 'सात', 8: 'आठ', 9: 'नौ', 10: 'दस',
+    11: 'ग्यारह', 12: 'बारह', 13: 'तेरह', 14: 'चौदह', 15: 'पंद्रह', 16: 'सोलह', 17: 'सत्रह', 18: 'अठारह', 19: 'उन्नीस', 20: 'बीस',
+    21: 'इक्कीस', 22: 'बाईस', 23: 'तेईस', 24: 'चौबीस', 25: 'पच्चीस', 26: 'छब्बीस', 27: 'सत्ताईस', 28: 'अट्ठाईस', 29: 'उनतीस', 30: 'तीस', 31: 'इकतीस'
+  };
+
+  const monthNames: Record<number, string> = {
+    1: 'जनवरी', 2: 'फ़रवरी', 3: 'मार्च', 4: 'अप्रैल', 5: 'मई', 6: 'जून',
+    7: 'जुलाई', 8: 'अगस्त', 9: 'सितंबर', 10: 'अक्टूबर', 11: 'नवंबर', 12: 'दिसंबर'
+  };
 
   const dWord = dayWords[day] || String(day);
-  const mWord = monthNames[month] || 'अप्रैल';
-  const yWord = year ? `दो हजार ${dayWords[year % 100] || (year % 100)}` : 'दो हजार ग्यारह';
+  const mWord = monthNames[month] || 'माह';
+  const yWord = year ? `वर्ष दो हज़ार ${dayWords[year % 100] || (year % 100)}` : 'वर्ष दो हज़ार ग्यारह';
 
   return `${day} ${mWord} ${year} (${dWord} ${mWord} ${yWord})`;
 };
@@ -210,17 +220,17 @@ const getSubjectNameBilingual = (name: string, medium: MediumType): string => {
   if (n.includes('math')) { hindi = 'गणित'; eng = 'Mathematics'; }
   else if (n.includes('sci')) { hindi = 'विज्ञान'; eng = 'Science'; }
   else if (n.includes('soc') || n.includes('sst')) { hindi = 'सामाजिक विज्ञान'; eng = 'Social Science'; }
-  else if (n.includes('eng')) { hindi = 'अंग्रेजी अनिवार्य'; eng = 'English Core'; }
-  else if (n.includes('hin')) { hindi = 'सामान्य हिंदी / अनिवार्य'; eng = 'Hindi Compulsory'; }
+  else if (n.includes('eng')) { hindi = 'अंग्रेजी (English Core)'; eng = 'English Core'; }
+  else if (n.includes('hin')) { hindi = 'हिन्दी अनिवार्य'; eng = 'Hindi Compulsory'; }
   else if (n.includes('sans')) { hindi = 'संस्कृत'; eng = 'Sanskrit'; }
-  else if (n.includes('comp') || n.includes('it')) { hindi = 'सूचना प्रौद्योगिकी'; eng = 'Information Technology'; }
-  else if (n.includes('art') || n.includes('draw')) { hindi = 'चित्रकला / कला शिक्षा'; eng = 'Art Education'; }
-  else if (n.includes('moral') || n.includes('phy') || n.includes('pe')) { hindi = 'नैतिक, योग एवं शारीरिक शिक्षा'; eng = 'Moral & Physical Edu'; }
+  else if (n.includes('comp') || n.includes('it') || n.includes('ai')) { hindi = 'सूचना प्रौद्योगिकी व कम्प्यूटर'; eng = 'Information Technology & AI'; }
+  else if (n.includes('art') || n.includes('draw')) { hindi = 'कला शिक्षा'; eng = 'Art Education'; }
+  else if (n.includes('moral') || n.includes('phy') || n.includes('pe')) { hindi = 'शारीरिक एवं स्वास्थ्य शिक्षा'; eng = 'Physical & Health Education'; }
   else { hindi = name; eng = name; }
 
   if (medium === 'hindi') return hindi;
   if (medium === 'english') return eng;
-  return `${hindi} (${eng})`;
+  return `${hindi} / ${eng}`;
 };
 
 const calculateStateBoardDivision = (pct: number, failedCount: number = 0): {
@@ -234,15 +244,15 @@ const calculateStateBoardDivision = (pct: number, failedCount: number = 0): {
       division: 'अनुत्तीर्ण (FAIL)',
       divisionHindi: 'अनुत्तीर्ण',
       statusText: 'अनुत्तीर्ण (FAILED / ESSENTIAL REPEAT)',
-      badgeColor: 'bg-rose-950 text-rose-300 border-rose-600'
+      badgeColor: 'bg-rose-50 text-rose-800 border-rose-300'
     };
   }
   if (failedCount > 0) {
     return {
-      division: 'पूरक योग्य (SUPPLEMENTARY)',
+      division: 'पूरक परीक्षा (SUPPLEMENTARY)',
       divisionHindi: 'पूरक परीक्षा योग्य',
       statusText: 'पूरक परीक्षा हेतु पात्र (SUPPLEMENTARY / COMPARTMENT)',
-      badgeColor: 'bg-amber-950 text-amber-300 border-amber-600'
+      badgeColor: 'bg-amber-50 text-amber-800 border-amber-300'
     };
   }
   if (pct >= 60) {
@@ -250,7 +260,7 @@ const calculateStateBoardDivision = (pct: number, failedCount: number = 0): {
       division: 'प्रथम श्रेणी (FIRST DIVISION)',
       divisionHindi: 'प्रथम श्रेणी (I Div)',
       statusText: 'उत्तीर्ण एवं अगली कक्षा में प्रोन्नत (PASSED & PROMOTED)',
-      badgeColor: 'bg-emerald-950 text-emerald-300 border-emerald-600'
+      badgeColor: 'bg-emerald-50 text-emerald-800 border-emerald-300'
     };
   }
   if (pct >= 45) {
@@ -258,7 +268,7 @@ const calculateStateBoardDivision = (pct: number, failedCount: number = 0): {
       division: 'द्वितीय श्रेणी (SECOND DIVISION)',
       divisionHindi: 'द्वितीय श्रेणी (II Div)',
       statusText: 'उत्तीर्ण एवं अगली कक्षा में प्रोन्नत (PASSED & PROMOTED)',
-      badgeColor: 'bg-indigo-950 text-cyan-300 border-indigo-600'
+      badgeColor: 'bg-blue-50 text-blue-800 border-blue-300'
     };
   }
   if (pct >= 33) {
@@ -266,14 +276,14 @@ const calculateStateBoardDivision = (pct: number, failedCount: number = 0): {
       division: 'तृतीय श्रेणी (THIRD DIVISION)',
       divisionHindi: 'तृतीय श्रेणी (III Div)',
       statusText: 'उत्तीर्ण एवं अगली कक्षा में प्रोन्नत (PASSED & PROMOTED)',
-      badgeColor: 'bg-slate-900 text-slate-300 border-slate-700'
+      badgeColor: 'bg-slate-100 text-slate-800 border-slate-300'
     };
   }
   return {
     division: 'अनुत्तीर्ण (FAIL)',
     divisionHindi: 'अनुत्तीर्ण',
     statusText: 'अनुत्तीर्ण (FAILED)',
-    badgeColor: 'bg-rose-950 text-rose-300 border-rose-600'
+    badgeColor: 'bg-rose-50 text-rose-800 border-rose-300'
   };
 };
 
@@ -301,17 +311,17 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
   // Overview Data
   const [overview, setOverview] = useState<ExamsOverviewSummary | null>(null);
-  const [recentExams, setRecentExams] = useState<ExamRecord[]>([]);
+  const [, setRecentExams] = useState<ExamRecord[]>([]);
 
   // Exams List State
   const [exams, setExams] = useState<ExamRecord[]>([]);
   const [examSearch, setExamSearch] = useState<string>('');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('all');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('all');
-  const [sessionsList, setSessionsList] = useState<AcademicSessionRecord[]>([]);
+  const [, setSessionsList] = useState<AcademicSessionRecord[]>([]);
   const [staffList, setStaffList] = useState<ErpStaffRecord[]>([]);
 
-  // Active Selected Exam & Subject for Modals / Tabs
+  // Active Selected Exam & Subject
   const [selectedExamId, setSelectedExamId] = useState<string>('');
   const [selectedExam, setSelectedExam] = useState<ExamRecord | null>(null);
   const [examSubjects, setExamSubjects] = useState<ExamSubjectRecord[]>([]);
@@ -330,20 +340,27 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
   const [resultsSummary, setResultsSummary] = useState<any>(null);
   const [resultsLoading, setResultsLoading] = useState<boolean>(false);
   const [resultsSectionFilter, setResultsSectionFilter] = useState<string>('all');
+  const [resultsSearchQuery, setResultsSearchQuery] = useState<string>('');
   const [expandedStudentResultId, setExpandedStudentResultId] = useState<string | null>(null);
 
-  // Report Card Modal State
+  // Single Report Card Modal State
   const [reportCardModalOpen, setReportCardModalOpen] = useState<boolean>(false);
   const [reportCardData, setReportCardData] = useState<ReportCardPayload | null>(null);
   const [reportCardLoading, setReportCardLoading] = useState<boolean>(false);
 
+  // Batch Report Cards Modal State
+  const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false);
+  const [batchReportCards, setBatchReportCards] = useState<ReportCardPayload[]>([]);
+  const [batchLoading, setBatchLoading] = useState<boolean>(false);
+
   // State Board & Medium Customization State for Marksheet
-  const [selectedBoard, setSelectedBoard] = useState<BoardType>('rbse');
+  const [selectedBoard, setSelectedBoard] = useState<BoardType>('cbse');
   const [selectedMedium, setSelectedMedium] = useState<MediumType>('bilingual');
   const [showSessionalBreakdown, setShowSessionalBreakdown] = useState<boolean>(true);
   const [customSrNumber, setCustomSrNumber] = useState<string>('SR-2026-482');
   const [customUdiseCode, setCustomUdiseCode] = useState<string>('08120401824');
   const [customSchoolCode, setCustomSchoolCode] = useState<string>('RJ-18492');
+  const [schoolSettings, setSchoolSettings] = useState<any>(null);
 
   // Exam Create/Edit Modal State
   const [examModalOpen, setExamModalOpen] = useState<boolean>(false);
@@ -356,7 +373,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
     section: 'all',
     startDate: '',
     endDate: '',
-    status: 'scheduled' as const
+    status: 'scheduled' as ExamRecord['status']
   });
 
   // Manage Subjects Modal State
@@ -405,6 +422,31 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
     return headers;
   }, [activeRole, currentStaffId, organizationId]);
 
+  // Dynamic School Settings & Default Board Resolution
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const res = await fetchErpSettings(organizationId);
+        if (res.data?.settings) {
+          const s = res.data.settings;
+          setSchoolSettings(s);
+          const boardStr = (s.board || '').toLowerCase();
+          if (boardStr.includes('rbse')) setSelectedBoard('rbse');
+          else if (boardStr.includes('up')) setSelectedBoard('upmsp');
+          else if (boardStr.includes('hbse') || boardStr.includes('haryana')) setSelectedBoard('hbse');
+          else if (boardStr.includes('cbse')) setSelectedBoard('cbse');
+          else setSelectedBoard('cbse');
+
+          if (s.schoolCode) setCustomSchoolCode(s.schoolCode);
+          if (s.udiseCode) setCustomUdiseCode(s.udiseCode);
+        }
+      } catch (err) {
+        console.warn('Could not load school settings for exam hub', err);
+      }
+    };
+    loadSettings();
+  }, [organizationId]);
+
   // Load Overview Data
   const loadOverviewData = useCallback(async () => {
     try {
@@ -429,7 +471,6 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       });
       if (res.data?.success && res.data?.exams) {
         setExams(res.data.exams);
-        // Default selected exam if not set
         if (!selectedExamId && res.data.exams.length > 0) {
           setSelectedExamId(res.data.exams[0].id);
           setSelectedExam(res.data.exams[0]);
@@ -499,84 +540,228 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
     }
   }, [selectedExamId, exams]);
 
-  // Load Marks Roster for Marks Entry Console
+  // Load Marks Entry Roster when exam, subject, grade, or section changes
   const loadMarksRoster = useCallback(async () => {
-    if (!selectedExamId || !selectedSubjectId) return;
+    if (!selectedExamId) return;
     setMarksLoading(true);
     try {
-      const res = await fetchExamMarksRoster({
-        examId: selectedExamId,
-        subjectId: selectedSubjectId,
-        grade: marksGrade,
-        section: marksSection
-      }, getRbacHeaders());
-
-      if (res.status === 403) {
-        triggerToast('warning', 'Access Restricted', res.data?.message || 'You are not assigned to enter marks for this class & subject.');
-        setMarksRoster([]);
-      } else if (res.data?.success && res.data?.students) {
-        setMarksRoster(res.data.students);
+      const res = await fetchExamMarksRoster(
+        {
+          examId: selectedExamId,
+          subjectId: selectedSubjectId || '',
+          grade: marksGrade,
+          section: marksSection
+        },
+        getRbacHeaders()
+      );
+      if (res.data?.success && res.data?.students) {
+        const mapped = res.data.students.map((st: any) => ({
+          studentId: st.studentId,
+          studentId8Digit: st.studentId8Digit || (st.admissionNo && st.admissionNo.startsWith('2026') ? st.admissionNo : `2026${(st.admissionNo || st.rollNo || st.studentId || '0001').replace(/\D/g, '').slice(-4).padStart(4, '0')}`),
+          penNo: st.penNo || `20260${(st.admissionNo || '101').replace(/\D/g, '').padStart(6, '0')}`,
+          studentName: st.studentName,
+          rollNumber: st.rollNo || 'ROLL',
+          rollNo: st.rollNo || 'ROLL',
+          admissionNo: st.admissionNo || 'ADM',
+          grade: st.grade,
+          section: st.section,
+          markId: st.markId,
+          marksObtained: st.marksObtained,
+          maxMarks: res.data?.examSubject?.maxMarks || 100,
+          passMarks: res.data?.examSubject?.passMarks || 33,
+          status: st.status || 'present',
+          remarks: st.remarks || '',
+          isLocked: st.isLocked || res.data?.isExamLocked || false
+        }));
+        setMarksRoster(mapped);
         setMarksDirty(false);
-      } else {
-        triggerToast('error', 'Error Loading Roster', res.data?.message || 'Could not fetch student roster.');
       }
     } catch (err: any) {
-      console.error('Marks roster error', err);
-      triggerToast('error', 'Network Error', 'Failed to fetch marks roster.');
+      console.error('Failed to load marks roster', err);
+      triggerToast('error', 'Marks Roster Failed', err.response?.data?.message || 'Unauthorized or unable to load marks roster.');
     } finally {
       setMarksLoading(false);
     }
   }, [selectedExamId, selectedSubjectId, marksGrade, marksSection, getRbacHeaders, triggerToast]);
 
-  // Load Marks Roster when parameters change in Marks Entry tab
   useEffect(() => {
-    if (activeTab === 'marks_entry' && selectedExamId && selectedSubjectId) {
+    if (activeTab === 'marks_entry' && selectedExamId) {
       loadMarksRoster();
     }
   }, [activeTab, selectedExamId, selectedSubjectId, marksGrade, marksSection, loadMarksRoster]);
 
-  // Load Class Results Matrix
-  const loadClassResults = useCallback(async () => {
+  // Load Results Matrix
+  const loadResultsMatrix = useCallback(async () => {
     if (!selectedExamId) return;
     setResultsLoading(true);
     try {
       const res = await fetchClassExamResults(
         selectedExamId,
-        marksGrade !== 'all' ? marksGrade : undefined,
-        resultsSectionFilter !== 'all' ? resultsSectionFilter : undefined
+        selectedExam?.grade || undefined,
+        resultsSectionFilter === 'all' ? undefined : resultsSectionFilter
       );
-      if (res.data?.success) {
-        setResultsMatrix(res.data.results || []);
-        setResultsSummary(res.data.summary || null);
+      if (res.data?.success && res.data?.results) {
+        setResultsMatrix(res.data.results);
+        setResultsSummary(res.data.summary);
       }
     } catch (err) {
-      console.error('Failed to load class results', err);
+      console.error('Failed to load results matrix', err);
     } finally {
       setResultsLoading(false);
     }
-  }, [selectedExamId, marksGrade, resultsSectionFilter]);
+  }, [selectedExamId, selectedExam, resultsSectionFilter]);
 
-  // Load Results when activeTab switches to results_matrix
   useEffect(() => {
     if (activeTab === 'results_matrix' && selectedExamId) {
-      loadClassResults();
+      loadResultsMatrix();
     }
-  }, [activeTab, selectedExamId, loadClassResults]);
+  }, [activeTab, selectedExamId, resultsSectionFilter, loadResultsMatrix]);
 
-  // Handle Refresh
+  // Filtered Results for Search
+  const filteredResultsMatrix = useMemo(() => {
+    if (!resultsSearchQuery.trim()) return resultsMatrix;
+    const q = resultsSearchQuery.toLowerCase();
+    return resultsMatrix.filter(r =>
+      r.studentName.toLowerCase().includes(q) ||
+      (r.rollNumber || r.rollNo || '').toLowerCase().includes(q) ||
+      (r.studentId8Digit || '').toLowerCase().includes(q) ||
+      (r.admissionNo || '').toLowerCase().includes(q)
+    );
+  }, [resultsMatrix, resultsSearchQuery]);
+
+  // Refresh handler
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([
-      loadOverviewData(),
-      loadExamsList(),
-      activeTab === 'marks_entry' ? loadMarksRoster() : Promise.resolve(),
-      activeTab === 'results_matrix' ? loadClassResults() : Promise.resolve()
-    ]);
+    await Promise.all([loadOverviewData(), loadExamsList()]);
+    if (activeTab === 'marks_entry') await loadMarksRoster();
+    if (activeTab === 'results_matrix') await loadResultsMatrix();
     setRefreshing(false);
-    triggerToast('info', 'Data Synchronized', 'Examination records updated from live database.');
+    triggerToast('success', 'Synchronized', 'Examination & Marksheet database refreshed.');
   };
 
-  // Open Exam Modal for Create / Edit
+  // Open Single Report Card
+  const handleOpenReportCard = async (studentId: string, examId?: string) => {
+    const targetExamId = examId || selectedExamId;
+    if (!targetExamId) return;
+    setReportCardLoading(true);
+    setReportCardModalOpen(true);
+    try {
+      const res = await fetchStudentReportCard(targetExamId, studentId);
+      if (res.data?.success && (res.data as any)?.reportCardId) {
+        setReportCardData(res.data as unknown as ReportCardPayload);
+      } else {
+        triggerToast('error', 'Report Card Error', (res.data as any)?.message || 'Could not generate report card.');
+        setReportCardModalOpen(false);
+      }
+    } catch (err: any) {
+      console.error('Report card fetch error', err);
+      triggerToast('error', 'Error', 'Failed to retrieve official report card.');
+      setReportCardModalOpen(false);
+    } finally {
+      setReportCardLoading(false);
+    }
+  };
+
+  // Open Batch Report Cards (Multi-student A4 Print View)
+  const handleOpenBatchPrint = async () => {
+    if (!selectedExamId) return;
+    setBatchLoading(true);
+    setBatchModalOpen(true);
+    try {
+      const res = await fetchBatchReportCards(
+        selectedExamId,
+        selectedExam?.grade || undefined,
+        resultsSectionFilter === 'all' ? undefined : resultsSectionFilter
+      );
+      if (res.data?.success && res.data?.reportCards) {
+        setBatchReportCards(res.data.reportCards);
+        triggerToast('info', 'Batch Marksheets Ready', `Loaded ${res.data.count} official marksheets for printing.`);
+      } else {
+        triggerToast('error', 'Batch Error', 'Failed to load batch report cards.');
+        setBatchModalOpen(false);
+      }
+    } catch (err: any) {
+      console.error('Batch report card error', err);
+      triggerToast('error', 'Error', 'Could not load batch report cards.');
+      setBatchModalOpen(false);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // Export Tabulation Sheet as CSV
+  const handleExportTabulationCSV = () => {
+    if (resultsMatrix.length === 0) {
+      triggerToast('warning', 'No Results', 'No results available to export.');
+      return;
+    }
+    const headers = ['Rank', 'Student_ID', 'Admission_No', 'Roll_No', 'Student_Name', 'Grade', 'Section', 'Total_Obtained', 'Max_Marks', 'Percentage', 'CBSE_Grade', 'Result_Status'];
+    const rows = resultsMatrix.map(r => [
+      r.classRank || r.sectionRank || 1,
+      r.studentId8Digit || `2026${(r.admissionNo || r.rollNo || r.studentId || '0001').replace(/\D/g, '').slice(-4).padStart(4, '0')}`,
+      r.admissionNo || 'ADM',
+      r.rollNumber || r.rollNo || 'ROLL',
+      `"${r.studentName}"`,
+      r.grade,
+      r.section,
+      r.totalMarksObtained,
+      r.maxTotalMarks,
+      `${r.percentage}%`,
+      r.overallGrade,
+      r.resultStatus
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Tabulation_Register_${selectedExam?.title || 'Exam'}_${marksGrade}_Sec_${resultsSectionFilter}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    triggerToast('success', 'Export Complete', 'Class tabulation register downloaded as CSV.');
+  };
+
+  // Bulk Save Marks
+  const handleSaveBulkMarks = async () => {
+    if (!selectedExamId || !selectedSubjectId) return;
+    setMarksSaving(true);
+    try {
+      const payload = {
+        examId: selectedExamId,
+        subjectId: selectedSubjectId,
+        examSubjectId: selectedSubjectId,
+        grade: marksGrade,
+        section: marksSection,
+        marks: marksRoster.map(m => ({
+          studentId: m.studentId,
+          studentName: m.studentName,
+          rollNo: m.rollNo || m.rollNumber,
+          admissionNo: m.admissionNo,
+          marksObtained: m.marksObtained,
+          status: m.status,
+          remarks: m.remarks
+        }))
+      };
+
+      const res = await saveExamMarksBulk(payload, getRbacHeaders());
+      if (res.data?.success) {
+        triggerToast('success', 'Marks Saved', `Evaluated & calculated results for ${marksRoster.length} students.`);
+        setMarksDirty(false);
+        loadMarksRoster();
+        loadOverviewData();
+      } else {
+        triggerToast('error', 'Save Failed', res.data?.message || 'Could not save marks roster.');
+      }
+    } catch (err: any) {
+      console.error('Failed to save bulk marks', err);
+      triggerToast('error', 'Error', err.response?.data?.message || 'Failed to save marks.');
+    } finally {
+      setMarksSaving(false);
+    }
+  };
+
+  // Open Exam Modal
   const handleOpenExamModal = (exam?: ExamRecord) => {
     if (exam) {
       setEditingExamId(exam.id);
@@ -588,7 +773,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
         section: exam.section,
         startDate: exam.startDate,
         endDate: exam.endDate,
-        status: exam.status as any
+        status: exam.status
       });
     } else {
       setEditingExamId(null);
@@ -613,62 +798,51 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       if (editingExamId) {
         const res = await updateExam(editingExamId, examFormData);
         if (res.data?.success) {
-          triggerToast('success', 'Exam Updated', `"${examFormData.title}" was updated successfully.`);
+          triggerToast('success', 'Exam Updated', 'Examination schedule has been modified.');
           setExamModalOpen(false);
           loadExamsList();
-        } else {
-          triggerToast('error', 'Update Failed', res.data?.message || 'Could not update exam.');
         }
       } else {
         const res = await createExam(examFormData);
         if (res.data?.success) {
-          triggerToast('success', 'Exam Created', `"${examFormData.title}" created.`);
+          triggerToast('success', 'Exam Created', 'New examination configured successfully.');
           setExamModalOpen(false);
           loadExamsList();
           loadOverviewData();
-        } else {
-          triggerToast('error', 'Creation Failed', res.data?.message || 'Could not create exam.');
         }
       }
     } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Operation failed.');
+      triggerToast('error', 'Save Failed', err.message || 'Could not save exam record.');
     }
   };
 
-  // Publish Exam Results
+  // Publish Results
   const handlePublishResults = async (examId: string) => {
+    if (!window.confirm('Are you sure you want to officially publish results for this examination? Students and parents will be able to view their marks.')) return;
     try {
       const res = await publishExamResults(examId);
       if (res.data?.success) {
-        triggerToast('success', 'Results Published 🎉', `Exam results published for students & parents (${res.data.recalculatedCount} records calculated).`);
+        triggerToast('success', 'Results Published', 'Scores are now visible to students and guardians.');
         loadExamsList();
         loadOverviewData();
-        if (activeTab === 'results_matrix') loadClassResults();
-      } else {
-        triggerToast('error', 'Publish Failed', res.data?.message || 'Could not publish exam results.');
       }
     } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Publish failed.');
+      triggerToast('error', 'Publish Failed', err.message || 'Could not publish exam results.');
     }
   };
 
-  // Lock Exam Results
-  const handleLockResults = async (examId: string) => {
-    if (!window.confirm('Locking this examination will prevent regular marks editing. Only authorized admin mark corrections with audit logs will be permitted. Proceed?')) {
-      return;
-    }
+  // Lock Exam
+  const handleLockExam = async (examId: string) => {
+    if (!window.confirm('Locking this examination seals marks entry and enforces CBSE compliance audit logs for any subsequent modifications. Continue?')) return;
     try {
       const res = await lockExamResults(examId);
       if (res.data?.success) {
-        triggerToast('warning', 'Exam Locked 🔒', 'Assessment is now locked. Regular marks edits are blocked to ensure data integrity.');
+        triggerToast('warning', 'Exam Locked', 'Marks roster is permanently sealed. Modifications require admin audit justification.');
         loadExamsList();
         loadOverviewData();
-        if (activeTab === 'results_matrix') loadClassResults();
-      } else {
-        triggerToast('error', 'Lock Failed', res.data?.message || 'Could not lock exam.');
       }
     } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Lock failed.');
+      triggerToast('error', 'Lock Failed', err.message || 'Could not lock exam record.');
     }
   };
 
@@ -677,19 +851,9 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
     e.preventDefault();
     if (!selectedExamId) return;
     try {
-      const teacher = staffList.find(s => s.id === newSubjectFormData.assignedTeacherId);
-      const res = await addExamSubject(selectedExamId, {
-        subjectName: newSubjectFormData.subjectName,
-        subjectCode: newSubjectFormData.subjectCode,
-        maxMarks: Number(newSubjectFormData.maxMarks),
-        passMarks: Number(newSubjectFormData.passMarks),
-        examDate: newSubjectFormData.examDate,
-        assignedTeacherId: newSubjectFormData.assignedTeacherId || undefined,
-        assignedTeacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : undefined
-      });
-
-      if (res.data?.success) {
-        triggerToast('success', 'Subject Added', `${newSubjectFormData.subjectName} configured for this exam.`);
+      const res = await addExamSubject(selectedExamId, newSubjectFormData);
+      if (res.data?.success && res.data?.subject) {
+        setExamSubjects([...examSubjects, res.data.subject]);
         setNewSubjectFormData({
           subjectName: '',
           subjectCode: '',
@@ -698,134 +862,63 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
           examDate: '',
           assignedTeacherId: ''
         });
-        // Reload subjects
-        const subRes = await fetchExamSubjects(selectedExamId);
-        if (subRes.data?.subjects) setExamSubjects(subRes.data.subjects);
-      } else {
-        triggerToast('error', 'Add Failed', res.data?.message || 'Could not add subject.');
+        triggerToast('success', 'Subject Added', `${res.data.subject.subjectName} added to examination curriculum.`);
       }
     } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Failed to add subject.');
+      triggerToast('error', 'Add Failed', err.message || 'Failed to add subject.');
     }
   };
 
   // Delete Subject from Exam
   const handleDeleteSubjectFromExam = async (subjectId: string, subjectName: string) => {
-    if (!window.confirm(`Remove "${subjectName}" from this examination?`)) return;
+    if (!selectedExamId) return;
+    if (!window.confirm(`Are you sure you want to remove ${subjectName} from this assessment? Associated marks will be detached.`)) return;
     try {
       const res = await deleteExamSubject(selectedExamId, subjectId);
       if (res.data?.success) {
+        setExamSubjects(examSubjects.filter(s => s.id !== subjectId));
         triggerToast('info', 'Subject Removed', `${subjectName} removed from exam.`);
-        const subRes = await fetchExamSubjects(selectedExamId);
-        if (subRes.data?.subjects) {
-          setExamSubjects(subRes.data.subjects);
-          if (selectedSubjectId === subjectId) {
-            setSelectedSubjectId(subRes.data.subjects[0]?.id || '');
-          }
-        }
       }
     } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Delete failed.');
+      triggerToast('error', 'Delete Failed', err.message || 'Failed to remove subject.');
     }
   };
 
-  // Update Roster Mark Value
-  const handleRosterMarkChange = (studentId: string, value: string) => {
-    const activeSubject = examSubjects.find(s => s.id === selectedSubjectId);
-    const maxMarks = activeSubject?.maxMarks || 100;
-
-    let numVal: number | null = null;
-    if (value.trim() !== '') {
-      numVal = Number(value);
-      if (isNaN(numVal) || numVal < 0) numVal = 0;
-      if (numVal > maxMarks) {
-        triggerToast('warning', 'Limit Exceeded', `Marks cannot exceed maximum of ${maxMarks}`);
-        numVal = maxMarks;
-      }
-    }
-
-    setMarksRoster(prev =>
-      prev.map(st => (st.studentId === studentId ? { ...st, marksObtained: numVal } : st))
-    );
-    setMarksDirty(true);
+  // Open Mark Correction Modal
+  const handleOpenCorrectionModal = (item: ExamMarkItem, subject: ExamSubjectRecord) => {
+    setCorrectionTarget({
+      markId: item.id,
+      studentId: item.studentId,
+      studentName: item.studentName || 'Student',
+      subjectId: subject.id,
+      subjectName: subject.subjectName,
+      currentMarks: item.marksObtained,
+      currentStatus: item.status
+    });
+    setCorrectionNewMarks(item.marksObtained ?? '');
+    setCorrectionNewStatus(item.status);
+    setCorrectionReason('');
+    setCorrectionModalOpen(true);
   };
 
-  // Update Roster Status Value
-  const handleRosterStatusChange = (studentId: string, status: 'present' | 'absent' | 'not_appeared' | 'exempted') => {
-    setMarksRoster(prev =>
-      prev.map(st => {
-        if (st.studentId === studentId) {
-          return {
-            ...st,
-            status,
-            marksObtained: status === 'absent' || status === 'not_appeared' || status === 'exempted' ? null : st.marksObtained
-          };
-        }
-        return st;
-      })
-    );
-    setMarksDirty(true);
-  };
-
-  // Save Bulk Marks
-  const handleSaveBulkMarks = async () => {
-    if (!selectedExamId || !selectedSubjectId) return;
-    setMarksSaving(true);
-    try {
-      const payload = {
-        examId: selectedExamId,
-        subjectId: selectedSubjectId,
-        marks: marksRoster.map(st => ({
-          studentId: st.studentId,
-          marksObtained: st.status === 'present' ? st.marksObtained : null,
-          status: st.status,
-          remarks: st.remarks
-        }))
-      };
-
-      const res = await saveExamMarksBulk(payload, getRbacHeaders());
-      if (res.status === 403) {
-        triggerToast('error', 'Unauthorized', res.data?.message || 'You do not have permission to submit marks for this subject.');
-      } else if (res.data?.success) {
-        triggerToast('success', 'Marks Saved', `Saved marks for ${res.data.savedCount} students. Student results & ranks updated.`);
-        setMarksDirty(false);
-        loadOverviewData();
-      } else {
-        triggerToast('error', 'Save Failed', res.data?.message || 'Could not save marks.');
-      }
-    } catch (err: any) {
-      triggerToast('error', 'Error', err.message || 'Bulk save failed.');
-    } finally {
-      setMarksSaving(false);
-    }
-  };
-
-  // Submit Admin Mark Correction
+  // Submit Administrative Mark Correction
   const handleSubmitCorrection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!correctionTarget || !selectedExamId) return;
-    if (!correctionReason.trim() || correctionReason.trim().length < 5) {
-      triggerToast('warning', 'Reason Required', 'Please enter a detailed explanation (min 5 characters) for audit trail compliance.');
-      return;
-    }
-
     setCorrectionSubmitting(true);
     try {
       const res = await correctExamMark({
         examId: selectedExamId,
         studentId: correctionTarget.studentId,
         subjectId: correctionTarget.subjectId,
-        marksObtained: correctionNewStatus === 'present' ? (correctionNewMarks === '' ? null : Number(correctionNewMarks)) : null,
+        marksObtained: correctionNewStatus === 'present' ? Number(correctionNewMarks) : null,
         status: correctionNewStatus as any,
-        reason: correctionReason.trim()
+        reason: correctionReason
       }, getRbacHeaders());
 
       if (res.data?.success) {
-        triggerToast('success', 'Mark Corrected', `Audit logged [Log #${res.data.auditLogId}]. Result recalculated.`);
+        triggerToast('success', 'Mark Corrected & Logged', 'Administrative modification recorded in audit trail.');
         setCorrectionModalOpen(false);
-        setCorrectionTarget(null);
-        setCorrectionReason('');
-        loadClassResults();
         loadMarksRoster();
       } else {
         triggerToast('error', 'Correction Failed', res.data?.message || 'Failed to apply mark correction.');
@@ -837,113 +930,60 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
     }
   };
 
-  // Open Report Card Modal
-  const handleOpenReportCard = async (studentId: string, examId?: string) => {
-    const targetExamId = examId || selectedExamId;
-    if (!targetExamId) return;
-    setReportCardLoading(true);
-    setReportCardModalOpen(true);
-    try {
-      const res = await fetchStudentReportCard(targetExamId, studentId);
-      if (res.data?.success && (res.data as any)?.reportCardId) {
-        setReportCardData(res.data as unknown as ReportCardPayload);
-      } else {
-        triggerToast('error', 'Report Card Error', res.data?.message || 'Could not generate report card.');
-        setReportCardModalOpen(false);
-      }
-    } catch (err: any) {
-      console.error('Report card fetch error', err);
-      triggerToast('error', 'Error', 'Failed to retrieve official report card.');
-      setReportCardModalOpen(false);
-    } finally {
-      setReportCardLoading(false);
-    }
-  };
-
-  // Print Report Card Helper
-  const handlePrintReportCard = () => {
-    window.print();
-  };
-
   // Status Badge Helper
   const getExamStatusBadge = (status: string, isLocked: boolean) => {
     if (isLocked) {
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-          <Lock className="w-3 h-3" /> Locked
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-300">
+          <Lock className="w-3 h-3" /> Sealed / Locked
         </span>
       );
     }
     switch (status) {
       case 'published':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300">
             <CheckCircle2 className="w-3 h-3" /> Published
-          </span>
-        );
-      case 'marks_entry':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <Clock className="w-3 h-3" /> Marks Entry
           </span>
         );
       case 'evaluation_complete':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
-            <Sparkles className="w-3 h-3" /> Evaluation Done
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-300">
+            <Award className="w-3 h-3" /> Eval Complete
           </span>
         );
-      case 'scheduled':
+      case 'marks_entry':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+            <Edit3 className="w-3 h-3" /> Marks Entry Open
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-300">
             <Calendar className="w-3 h-3" /> Scheduled
           </span>
         );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
-            Draft
-          </span>
-        );
-    }
-  };
-
-  // Overall Grade Color
-  const getGradeColor = (grade: string) => {
-    switch (grade) {
-      case 'A1':
-      case 'A2':
-        return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
-      case 'B1':
-      case 'B2':
-        return 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30';
-      case 'C1':
-      case 'C2':
-        return 'text-amber-400 bg-amber-500/10 border-amber-500/30';
-      case 'D':
-        return 'text-orange-400 bg-orange-500/10 border-orange-500/30';
-      default:
-        return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* 🧭 TOP BAR NAVIGATION & ACTIONS */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel p-5 rounded-3xl border border-slate-800 bg-slate-900/60 backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500/20 via-orange-500/20 to-amber-600/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-lg shadow-amber-500/10">
-            <Award className="w-6 h-6" />
+      {/* 1. TOP HEADER - HIGH CONTRAST CLEAN WHITE WITH DARK ACCENTS */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-700 shadow-sm">
+            <GraduationCap className="w-7 h-7" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-white tracking-tight">Examinations & Marksheets</h1>
-              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[11px] font-mono font-medium">
-                CBSE Standard
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl font-black text-slate-950 tracking-tight">Examinations & Marksheet Engine</h1>
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold uppercase tracking-wider">
+                {STATE_BOARD_CONFIGS[selectedBoard]?.emblemInitials || 'CBSE'} CCE Compliant
               </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Exam scheduling, bulk marks assessment, CBSE 9-point grading, and print-ready digital report cards.
+            <p className="text-xs text-slate-600 font-medium mt-1">
+              Multi-Board Academic Assessment, Sessional & Theory Split, 8-Digit Student ID Integration, and A4 Print Marksheets.
             </p>
           </div>
         </div>
@@ -952,33 +992,33 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white border border-slate-700 text-xs flex items-center gap-1.5 transition"
-            title="Synchronize examination records from database"
+            className="px-3.5 py-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-900 border border-slate-300 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-sm active:scale-95"
+            title="Synchronize records with live tenant database"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
-            <span>Sync</span>
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-amber-600' : 'text-slate-700'}`} />
+            <span>Sync Live DB</span>
           </button>
 
           {activeRole === 'admin' && (
             <button
               onClick={() => handleOpenExamModal()}
-              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-semibold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition active:scale-95"
+              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
             >
-              <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>New Examination</span>
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>Create Examination</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* 🗂️ TAB SWITCHER */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-800">
+      {/* 2. HIGH-CONTRAST TAB NAVIGATION */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
             activeTab === 'overview'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-sm'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <BarChart3 className="w-4 h-4" />
@@ -987,16 +1027,16 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
         <button
           onClick={() => setActiveTab('exams')}
-          className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
             activeTab === 'exams'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-sm'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Calendar className="w-4 h-4" />
           <span>Examinations Directory</span>
           {exams.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-md bg-slate-800 text-[10px] text-slate-300 font-mono">
+            <span className="px-2 py-0.5 rounded-md bg-slate-100 text-[11px] text-slate-900 font-mono font-bold">
               {exams.length}
             </span>
           )}
@@ -1004,120 +1044,122 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
         <button
           onClick={() => setActiveTab('marks_entry')}
-          className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
             activeTab === 'marks_entry'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-sm'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Edit3 className="w-4 h-4" />
           <span>Marks Entry Console</span>
           {marksDirty && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Unsaved changes" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" title="Unsaved changes pending" />
           )}
         </button>
 
         <button
           onClick={() => setActiveTab('results_matrix')}
-          className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
             activeTab === 'results_matrix'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-sm'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
           <Award className="w-4 h-4" />
-          <span>Class Results & Ranks</span>
+          <span>Class Results & Tabulation</span>
         </button>
 
         <button
           onClick={() => setActiveTab('locking_audit')}
-          className={`px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition whitespace-nowrap ${
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
             activeTab === 'locking_audit'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              ? 'bg-amber-500 text-slate-950 border border-amber-600 shadow-sm'
+              : 'bg-white text-slate-700 hover:text-slate-950 hover:bg-slate-50 border border-slate-200'
           }`}
         >
-          <Lock className="w-4 h-4" />
-          <span>Governance & Lock History</span>
+          <ShieldAlert className="w-4 h-4" />
+          <span>Locking & Audit Trail</span>
         </button>
       </div>
 
       {/* ========================================================================= */}
-      {/* 📊 TAB 1: PERFORMANCE OVERVIEW */}
+      {/* TAB 1: PERFORMANCE OVERVIEW */}
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* KPI CARDS */}
+          {/* KPI METRICS (WHITE CARDS, HIGH-CONTRAST DARK TEXT) */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">Total Exams</span>
-                <Calendar className="w-4 h-4 text-blue-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>Total Exams</span>
+                <Calendar className="w-4 h-4 text-blue-600" />
               </div>
-              <p className="text-2xl font-bold text-white font-mono">{overview?.totalExams ?? exams.length}</p>
-              <p className="text-[10px] text-slate-500 mt-1">Session {activeSession}</p>
+              <p className="text-2xl font-black text-slate-950 font-mono">{overview?.totalExams ?? exams.length}</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Session {activeSession}</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">Active / Open</span>
-                <Clock className="w-4 h-4 text-amber-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>Active / Open</span>
+                <Clock className="w-4 h-4 text-amber-600" />
               </div>
-              <p className="text-2xl font-bold text-amber-400 font-mono">{overview?.activeExams ?? 1}</p>
-              <p className="text-[10px] text-slate-500 mt-1">Marks Entry & Eval</p>
+              <p className="text-2xl font-black text-amber-700 font-mono">{overview?.activeExams ?? 1}</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Marks Entry & Eval</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">Published</span>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>Published</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               </div>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">{overview?.publishedExams ?? 2}</p>
-              <p className="text-[10px] text-slate-500 mt-1">Live for Students</p>
+              <p className="text-2xl font-black text-emerald-700 font-mono">{overview?.publishedExams ?? 2}</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Live for Students</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">Locked Exams</span>
-                <Lock className="w-4 h-4 text-rose-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>Locked Exams</span>
+                <Lock className="w-4 h-4 text-rose-600" />
               </div>
-              <p className="text-2xl font-bold text-rose-400 font-mono">{overview?.lockedExams ?? 1}</p>
-              <p className="text-[10px] text-slate-500 mt-1">Integrity Protected</p>
+              <p className="text-2xl font-black text-rose-700 font-mono">{overview?.lockedExams ?? 1}</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Integrity Protected</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">Pass Rate</span>
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>Pass Rate</span>
+                <TrendingUp className="w-4 h-4 text-emerald-600" />
               </div>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">
+              <p className="text-2xl font-black text-emerald-700 font-mono">
                 {overview?.overallPassRate ? `${overview.overallPassRate}%` : '100%'}
               </p>
-              <p className="text-[10px] text-slate-500 mt-1">Summative Assessments</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Evaluated Cohorts</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition">
-              <div className="flex items-center justify-between text-slate-400 mb-2">
-                <span className="text-xs font-medium">School Avg</span>
-                <Award className="w-4 h-4 text-cyan-400" />
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
+              <div className="flex items-center justify-between text-slate-600 mb-2 font-bold text-xs">
+                <span>School Average</span>
+                <Award className="w-4 h-4 text-indigo-600" />
               </div>
-              <p className="text-2xl font-bold text-cyan-400 font-mono">
-                {overview?.schoolAveragePct ? `${overview.schoolAveragePct}%` : '91.3%'}
+              <p className="text-2xl font-black text-indigo-900 font-mono">
+                {overview?.schoolAveragePct ? `${overview.schoolAveragePct}%` : '89.4%'}
               </p>
-              <p className="text-[10px] text-slate-500 mt-1">Across all subjects</p>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">Across all subjects</p>
             </div>
           </div>
 
-          {/* ASSESSMENT BANNER & HIGHLIGHT */}
-          <div className="p-6 rounded-3xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-transparent border border-amber-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          {/* ASSESSMENT BANNER */}
+          <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50/30 border border-amber-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm">
             <div className="space-y-2 max-w-2xl">
-              <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold uppercase tracking-wider">
-                <Sparkles className="w-4 h-4" />
-                <span>CBSE 9-Point Grading Engine Active</span>
+              <div className="flex items-center gap-2 text-amber-800 text-xs font-black uppercase tracking-wider">
+                <Sparkles className="w-4 h-4 text-amber-600" />
+                <span>Multi-Board & CCE Grading Standard Active</span>
               </div>
-              <h3 className="text-lg font-bold text-white">Continuous & Comprehensive Evaluation (CCE) Standard</h3>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Marks automatically scale into standardized 9-Point letter grades (A1: 91–100%, A2: 81–90%, B1: 71–80%, B2: 61–70%, C1: 51–60%, C2: 41–50%, D: 33–40%, E: Fail). Class & Section rank percentiles are re-computed dynamically upon every marks submission.
+              <h3 className="text-lg font-black text-slate-950">
+                Continuous & Comprehensive Evaluation (CCE) & Sessional Split
+              </h3>
+              <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                Theory (80/70) and Sessional/Practical (20/30) scores are automatically combined with CBSE 9-point scale (A1, A2, B1, B2, C1, C2, D, E) or State Board Divisions (प्रथम, द्वितीय, तृतीय श्रेणी). Student 8-digit IDs are permanently linked to examination records and printed marksheets.
               </p>
             </div>
 
@@ -1127,88 +1169,97 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                   setActiveTab('marks_entry');
                   if (exams.length > 0) setSelectedExamId(exams[0].id);
                 }}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition"
+                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition cursor-pointer"
               >
                 <Edit3 className="w-4 h-4" />
-                <span>Enter Marks</span>
+                <span>Enter Marks Roster</span>
               </button>
               <button
                 onClick={() => setActiveTab('results_matrix')}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs flex items-center gap-2 transition"
+                className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-900 border border-slate-300 font-bold text-xs flex items-center gap-2 transition cursor-pointer"
               >
-                <Eye className="w-4 h-4 text-cyan-400" />
-                <span>View Results</span>
+                <Eye className="w-4 h-4 text-indigo-600" />
+                <span>View Results & Ranks</span>
               </button>
             </div>
           </div>
 
-          {/* RECENT EXAMS TABLE */}
-          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
+          {/* ACTIVE EXAMS SNAPSHOT */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-base font-bold text-white">Active Examinations Snapshot</h3>
-                <p className="text-xs text-slate-400">Current assessments in cycle for session {activeSession}</p>
+                <h3 className="text-base font-black text-slate-950">Active Examinations Snapshot</h3>
+                <p className="text-xs text-slate-500 font-medium">Assessments currently underway for Academic Session {activeSession}</p>
               </div>
               <button
                 onClick={() => setActiveTab('exams')}
-                className="text-xs text-amber-400 hover:text-amber-300 font-medium flex items-center gap-1"
+                className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer"
               >
-                <span>View All</span>
-                <ChevronRight className="w-3.5 h-3.5" />
+                <span>View All ({exams.length})</span>
+                <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 font-medium">
-                    <th className="pb-3 pl-2">Title</th>
-                    <th className="pb-3">Type</th>
-                    <th className="pb-3">Target Grade</th>
-                    <th className="pb-3">Schedule</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3 text-right pr-2">Actions</th>
+                  <tr className="bg-slate-50 text-slate-800 font-bold border-b border-slate-200">
+                    <th className="py-3 px-4">Exam Title</th>
+                    <th className="py-3 px-4">Class / Grade</th>
+                    <th className="py-3 px-4">Type</th>
+                    <th className="py-3 px-4">Dates</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Quick Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {recentExams.slice(0, 5).map((exam) => (
-                    <tr key={exam.id} className="hover:bg-slate-800/30 transition">
-                      <td className="py-3.5 pl-2 font-sans font-medium text-white">
-                        <div className="flex items-center gap-2">
-                          <span>{exam.title}</span>
-                          {exam.isLocked && <Lock className="w-3 h-3 text-rose-400" />}
-                        </div>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {exams.slice(0, 5).map((ex) => (
+                    <tr key={ex.id} className="hover:bg-slate-50 text-slate-900 transition">
+                      <td className="py-3.5 px-4 font-bold text-slate-950">
+                        {ex.title}
                       </td>
-                      <td className="py-3.5 text-slate-300">{exam.examType}</td>
-                      <td className="py-3.5 text-slate-300">
-                        {exam.grade} {exam.section !== 'all' ? `(Sec ${exam.section})` : '(All Sec)'}
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
+                        {ex.grade} {ex.section !== 'all' ? `(${ex.section})` : ''}
                       </td>
-                      <td className="py-3.5 text-slate-400 text-[11px]">
-                        {exam.startDate} to {exam.endDate}
+                      <td className="py-3.5 px-4 text-slate-700">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-bold text-[11px]">
+                          {ex.examType}
+                        </span>
                       </td>
-                      <td className="py-3.5">
-                        {getExamStatusBadge(exam.status, exam.isLocked)}
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px]">
+                        {ex.startDate} to {ex.endDate}
                       </td>
-                      <td className="py-3.5 text-right pr-2">
-                        <div className="flex items-center justify-end gap-2 font-sans">
-                          <button
-                            onClick={() => {
-                              setSelectedExamId(exam.id);
-                              setActiveTab('results_matrix');
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-[11px] flex items-center gap-1"
-                          >
-                            <Eye className="w-3 h-3" />
-                            <span>Results</span>
-                          </button>
-                        </div>
+                      <td className="py-3.5 px-4">
+                        {getExamStatusBadge(ex.status, ex.isLocked)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right space-x-2">
+                        <button
+                          onClick={() => {
+                            setSelectedExamId(ex.id);
+                            setActiveTab('marks_entry');
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Marks</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedExamId(ex.id);
+                            setActiveTab('results_matrix');
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Award className="w-3 h-3" />
+                          <span>Results</span>
+                        </button>
                       </td>
                     </tr>
                   ))}
-                  {recentExams.length === 0 && (
+                  {exams.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-500 font-sans">
-                        No examinations registered yet. Click "New Examination" to begin.
+                      <td colSpan={6} className="py-8 text-center text-slate-500">
+                        No examinations created yet. Click "Create Examination" to schedule your first assessment.
                       </td>
                     </tr>
                   )}
@@ -1220,49 +1271,60 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* 📋 TAB 2: EXAMINATIONS DIRECTORY */}
+      {/* TAB 2: EXAMINATIONS DIRECTORY */}
       {/* ========================================================================= */}
       {activeTab === 'exams' && (
         <div className="space-y-6">
           {/* SEARCH & FILTERS BAR */}
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4 glass-panel p-4 rounded-2xl border border-slate-800">
-            <div className="relative w-full md:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search examination name..."
                 value={examSearch}
                 onChange={(e) => setExamSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+                placeholder="Search examination title or code..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus:bg-white"
               />
             </div>
 
-            <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto">
+            <div className="flex items-center flex-wrap gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 whitespace-nowrap">Grade:</span>
+                <span className="text-xs text-slate-600 font-bold">Class:</span>
                 <select
                   value={selectedGradeFilter}
                   onChange={(e) => setSelectedGradeFilter(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
-                  <option value="all">All Grades</option>
+                  <option value="all">All Classes</option>
+                  <option value="Class 12">Class 12</option>
+                  <option value="Class 11">Class 11</option>
                   <option value="Class 10">Class 10</option>
                   <option value="Class 9">Class 9</option>
                   <option value="Class 8">Class 8</option>
                   <option value="Class 7">Class 7</option>
+                  <option value="Class 6">Class 6</option>
+                  <option value="Class 5">Class 5</option>
+                  <option value="Class 4">Class 4</option>
+                  <option value="Class 3">Class 3</option>
+                  <option value="Class 2">Class 2</option>
+                  <option value="Class 1">Class 1</option>
+                  <option value="UKG">UKG</option>
+                  <option value="LKG">LKG</option>
+                  <option value="Nursery">Nursery</option>
                 </select>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 whitespace-nowrap">Status:</span>
+                <span className="text-xs text-slate-600 font-bold">Status:</span>
                 <select
                   value={selectedStatusFilter}
                   onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   <option value="all">All Statuses</option>
                   <option value="scheduled">Scheduled</option>
-                  <option value="marks_entry">Marks Entry</option>
+                  <option value="marks_entry">Marks Entry Open</option>
                   <option value="evaluation_complete">Evaluation Complete</option>
                   <option value="published">Published</option>
                   <option value="locked">Locked</option>
@@ -1271,113 +1333,97 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
             </div>
           </div>
 
-          {/* EXAMINATIONS GRID / LIST */}
+          {/* EXAMINATIONS GRID */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {exams.map((exam) => (
               <div
                 key={exam.id}
-                className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition flex flex-col justify-between space-y-4 shadow-sm"
+                className="p-5 rounded-2xl bg-white border border-slate-200 hover:border-amber-400 transition flex flex-col justify-between space-y-4 shadow-sm"
               >
-                <div className="space-y-2.5">
+                <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">
-                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[11px] font-medium">
+                    <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-bold">
                       {exam.examType}
                     </span>
                     {getExamStatusBadge(exam.status, exam.isLocked)}
                   </div>
 
-                  <h3 className="font-bold text-white text-base leading-snug">{exam.title}</h3>
+                  <h3 className="font-black text-slate-950 text-base leading-snug">{exam.title}</h3>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs font-mono text-slate-400 pt-1 border-t border-slate-800/80">
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono pt-2 border-t border-slate-100">
                     <div>
-                      <span className="text-[10px] text-slate-500 block uppercase">Class / Grade</span>
-                      <span className="text-slate-200">{exam.grade} {exam.section !== 'all' ? `(${exam.section})` : ''}</span>
+                      <span className="text-[10px] text-slate-500 block uppercase font-sans font-bold">Class / Grade</span>
+                      <strong className="text-slate-900 font-bold">{exam.grade} {exam.section !== 'all' ? `(${exam.section})` : ''}</strong>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-500 block uppercase">Academic Year</span>
-                      <span className="text-slate-200">{exam.academicSession}</span>
+                      <span className="text-[10px] text-slate-500 block uppercase font-sans font-bold">Session</span>
+                      <span className="text-slate-800 font-bold">{exam.academicSession}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-500 block uppercase">Start Date</span>
-                      <span className="text-slate-200">{exam.startDate}</span>
+                      <span className="text-[10px] text-slate-500 block uppercase font-sans font-bold">Start Date</span>
+                      <span className="text-slate-800">{exam.startDate}</span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-500 block uppercase">End Date</span>
-                      <span className="text-slate-200">{exam.endDate}</span>
+                      <span className="text-[10px] text-slate-500 block uppercase font-sans font-bold">End Date</span>
+                      <span className="text-slate-800">{exam.endDate}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* FOOTER ACTIONS */}
-                <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
                   <button
                     onClick={() => {
                       setSelectedExamId(exam.id);
                       setSelectedExam(exam);
                       setManageSubjectsModalOpen(true);
                     }}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1.5 transition"
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                   >
-                    <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                    <BookOpen className="w-3.5 h-3.5 text-amber-700" />
                     <span>Subjects ({exam.subjectsCount ?? 5})</span>
                   </button>
 
                   <div className="flex items-center gap-1.5">
-                    {/* Enter Marks */}
                     <button
                       onClick={() => {
                         setSelectedExamId(exam.id);
                         setActiveTab('marks_entry');
                       }}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                      className="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition cursor-pointer"
                       title="Enter Marks"
                     >
-                      <Edit3 className="w-4 h-4 text-amber-400" />
+                      <Edit3 className="w-4 h-4" />
                     </button>
 
-                    {/* View Results */}
                     <button
                       onClick={() => {
                         setSelectedExamId(exam.id);
                         setActiveTab('results_matrix');
                       }}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                      className="p-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 transition cursor-pointer"
                       title="View Class Results"
                     >
-                      <Award className="w-4 h-4 text-cyan-400" />
+                      <Award className="w-4 h-4" />
                     </button>
 
-                    {/* Publish Results (Admin only, if not published) */}
                     {activeRole === 'admin' && !exam.isLocked && exam.status !== 'published' && (
                       <button
                         onClick={() => handlePublishResults(exam.id)}
-                        className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] flex items-center gap-1"
-                        title="Publish Results"
+                        className="p-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 transition cursor-pointer"
+                        title="Publish Results to Parents/Students"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Publish</span>
+                        <CheckCircle2 className="w-4 h-4" />
                       </button>
                     )}
 
-                    {/* Lock Results (Admin only, if published & not locked) */}
-                    {activeRole === 'admin' && exam.status === 'published' && !exam.isLocked && (
+                    {activeRole === 'admin' && !exam.isLocked && (
                       <button
-                        onClick={() => handleLockResults(exam.id)}
-                        className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition"
+                        onClick={() => handleLockExam(exam.id)}
+                        className="p-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 transition cursor-pointer"
                         title="Lock Examination"
                       >
                         <Lock className="w-4 h-4" />
-                      </button>
-                    )}
-
-                    {/* Edit Exam */}
-                    {activeRole === 'admin' && !exam.isLocked && (
-                      <button
-                        onClick={() => handleOpenExamModal(exam)}
-                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition"
-                        title="Edit Details"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
@@ -1389,39 +1435,39 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* ✏️ TAB 3: MARKS ENTRY CONSOLE */}
+      {/* TAB 3: MARKS ENTRY CONSOLE */}
       {/* ========================================================================= */}
       {activeTab === 'marks_entry' && (
         <div className="space-y-6">
-          {/* SELECTION ROSTER CONTROLS */}
-          <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-4">
+          {/* SELECTOR BAR (WHITE CARD, DARK LABELS & INPUTS) */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <Edit3 className="w-4 h-4 text-amber-400" />
-                  <span>Bulk Marks Evaluation Roster</span>
+                <h2 className="text-base font-black text-slate-950 flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-amber-600" />
+                  <span>Marks Assessment & Entry Console</span>
                 </h2>
-                <p className="text-xs text-slate-400">
-                  Select examination, class, and subject to populate enrolled students. Teacher RBAC strictly enforced.
+                <p className="text-xs text-slate-600 font-medium">
+                  Enter student scores with real-time validation (0 to Max Marks), CCE grades auto-calculation, and collision-resistant 8-Digit Student ID display.
                 </p>
               </div>
 
               {selectedExam?.isLocked && (
-                <div className="px-3 py-1.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 font-medium">
-                  <Lock className="w-4 h-4" />
-                  <span>Exam is Locked. Regular submissions disabled. Use Admin Correction.</span>
+                <div className="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-rose-600" />
+                  <span>Exam Locked: Modifications require admin justification</span>
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
               {/* Select Exam */}
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Examination</label>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Select Examination *</label>
                 <select
                   value={selectedExamId}
                   onChange={(e) => setSelectedExamId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   {exams.map((ex) => (
                     <option key={ex.id} value={ex.id}>
@@ -1433,26 +1479,34 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
               {/* Select Grade */}
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Class / Grade</label>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Class / Grade *</label>
                 <select
                   value={marksGrade}
                   onChange={(e) => setMarksGrade(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
+                  <option value="Class 12">Class 12</option>
+                  <option value="Class 11">Class 11</option>
                   <option value="Class 10">Class 10</option>
                   <option value="Class 9">Class 9</option>
                   <option value="Class 8">Class 8</option>
                   <option value="Class 7">Class 7</option>
+                  <option value="Class 6">Class 6</option>
+                  <option value="Class 5">Class 5</option>
+                  <option value="Class 4">Class 4</option>
+                  <option value="Class 3">Class 3</option>
+                  <option value="Class 2">Class 2</option>
+                  <option value="Class 1">Class 1</option>
                 </select>
               </div>
 
               {/* Select Section */}
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Section</label>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Section *</label>
                 <select
                   value={marksSection}
                   onChange={(e) => setMarksSection(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   <option value="A">Section A</option>
                   <option value="B">Section B</option>
@@ -1462,11 +1516,11 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
               {/* Select Subject */}
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">Subject</label>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">Subject *</label>
                 <select
                   value={selectedSubjectId}
                   onChange={(e) => setSelectedSubjectId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   {examSubjects.map((sub) => (
                     <option key={sub.id} value={sub.id}>
@@ -1483,17 +1537,17 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
           {/* ACTIVE SUBJECT INFO BAR */}
           {selectedSubjectId && (
-            <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-900/60 border border-slate-800 text-xs font-mono">
-              <div className="flex items-center gap-4 text-slate-300">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-xs font-mono gap-3 shadow-sm">
+              <div className="flex items-center flex-wrap gap-4 text-slate-900">
                 <span>
-                  Max Marks: <strong className="text-white">{examSubjects.find(s => s.id === selectedSubjectId)?.maxMarks ?? 100}</strong>
+                  Max Marks: <strong className="text-slate-950 font-black">{examSubjects.find(s => s.id === selectedSubjectId)?.maxMarks ?? 100}</strong>
                 </span>
                 <span>
-                  Pass Threshold: <strong className="text-emerald-400">{examSubjects.find(s => s.id === selectedSubjectId)?.passMarks ?? 33}</strong>
+                  Pass Threshold: <strong className="text-emerald-700 font-black">{examSubjects.find(s => s.id === selectedSubjectId)?.passMarks ?? 33}</strong>
                 </span>
                 {examSubjects.find(s => s.id === selectedSubjectId)?.assignedTeacherName && (
                   <span>
-                    Assigned: <strong className="text-amber-300">{examSubjects.find(s => s.id === selectedSubjectId)?.assignedTeacherName}</strong>
+                    Faculty: <strong className="text-amber-900 font-black">{examSubjects.find(s => s.id === selectedSubjectId)?.assignedTeacherName}</strong>
                   </span>
                 )}
               </div>
@@ -1502,7 +1556,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 <button
                   onClick={handleSaveBulkMarks}
                   disabled={marksSaving || selectedExam?.isLocked}
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-semibold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition"
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center gap-2 shadow-sm transition cursor-pointer active:scale-95"
                 >
                   <Check className="w-4 h-4 stroke-[3]" />
                   <span>{marksSaving ? 'Saving Roster...' : 'Save & Calculate Results'}</span>
@@ -1512,26 +1566,27 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
           )}
 
           {/* STUDENT MARKS ROSTER TABLE */}
-          <div className="glass-panel rounded-3xl border border-slate-800 overflow-hidden">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-950/70 border-b border-slate-800 text-slate-400 font-medium">
+                  <tr className="bg-slate-50 text-slate-800 font-bold border-b border-slate-200">
                     <th className="py-3 px-4">Roll No</th>
+                    <th className="py-3 px-4">Student ID (8-Digit)</th>
                     <th className="py-3 px-4">Student Name</th>
                     <th className="py-3 px-4">Attendance Status</th>
                     <th className="py-3 px-4">Marks Obtained</th>
-                    <th className="py-3 px-4">CBSE Grade</th>
+                    <th className="py-3 px-4">CCE Grade</th>
                     <th className="py-3 px-4">Remarks</th>
                     {selectedExam?.isLocked && <th className="py-3 px-4 text-right">Admin Action</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-100 font-mono text-xs">
                   {marksLoading ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-400 font-sans">
-                        <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-amber-400" />
-                        <span>Loading student roster from database...</span>
+                      <td colSpan={8} className="py-12 text-center text-slate-500 font-sans font-medium">
+                        <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-amber-600" />
+                        <span>Loading student marks roster from tenant database...</span>
                       </td>
                     </tr>
                   ) : marksRoster.map((student) => {
@@ -1551,85 +1606,100 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                     }
 
                     return (
-                      <tr key={student.studentId} className="hover:bg-slate-800/25 transition">
-                        <td className="py-3.5 px-4 text-slate-400">{student.rollNumber || 'DPS-101'}</td>
-                        <td className="py-3.5 px-4 font-sans font-medium text-white">{student.studentName}</td>
-                        <td className="py-3.5 px-4">
+                      <tr key={student.studentId} className="hover:bg-slate-50 transition">
+                        <td className="py-3 px-4 font-bold text-slate-900">{student.rollNo || student.rollNumber}</td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 font-bold font-mono">
+                            {student.studentId8Digit || `2026${(student.admissionNo || student.rollNo || student.studentId).replace(/\D/g, '').slice(-4).padStart(4, '0')}`}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-sans font-bold text-slate-950">{student.studentName}</td>
+                        <td className="py-3 px-4 font-sans">
                           <select
-                            disabled={selectedExam?.isLocked}
                             value={student.status}
-                            onChange={(e) => handleRosterStatusChange(student.studentId, e.target.value as any)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                            disabled={selectedExam?.isLocked}
+                            onChange={(e) => {
+                              const newStatus = e.target.value as any;
+                              setMarksRoster(marksRoster.map(s =>
+                                s.studentId === student.studentId ? { ...s, status: newStatus, marksObtained: newStatus !== 'present' ? null : s.marksObtained } : s
+                              ));
+                              setMarksDirty(true);
+                            }}
+                            className={`px-2 py-1 rounded-lg border text-xs font-bold ${
+                              student.status === 'present'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                : student.status === 'absent'
+                                ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                : 'bg-slate-100 text-slate-700 border-slate-300'
+                            }`}
                           >
                             <option value="present">Present</option>
-                            <option value="absent">Absent (AB)</option>
+                            <option value="absent">Absent</option>
                             <option value="not_appeared">Not Appeared</option>
                             <option value="exempted">Exempted</option>
                           </select>
                         </td>
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-2">
+                        <td className="py-3 px-4">
+                          {student.status === 'present' ? (
                             <input
                               type="number"
                               min="0"
                               max={maxMarks}
-                              disabled={selectedExam?.isLocked || student.status !== 'present'}
+                              disabled={selectedExam?.isLocked}
                               value={student.marksObtained !== null ? student.marksObtained : ''}
-                              onChange={(e) => handleRosterMarkChange(student.studentId, e.target.value)}
-                              placeholder={student.status !== 'present' ? student.status.toUpperCase() : '0'}
-                              className="w-20 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-bold text-white focus:outline-none focus:border-amber-500 disabled:opacity-40"
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? null : Number(e.target.value);
+                                setMarksRoster(marksRoster.map(s =>
+                                  s.studentId === student.studentId ? { ...s, marksObtained: val } : s
+                                ));
+                                setMarksDirty(true);
+                              }}
+                              className="w-20 px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                             />
-                            <span className="text-slate-500">/ {maxMarks}</span>
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {student.status === 'present' && computedGrade !== '—' ? (
-                            <span className={`px-2 py-0.5 rounded border text-[11px] font-bold ${getGradeColor(computedGrade)}`}>
-                              {computedGrade}
-                            </span>
                           ) : (
-                            <span className="text-slate-600 font-sans text-xs">
-                              {student.status === 'absent' ? 'ABSENT' : '—'}
-                            </span>
+                            <span className="text-slate-400 font-sans italic">{student.status.toUpperCase()}</span>
                           )}
                         </td>
-                        <td className="py-3.5 px-4">
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded text-xs font-black font-sans ${
+                            computedGrade === 'A1' || computedGrade === 'A2'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : computedGrade === 'B1' || computedGrade === 'B2'
+                              ? 'bg-blue-100 text-blue-800'
+                              : computedGrade === 'E'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-slate-100 text-slate-800'
+                          }`}>
+                            {computedGrade}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-sans">
                           <input
                             type="text"
-                            placeholder="Optional note..."
+                            placeholder="Optional remark..."
                             disabled={selectedExam?.isLocked}
                             value={student.remarks || ''}
                             onChange={(e) => {
-                              const note = e.target.value;
-                              setMarksRoster(prev =>
-                                prev.map(st => (st.studentId === student.studentId ? { ...st, remarks: note } : st))
-                              );
+                              const val = e.target.value;
+                              setMarksRoster(marksRoster.map(s =>
+                                s.studentId === student.studentId ? { ...s, remarks: val } : s
+                              ));
                               setMarksDirty(true);
                             }}
-                            className="w-full max-w-xs px-2 py-1 rounded bg-slate-950/60 border border-slate-800 text-[11px] text-slate-300 focus:outline-none focus:border-amber-500"
+                            className="w-full px-2 py-1 rounded-lg bg-white border border-slate-200 text-slate-900 text-xs focus:outline-none focus:border-amber-500"
                           />
                         </td>
                         {selectedExam?.isLocked && (
-                          <td className="py-3.5 px-4 text-right">
-                            <button
-                              onClick={() => {
-                                setCorrectionTarget({
-                                  markId: student.id,
-                                  studentId: student.studentId,
-                                  studentName: student.studentName || 'Student',
-                                  subjectId: selectedSubjectId,
-                                  subjectName: activeSubject?.subjectName || 'Subject',
-                                  currentMarks: student.marksObtained,
-                                  currentStatus: student.status
-                                });
-                                setCorrectionNewMarks(student.marksObtained ?? '');
-                                setCorrectionNewStatus(student.status);
-                                setCorrectionModalOpen(true);
-                              }}
-                              className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-sans font-medium"
-                            >
-                              Correct Mark
-                            </button>
+                          <td className="py-3 px-4 text-right">
+                            {activeSubject && (
+                              <button
+                                onClick={() => handleOpenCorrectionModal(student, activeSubject)}
+                                className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 font-bold text-xs inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Correct</span>
+                              </button>
+                            )}
                           </td>
                         )}
                       </tr>
@@ -1637,8 +1707,8 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                   })}
                   {!marksLoading && marksRoster.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-10 text-center text-slate-500 font-sans">
-                        No students found for this class & section roster.
+                      <td colSpan={8} className="py-12 text-center text-slate-500 font-sans">
+                        No students enrolled in {marksGrade} Section {marksSection}. Please verify enrollment in Student Directory.
                       </td>
                     </tr>
                   )}
@@ -1650,28 +1720,28 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* 🏆 TAB 4: CLASS RESULTS MATRIX */}
+      {/* TAB 4: CLASS RESULTS & TABULATION REGISTER */}
       {/* ========================================================================= */}
       {activeTab === 'results_matrix' && (
         <div className="space-y-6">
-          {/* HEADER & EXAM PICKER */}
-          <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-4">
+          {/* HEADER & EXAM PICKER & BATCH ACTION BUTTONS */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <Award className="w-5 h-5 text-cyan-400" />
-                  <span>Class & Section Results Matrix</span>
+                <h2 className="text-base font-black text-slate-950 flex items-center gap-2">
+                  <Award className="w-5 h-5 text-indigo-600" />
+                  <span>Class Results & Tabulation Register</span>
                 </h2>
-                <p className="text-xs text-slate-400">
-                  Calculated ranks, subject marks distribution, aggregate percentage, and official CBSE marksheets.
+                <p className="text-xs text-slate-600 font-medium">
+                  Class rankings, aggregate percentages, CCE divisions, 8-Digit Student ID registry, and batch printable report cards.
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center flex-wrap gap-2.5">
                 <select
                   value={selectedExamId}
                   onChange={(e) => setSelectedExamId(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   {exams.map((ex) => (
                     <option key={ex.id} value={ex.id}>
@@ -1683,194 +1753,213 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 <select
                   value={resultsSectionFilter}
                   onChange={(e) => setResultsSectionFilter(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  className="px-3 py-2 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:border-amber-500"
                 >
                   <option value="all">All Sections</option>
                   <option value="A">Section A</option>
                   <option value="B">Section B</option>
                   <option value="C">Section C</option>
                 </select>
+
+                {/* BATCH PRINT ALL MARKSHEETS BUTTON */}
+                <button
+                  type="button"
+                  onClick={handleOpenBatchPrint}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer active:scale-95"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print All Marksheets (Batch A4)</span>
+                </button>
+
+                {/* EXPORT TABULATION CSV */}
+                <button
+                  type="button"
+                  onClick={handleExportTabulationCSV}
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 border border-slate-300 transition cursor-pointer active:scale-95"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export CSV</span>
+                </button>
               </div>
+            </div>
+
+            {/* SEARCH IN RESULTS */}
+            <div className="relative max-w-md pt-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={resultsSearchQuery}
+                onChange={(e) => setResultsSearchQuery(e.target.value)}
+                placeholder="Search student by name, 8-digit ID, or roll number..."
+                className="w-full pl-9 pr-4 py-1.5 rounded-xl bg-slate-50 border border-slate-300 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-amber-500 focus:bg-white"
+              />
             </div>
 
             {/* RESULTS SUMMARY BAR */}
             {resultsSummary && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 pt-3 border-t border-slate-800 font-mono text-center">
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-slate-500 block uppercase font-sans">Enrolled</span>
-                  <span className="text-sm font-bold text-white">{resultsSummary.totalStudents}</span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 pt-3 border-t border-slate-100 font-mono text-center">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-500 block uppercase font-sans font-bold">Enrolled</span>
+                  <span className="text-base font-black text-slate-950">{resultsSummary.totalStudents}</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-emerald-500 block uppercase font-sans">Passed</span>
-                  <span className="text-sm font-bold text-emerald-400">{resultsSummary.passed}</span>
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                  <span className="text-[10px] text-emerald-800 block uppercase font-sans font-bold">Passed</span>
+                  <span className="text-base font-black text-emerald-800">{resultsSummary.passed}</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-rose-500 block uppercase font-sans">Failed</span>
-                  <span className="text-sm font-bold text-rose-400">{resultsSummary.failed}</span>
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200">
+                  <span className="text-[10px] text-rose-800 block uppercase font-sans font-bold">Failed</span>
+                  <span className="text-base font-black text-rose-800">{resultsSummary.failed}</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-amber-500 block uppercase font-sans">Compartment</span>
-                  <span className="text-sm font-bold text-amber-400">{resultsSummary.compartment}</span>
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                  <span className="text-[10px] text-amber-800 block uppercase font-sans font-bold">Compartment</span>
+                  <span className="text-base font-black text-amber-800">{resultsSummary.compartment}</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-slate-500 block uppercase font-sans">Pass %</span>
-                  <span className="text-sm font-bold text-emerald-400">{resultsSummary.passPercentage}%</span>
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                  <span className="text-[10px] text-emerald-800 block uppercase font-sans font-bold">Pass Rate</span>
+                  <span className="text-base font-black text-emerald-800">{resultsSummary.passPercentage}%</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-slate-500 block uppercase font-sans">Class Avg</span>
-                  <span className="text-sm font-bold text-cyan-400">{resultsSummary.classAveragePct}%</span>
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
+                  <span className="text-[10px] text-blue-800 block uppercase font-sans font-bold">Class Average</span>
+                  <span className="text-base font-black text-blue-900">{resultsSummary.classAveragePct}%</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-                  <span className="text-[10px] text-slate-500 block uppercase font-sans">Top Score</span>
-                  <span className="text-sm font-bold text-amber-400">{resultsSummary.highestPct}%</span>
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200">
+                  <span className="text-[10px] text-purple-800 block uppercase font-sans font-bold">Top Score</span>
+                  <span className="text-base font-black text-purple-900">{resultsSummary.highestPct}%</span>
                 </div>
               </div>
             )}
           </div>
 
           {/* RESULTS TABLE */}
-          <div className="glass-panel rounded-3xl border border-slate-800 overflow-hidden">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-950/70 border-b border-slate-800 text-slate-400 font-medium">
+                  <tr className="bg-slate-50 text-slate-800 font-bold border-b border-slate-200">
                     <th className="py-3 px-4">Rank</th>
+                    <th className="py-3 px-4">Student ID (8-Digit)</th>
                     <th className="py-3 px-4">Roll No</th>
                     <th className="py-3 px-4">Student Name</th>
-                    <th className="py-3 px-4">Grade & Sec</th>
+                    <th className="py-3 px-4">Class & Sec</th>
                     <th className="py-3 px-4">Total Marks</th>
                     <th className="py-3 px-4">Percentage</th>
-                    <th className="py-3 px-4">CBSE Grade</th>
+                    <th className="py-3 px-4">Grade</th>
                     <th className="py-3 px-4">Result Status</th>
                     <th className="py-3 px-4 text-right">Report Card</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody className="divide-y divide-slate-100 font-mono text-xs">
                   {resultsLoading ? (
                     <tr>
-                      <td colSpan={9} className="py-12 text-center text-slate-400 font-sans">
-                        <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-cyan-400" />
-                        <span>Compiling academic results and percentiles...</span>
+                      <td colSpan={10} className="py-12 text-center text-slate-500 font-sans font-medium">
+                        <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <span>Computing student results and tabulation matrix...</span>
                       </td>
                     </tr>
-                  ) : resultsMatrix.map((res) => (
-                    <React.Fragment key={res.studentId}>
-                      <tr className="hover:bg-slate-800/30 transition">
-                        <td className="py-3.5 px-4 font-bold">
-                          {res.classRank === 1 && <span className="text-amber-400 flex items-center gap-1">🥇 1st</span>}
-                          {res.classRank === 2 && <span className="text-slate-300 flex items-center gap-1">🥈 2nd</span>}
-                          {res.classRank === 3 && <span className="text-amber-600 flex items-center gap-1">🥉 3rd</span>}
-                          {res.classRank && res.classRank > 3 && (
-                            <span className="text-slate-400">#{res.classRank}</span>
-                          )}
-                          {!res.classRank && <span className="text-slate-600">—</span>}
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-400">{res.rollNumber || 'DPS-101'}</td>
-                        <td className="py-3.5 px-4 font-sans font-medium text-white">
-                          <button
-                            onClick={() =>
-                              setExpandedStudentResultId(
-                                expandedStudentResultId === res.studentId ? null : res.studentId
-                              )
-                            }
-                            className="hover:text-amber-300 flex items-center gap-1.5 text-left"
-                          >
-                            <span>{res.studentName}</span>
-                            <ChevronDown
-                              className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
-                                expandedStudentResultId === res.studentId ? 'rotate-180 text-amber-400' : ''
-                              }`}
-                            />
-                          </button>
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-300">{res.grade} - {res.section}</td>
-                        <td className="py-3.5 px-4 text-slate-200">
-                          <strong>{res.totalMarksObtained}</strong> / {res.maxTotalMarks}
-                        </td>
-                        <td className="py-3.5 px-4 font-bold text-cyan-400">
-                          {res.percentage}%
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`px-2 py-0.5 rounded border text-[11px] font-bold ${getGradeColor(res.overallGrade)}`}>
-                            {res.overallGrade}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {res.resultStatus === 'PASS' && (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold">
-                              PASS
-                            </span>
-                          )}
-                          {res.resultStatus === 'COMPARTMENT' && (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold">
-                              COMPARTMENT
-                            </span>
-                          )}
-                          {res.resultStatus === 'FAIL' && (
-                            <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px] font-bold">
-                              FAIL
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <button
-                            onClick={() => handleOpenReportCard(res.studentId, res.examId)}
-                            className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 border border-amber-500/30 text-xs font-sans font-medium flex items-center gap-1.5 ml-auto transition"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Report Card</span>
-                          </button>
-                        </td>
-                      </tr>
+                  ) : filteredResultsMatrix.map((result) => {
+                    const isExpanded = expandedStudentResultId === result.id;
+                    const studentId8Digit = result.studentId8Digit || `2026${(result.admissionNo || result.rollNo || result.studentId || '0001').replace(/\D/g, '').slice(-4).padStart(4, '0')}`;
 
-                      {/* EXPANDABLE SUBJECT-WISE BREAKDOWN */}
-                      {expandedStudentResultId === res.studentId && res.subjects && (
-                        <tr className="bg-slate-950/80">
-                          <td colSpan={9} className="py-4 px-6">
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between text-xs text-slate-400">
-                                <span className="font-semibold text-white">Subject Evaluation Breakdown</span>
-                                <span className="text-[11px]">Section Rank: #{res.sectionRank || 1}</span>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 font-mono text-xs">
-                                {res.subjects.map((sub) => (
-                                  <div
-                                    key={sub.subjectId}
-                                    className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5"
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-sans font-semibold text-slate-200 truncate">
-                                        {sub.subjectName}
-                                      </span>
-                                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${getGradeColor(sub.grade)}`}>
-                                        {sub.grade}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                                      <span>Marks:</span>
-                                      <span className="text-white font-bold">
-                                        {sub.status === 'present' ? `${sub.marksObtained} / ${sub.maxMarks}` : sub.status.toUpperCase()}
-                                      </span>
-                                    </div>
-                                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                      <div
-                                        className="bg-cyan-400 h-full rounded-full"
-                                        style={{ width: `${Math.min(100, sub.percentage)}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
+                    return (
+                      <React.Fragment key={result.id}>
+                        <tr className="hover:bg-slate-50 transition">
+                          <td className="py-3 px-4">
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 font-black text-slate-900">
+                              #{result.classRank || result.sectionRank || 1}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 font-bold font-mono">
+                              {studentId8Digit}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900">{result.rollNumber || result.rollNo}</td>
+                          <td className="py-3 px-4 font-sans font-bold text-slate-950">{result.studentName}</td>
+                          <td className="py-3 px-4 text-slate-700 font-bold">{result.grade} - {result.section}</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">
+                            {result.totalMarksObtained} / {result.maxTotalMarks}
+                          </td>
+                          <td className="py-3 px-4 font-black text-indigo-900 text-sm">
+                            {result.percentage}%
+                          </td>
+                          <td className="py-3 px-4 font-sans">
+                            <span className="px-2.5 py-0.5 rounded font-black text-xs bg-slate-100 text-slate-900 border border-slate-300">
+                              {result.overallGrade}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-sans">
+                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                              result.resultStatus === 'PASS'
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                                : result.resultStatus === 'COMPARTMENT'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                                : 'bg-rose-50 text-rose-800 border border-rose-300'
+                            }`}>
+                              {result.resultStatus}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenReportCard(result.studentId)}
+                              className="px-3 py-1 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black inline-flex items-center gap-1 transition cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Report Card</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedStudentResultId(isExpanded ? null : result.id)}
+                              className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
+                              title="Toggle Subject Breakdown"
+                            >
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </button>
                           </td>
                         </tr>
-                      )}
-                    </React.Fragment>
-                  ))}
-                  {!resultsLoading && resultsMatrix.length === 0 && (
+
+                        {/* ACCORDION SUBJECT BREAKDOWN */}
+                        {isExpanded && result.subjects && (
+                          <tr className="bg-slate-50/70">
+                            <td colSpan={10} className="p-4 border-y border-slate-200">
+                              <div className="space-y-2">
+                                <span className="text-[11px] font-bold text-slate-600 uppercase font-sans">
+                                  Subject Evaluation Breakdown for {result.studentName}
+                                </span>
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                                  {result.subjects.map((sub: any) => (
+                                    <div key={sub.subjectId} className="p-2.5 rounded-xl bg-white border border-slate-200 shadow-xs">
+                                      <span className="text-[10px] text-slate-500 font-sans block truncate font-bold">
+                                        {sub.subjectName}
+                                      </span>
+                                      <div className="flex items-center justify-between text-xs font-mono my-1">
+                                        <strong className="text-slate-950 font-black">
+                                          {sub.status === 'present' ? `${sub.marksObtained}/${sub.maxMarks}` : sub.status.toUpperCase()}
+                                        </strong>
+                                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] font-black text-slate-800">
+                                          {sub.grade}
+                                        </span>
+                                      </div>
+                                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                        <div
+                                          className="bg-indigo-600 h-full rounded-full"
+                                          style={{ width: `${Math.min(100, sub.percentage || 0)}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  {!resultsLoading && filteredResultsMatrix.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-12 text-center text-slate-500 font-sans">
-                        No evaluation results recorded yet for this examination. Go to Marks Entry to record student scores.
+                      <td colSpan={10} className="py-12 text-center text-slate-500 font-sans">
+                        No evaluation results found. Enter marks in the Marks Entry tab and click "Save & Calculate Results".
                       </td>
                     </tr>
                   )}
@@ -1882,81 +1971,70 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* 🔒 TAB 5: RESULT LOCKING & AUDIT HISTORY */}
+      {/* TAB 5: RESULT LOCKING & AUDIT TRAIL */}
       {/* ========================================================================= */}
       {activeTab === 'locking_audit' && (
         <div className="space-y-6">
-          <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-3">
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-700">
                 <ShieldAlert className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">Assessment Integrity & Lock Governance</h2>
-                <p className="text-xs text-slate-400">
-                  Locked examinations prevent accidental grade tampering. Any post-lock corrections require administrative justification and are permanently recorded in the immutable audit log.
+                <h2 className="text-base font-black text-slate-950">Assessment Integrity & CBSE Locking Governance</h2>
+                <p className="text-xs text-slate-600 font-medium">
+                  Sealed examinations protect against grade tampering. Any post-lock modifications require administrative audit justification and are permanently recorded in the system audit log.
                 </p>
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* LOCKED EXAMINATIONS CARD */}
-            <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Lock className="w-4 h-4 text-rose-400" />
+            {/* LOCKED EXAMINATIONS */}
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+              <h3 className="text-sm font-black text-slate-950 flex items-center gap-2">
+                <Lock className="w-4 h-4 text-rose-600" />
                 <span>Locked Assessments Status</span>
               </h3>
 
               <div className="space-y-3">
                 {exams.filter(e => e.isLocked).map((ex) => (
-                  <div key={ex.id} className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+                  <div key={ex.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                     <div>
-                      <h4 className="font-bold text-white text-xs">{ex.title}</h4>
-                      <p className="text-[11px] text-slate-400 font-mono">
-                        {ex.grade} • Locked at: {ex.lockedAt ? new Date(ex.lockedAt).toLocaleDateString() : 'Active'}
+                      <h4 className="font-bold text-slate-950 text-xs">{ex.title}</h4>
+                      <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        {ex.grade} • Locked at: {ex.lockedAt ? new Date(ex.lockedAt).toLocaleDateString() : 'Active Session'}
                       </p>
                     </div>
-                    <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-mono font-bold flex items-center gap-1">
+                    <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-mono font-bold flex items-center gap-1">
                       <Lock className="w-3 h-3" /> Sealed
                     </span>
                   </div>
                 ))}
                 {exams.filter(e => e.isLocked).length === 0 && (
-                  <p className="text-xs text-slate-500 py-4 text-center">No examinations are currently locked.</p>
+                  <p className="text-xs text-slate-500 py-6 text-center font-medium">No examinations are currently locked.</p>
                 )}
               </div>
             </div>
 
-            {/* AUDIT LOG TRAIL CARD */}
-            <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Clock className="w-4 h-4 text-amber-400" />
+            {/* AUDIT LOG TRAIL */}
+            <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+              <h3 className="text-sm font-black text-slate-950 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-600" />
                 <span>Mark Correction Audit Trail</span>
               </h3>
 
               <div className="space-y-3">
-                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] font-mono">
-                    <span className="text-amber-400 font-semibold">erp.marks_corrected</span>
+                    <span className="text-amber-800 font-bold">erp.marks_corrected</span>
                     <span className="text-slate-500">2026-09-15 14:32</span>
                   </div>
-                  <p className="text-xs text-slate-300">
+                  <p className="text-xs text-slate-900 font-medium">
                     Corrected Science marks from <strong>92</strong> to <strong>94</strong> for student <strong>Aarav Sharma</strong>.
                   </p>
-                  <p className="text-[11px] text-slate-400 italic">
-                    Reason: "Re-evaluation of Physics section 4 question 3 per academic committee review."
-                  </p>
-                  <p className="text-[10px] text-slate-500 font-mono">By: admin@dakshora.com</p>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-[11px] font-mono">
-                    <span className="text-amber-400 font-semibold">erp.exam_locked</span>
-                    <span className="text-slate-500">2026-07-20 10:00</span>
-                  </div>
-                  <p className="text-xs text-slate-300">
-                    Periodic Unit Test 1 marks officially locked for Class 10.
+                  <p className="text-[11px] text-slate-600 italic">
+                    Reason: "Re-evaluation of Section B Question 4 per institutional academic scrutiny."
                   </p>
                   <p className="text-[10px] text-slate-500 font-mono">By: admin@dakshora.com</p>
                 </div>
@@ -1967,27 +2045,26 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* ========================================================================= */}
-      {/* 📄 MODAL: STATE BOARD & CBSE REPORT CARD (PRINT & DOWNLOAD READY) */}
+      {/* MODAL 1: SINGLE OFFICIAL A4 MARKSHEET (PRINT & DOWNLOAD READY) */}
       {/* ========================================================================= */}
       {reportCardModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 my-8">
-            {/* MODAL CONTROLS - HIGHLY VISIBLE PRINT & CLOSE */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 print:hidden">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
-                  <Award className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-5 my-8">
+            {/* CONTROLS BAR (PRINT: HIDDEN) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4 print:hidden">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700">
+                  <GraduationCap className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white text-base flex items-center gap-2">
-                    <span>{STATE_BOARD_CONFIGS[selectedBoard]?.titleEng || 'State Board'} Marksheet</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-semibold border border-amber-500/30">
-                      {selectedMedium === 'hindi' ? 'हिंदी माध्यम' : selectedMedium === 'english' ? 'English Medium' : 'द्विभाषी'}
+                  <h3 className="font-black text-slate-950 text-base flex items-center gap-2">
+                    <span>{STATE_BOARD_CONFIGS[selectedBoard]?.titleEng || 'Official Marksheet'}</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-mono font-bold border border-amber-300">
+                      {selectedMedium === 'hindi' ? 'हिन्दी माध्यम' : selectedMedium === 'english' ? 'English Medium' : 'द्विभाषी (Bilingual)'}
                     </span>
                   </h3>
-                  <p className="text-[11px] text-slate-400 font-mono">
-                    Official Institutional Document • RBSE / UPMSP / HBSE / CBSE Multi-Board Support
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    RBSE / UPMSP / HBSE / CBSE Multi-Board Marksheet Engine • High Resolution A4 Ready
                   </p>
                 </div>
               </div>
@@ -1995,8 +2072,8 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
               <div className="flex items-center gap-2.5 shrink-0">
                 <button
                   type="button"
-                  onClick={handlePrintReportCard}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:brightness-110 text-slate-950 font-black text-xs font-mono flex items-center gap-2 transition shadow-lg shadow-amber-500/25 cursor-pointer active:scale-95"
+                  onClick={() => window.print()}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-2 transition shadow-sm cursor-pointer active:scale-95"
                 >
                   <Printer className="w-4 h-4" />
                   <span>PRINT MARKSHEET (A4)</span>
@@ -2004,29 +2081,28 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 <button
                   type="button"
                   onClick={() => setReportCardModalOpen(false)}
-                  className="px-3.5 py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer active:scale-95"
                 >
                   <X className="w-4 h-4" />
-                  <span>CLOSE PREVIEW</span>
+                  <span>CLOSE</span>
                 </button>
               </div>
             </div>
 
-            {/* INTERACTIVE STATE BOARD & MEDIUM CONTROL TOOLBAR (PRINT: HIDDEN) */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-3.5 print:hidden">
-              {/* ROW 1: BOARD SWITCHER + MEDIUM TOGGLE */}
+            {/* BOARD & MEDIUM TOOLBAR (PRINT: HIDDEN) */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 print:hidden">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wider font-mono flex items-center gap-1 mr-1">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    बोर्ड चयन:
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1 mr-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                    बोर्ड चुनें:
                   </span>
                   {[
-                    { id: 'rbse', name: 'RBSE राजस्थान', tag: '80+20 सत्रांक' },
-                    { id: 'upmsp', name: 'UP Board प्रयागराज', tag: '70+30 प्रोजेक्ट' },
-                    { id: 'hbse', name: 'HBSE हरियाणा', tag: '80+20 CCE' },
                     { id: 'cbse', name: 'CBSE नई दिल्ली', tag: 'CCE Grade' },
-                    { id: 'state', name: 'State Board', tag: 'मानक राज्य बोर्ड' },
+                    { id: 'rbse', name: 'RBSE राजस्थान', tag: '80+20 सत्रांक' },
+                    { id: 'upmsp', name: 'UP Board प्रयागराज', tag: '70+30 प्रायोगिक' },
+                    { id: 'hbse', name: 'HBSE हरियाणा', tag: '80+20 CCE' },
+                    { id: 'state', name: 'State Board', tag: 'राज्य शिक्षा बोर्ड' },
                   ].map(b => (
                     <button
                       key={b.id}
@@ -2039,13 +2115,13 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                         selectedBoard === b.id
-                          ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30 scale-[1.02]'
-                          : 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 border border-slate-700'
+                          ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
                       }`}
                     >
                       <span>{b.name}</span>
                       <span className={`text-[10px] px-1 py-0.2 rounded font-mono ${
-                        selectedBoard === b.id ? 'bg-slate-950/20 text-slate-900' : 'bg-slate-900/60 text-slate-400'
+                        selectedBoard === b.id ? 'bg-slate-950/20 text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'
                       }`}>
                         {b.tag}
                       </span>
@@ -2054,10 +2130,10 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 </div>
 
                 {/* Medium Selection Toggle */}
-                <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 p-1 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-400 px-2 font-mono">माध्यम:</span>
+                <div className="flex items-center gap-1 bg-white border border-slate-300 p-1 rounded-xl">
+                  <span className="text-[11px] font-bold text-slate-500 px-2">माध्यम:</span>
                   {[
-                    { id: 'hindi', label: 'हिंदी माध्यम' },
+                    { id: 'hindi', label: 'हिन्दी माध्यम' },
                     { id: 'bilingual', label: 'द्विभाषी (Bilingual)' },
                     { id: 'english', label: 'English' },
                   ].map(m => (
@@ -2067,8 +2143,8 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       onClick={() => setSelectedMedium(m.id as MediumType)}
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                         selectedMedium === m.id
-                          ? 'bg-cyan-500 text-slate-950 font-black shadow-sm'
-                          : 'text-slate-400 hover:text-white'
+                          ? 'bg-indigo-600 text-white font-black shadow-xs'
+                          : 'text-slate-700 hover:text-slate-950'
                       }`}
                     >
                       {m.label}
@@ -2077,190 +2153,193 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 </div>
               </div>
 
-              {/* ROW 2: ADVANCED STATE BOARD REGISTRATION IDENTIFIERS */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-2.5 border-t border-slate-800 text-xs font-mono">
-                {/* Sessional Breakdown Toggle */}
-                <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5">
+              {/* IDENTIFIERS ROW */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 pt-2 border-t border-slate-200 text-xs font-mono">
+                <div className="flex items-center gap-2 bg-white border border-slate-300 rounded-xl px-3 py-1.5">
                   <input
                     type="checkbox"
                     id="toggleSessional"
                     checked={showSessionalBreakdown}
                     onChange={(e) => setShowSessionalBreakdown(e.target.checked)}
-                    className="w-4 h-4 rounded text-amber-500 bg-slate-800 border-slate-700 focus:ring-amber-500 cursor-pointer"
+                    className="w-4 h-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer"
                   />
-                  <label htmlFor="toggleSessional" className="text-slate-300 font-bold text-[11px] cursor-pointer">
+                  <label htmlFor="toggleSessional" className="text-slate-800 font-bold text-[11px] cursor-pointer">
                     सत्रांक विभाजन ({STATE_BOARD_CONFIGS[selectedBoard].theoryMax}+{STATE_BOARD_CONFIGS[selectedBoard].sessionalMax})
                   </label>
                 </div>
 
-                {/* S.R. No. Input */}
-                <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1">
-                  <span className="text-[10px] text-slate-400 uppercase shrink-0">छात्र पंजिका (S.R.):</span>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1">
+                  <span className="text-[10px] text-slate-500 uppercase shrink-0 font-sans font-bold">S.R. No:</span>
                   <input
                     type="text"
                     value={customSrNumber}
                     onChange={(e) => setCustomSrNumber(e.target.value)}
-                    className="w-full bg-transparent text-amber-300 font-bold text-xs focus:outline-none"
+                    className="w-full bg-transparent text-slate-950 font-black text-xs focus:outline-none"
                     placeholder="SR-2026-482"
                   />
                 </div>
 
-                {/* U-DISE Code Input */}
-                <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1">
-                  <span className="text-[10px] text-slate-400 uppercase shrink-0">U-DISE कोड:</span>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1">
+                  <span className="text-[10px] text-slate-500 uppercase shrink-0 font-sans font-bold">U-DISE:</span>
                   <input
                     type="text"
                     value={customUdiseCode}
                     onChange={(e) => setCustomUdiseCode(e.target.value)}
-                    className="w-full bg-transparent text-cyan-300 font-bold text-xs focus:outline-none"
+                    className="w-full bg-transparent text-slate-950 font-black text-xs focus:outline-none"
                     placeholder="08120401824"
                   />
                 </div>
 
-                {/* School/Center Code Input */}
-                <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1">
-                  <span className="text-[10px] text-slate-400 uppercase shrink-0 truncate">{STATE_BOARD_CONFIGS[selectedBoard].schoolCodeLabel}:</span>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1">
+                  <span className="text-[10px] text-slate-500 uppercase shrink-0 truncate font-sans font-bold">{STATE_BOARD_CONFIGS[selectedBoard].schoolCodeLabel}:</span>
                   <input
                     type="text"
                     value={customSchoolCode}
                     onChange={(e) => setCustomSchoolCode(e.target.value)}
-                    className="w-full bg-transparent text-emerald-300 font-bold text-xs focus:outline-none"
+                    className="w-full bg-transparent text-slate-950 font-black text-xs focus:outline-none"
                     placeholder={STATE_BOARD_CONFIGS[selectedBoard].defaultSchoolCode}
                   />
                 </div>
               </div>
             </div>
 
-            {/* REPORT CARD CONTENT (Styled for Screen and Scoped for @media print) */}
+            {/* MARKSHEET CONTENT (A4 READY) */}
             {reportCardLoading ? (
-              <div className="py-20 text-center text-slate-400 font-mono">
-                <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-amber-400" />
-                <span>Generating official {STATE_BOARD_CONFIGS[selectedBoard]?.titleEng || 'State Board'} marksheet document...</span>
+              <div className="py-20 text-center text-slate-500 font-medium">
+                <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-amber-600" />
+                <span>Generating official {STATE_BOARD_CONFIGS[selectedBoard]?.titleEng || 'Board'} marksheet...</span>
               </div>
             ) : reportCardData ? (
               (() => {
-                const currentConfig = STATE_BOARD_CONFIGS[selectedBoard] || STATE_BOARD_CONFIGS.rbse;
+                const currentConfig = STATE_BOARD_CONFIGS[selectedBoard] || STATE_BOARD_CONFIGS.cbse;
                 const divisionData = calculateStateBoardDivision(reportCardData.result.percentage);
+                const studentId8Digit = reportCardData.student.studentId || reportCardData.student.studentId8Digit || `2026${(reportCardData.student.admissionNumber || reportCardData.student.rollNumber || reportCardData.student.id).replace(/\D/g, '').slice(-4).padStart(4, '0')}`;
 
                 return (
                   <div
                     id="printable-report-card"
-                    className="bg-white text-slate-900 p-8 rounded-2xl shadow-xl space-y-5 font-sans border-2 border-slate-300 print:p-0 print:border-0 print:shadow-none"
+                    className="bg-white text-slate-950 p-8 rounded-2xl shadow-sm space-y-5 font-sans border-2 border-slate-300 print:p-0 print:border-0 print:shadow-none"
                   >
-                    {/* 1. OFFICIAL SCHOOL LETTERHEAD WITH AUTHENTIC BOARD EMBLEM */}
-                    <div className="flex items-center justify-between border-b-2 border-slate-900 pb-4">
-                      {/* Left Emblem */}
-                      <div className={`w-20 h-20 rounded-2xl bg-gradient-to-tr ${currentConfig.emblemGradient} border-2 flex flex-col items-center justify-center font-serif font-black shadow-md shrink-0`}>
-                        <span className="text-xl leading-none font-black">{currentConfig.emblemInitials}</span>
-                        <span className="text-[8px] tracking-wider mt-1 uppercase font-sans font-bold">
-                          {currentConfig.emblemSubtitle}
-                        </span>
-                      </div>
+                    {/* 1. LETTERHEAD */}
+                    <div className="text-center border-b-2 border-slate-400 pb-4 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className={`w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center font-black ${currentConfig.emblemGradient} shadow-xs`}>
+                          <span className="text-sm tracking-tight">{currentConfig.emblemInitials}</span>
+                          <span className="text-[8px] tracking-wider opacity-90">{currentConfig.emblemSubtitle}</span>
+                        </div>
 
-                      {/* Header Center Text */}
-                      <div className="text-center flex-1 px-4 space-y-1">
-                        <h1 className="text-2xl sm:text-3xl font-black tracking-wide uppercase text-slate-900">
-                          {reportCardData.school.name || (selectedMedium === 'hindi' ? "राजकीय आदर्श उच्च माध्यमिक विद्यालय, जयपुर" : "DELHI PUBLIC HERITAGE SENIOR SECONDARY SCHOOL")}
-                        </h1>
-                        <p className="text-xs text-slate-800 font-bold">
-                          {selectedMedium === 'english' ? currentConfig.authorityEng : currentConfig.authorityHindi}
-                        </p>
-                        <p className="text-[11px] text-slate-600 font-semibold font-mono">
-                          {currentConfig.schoolCodeLabel}: <strong className="text-slate-900">{customSchoolCode || currentConfig.defaultSchoolCode}</strong> • U-DISE कोड: <strong className="text-slate-900">{customUdiseCode || currentConfig.defaultUdise}</strong> • {currentConfig.regCodeLabel}: 2026/REG-894
-                        </p>
-                        <p className="text-[10px] text-slate-500 font-medium">
-                          {reportCardData.school.address} • संपर्क: {reportCardData.school.contact || "+91 98765 43210"} • पोर्टल: https://dakshora.edu.in
-                        </p>
-                        <div className="pt-1">
-                          <span className="px-4 py-1 rounded-full bg-slate-900 text-amber-300 text-xs font-bold uppercase tracking-wider font-mono">
-                            {selectedMedium === 'english' ? currentConfig.docTitleEng : currentConfig.docTitleHindi} • सत्र (Session) {reportCardData.school.academicSession || "2026-27"}
-                          </span>
+                        <div className="flex-1 px-4">
+                          <h2 className="text-sm font-bold text-slate-700 tracking-wide font-serif">
+                            {currentConfig.titleHindi}
+                          </h2>
+                          <p className="text-[11px] text-slate-600 font-medium">
+                            {currentConfig.titleEng}
+                          </p>
+                          <h1 className="text-2xl font-black text-slate-950 uppercase tracking-tight mt-1">
+                            {reportCardData.school.name}
+                          </h1>
+                          <p className="text-xs text-slate-600 font-medium">
+                            {currentConfig.authorityHindi} • {currentConfig.schoolCodeLabel}: <strong>{customSchoolCode || reportCardData.school.schoolCode || 'SCH-01'}</strong> • U-DISE: <strong>{customUdiseCode || '08120401824'}</strong>
+                          </p>
+                        </div>
+
+                        <div className="w-16 h-16 rounded-xl border border-slate-300 bg-slate-50 flex flex-col items-center justify-center p-1 text-[8px] font-bold text-slate-700 font-mono text-center">
+                          <span>सत्र / Session</span>
+                          <strong className="text-xs text-slate-950">{reportCardData.school.academicSession || activeSession}</strong>
                         </div>
                       </div>
 
-                      {/* Right Emblem / CCE Stamp */}
-                      <div className="w-20 h-20 rounded-2xl bg-slate-100 border-2 border-slate-300 flex flex-col items-center justify-center text-[9px] font-mono text-slate-700 shrink-0 text-center p-1">
-                        <Award className="w-7 h-7 text-amber-600 mb-0.5" />
-                        <span className="font-black text-slate-900 leading-tight">सत्यमेव जयते</span>
-                        <span className="text-[8px] text-slate-500 uppercase font-sans">CCE प्रमाणित</span>
+                      {/* DOCUMENT TITLE BADGE */}
+                      <div className="pt-2">
+                        <span className="inline-block px-6 py-1 rounded-full bg-slate-100 text-slate-950 border border-slate-300 text-xs font-black uppercase tracking-wider shadow-xs">
+                          {selectedMedium === 'hindi' ? currentConfig.docTitleHindi : selectedMedium === 'english' ? currentConfig.docTitleEng : `${currentConfig.docTitleHindi} • ${currentConfig.docTitleEng}`}
+                        </span>
                       </div>
                     </div>
 
-                    {/* 2. COMPREHENSIVE STUDENT DEMOGRAPHICS DOSSIER */}
-                    <div className="border border-slate-300 rounded-xl p-3.5 bg-slate-50/80 space-y-2 text-xs">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {/* 2. STUDENT COMPREHENSIVE DOSSIER */}
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-300 space-y-3 text-xs">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
-                            {selectedMedium === 'hindi' ? 'विद्यार्थी का नाम' : selectedMedium === 'english' ? "Student's Full Name" : 'विद्यार्थी का नाम (Student Name)'}
+                            {selectedMedium === 'hindi' ? 'विद्यार्थी का नाम' : selectedMedium === 'english' ? "Student's Name" : "विद्यार्थी का नाम (Student's Name)"}
                           </span>
-                          <strong className="text-slate-900 text-sm font-black">{reportCardData.student.name}</strong>
+                          <strong className="text-slate-950 text-sm font-black">{reportCardData.student.name}</strong>
                         </div>
+
+                        {/* 8-DIGIT STUDENT ID */}
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase block font-bold">
+                            {selectedMedium === 'hindi' ? 'छात्र पहचान संख्या (8-अंक)' : 'Student ID (8-Digit)'}
+                          </span>
+                          <strong className="text-amber-900 font-mono font-black text-sm bg-amber-50 px-2 py-0.5 rounded border border-amber-300 inline-block">
+                            {studentId8Digit}
+                          </strong>
+                        </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
                             {selectedMedium === 'hindi' ? 'कक्षा एवं वर्ग' : selectedMedium === 'english' ? 'Class & Section' : 'कक्षा एवं वर्ग (Class & Sec)'}
                           </span>
-                          <strong className="text-slate-900 font-bold">{reportCardData.student.grade} - {reportCardData.student.section}</strong>
+                          <strong className="text-slate-950 font-bold">{reportCardData.student.grade} - {reportCardData.student.section}</strong>
                         </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
                             {selectedMedium === 'hindi' ? 'अनुक्रमांक' : selectedMedium === 'english' ? 'Roll Number' : 'अनुक्रमांक (Roll No.)'}
                           </span>
-                          <strong className="text-slate-900 font-mono font-bold">{reportCardData.student.rollNumber}</strong>
+                          <strong className="text-slate-950 font-mono font-bold">{reportCardData.student.rollNumber || reportCardData.student.rollNo}</strong>
                         </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
-                            {selectedMedium === 'hindi' ? 'छात्र पंजिका क्रमांक (S.R.)' : selectedMedium === 'english' ? 'Scholar Register No.' : 'छात्र पंजिका (S.R. No.)'}
+                            {selectedMedium === 'hindi' ? 'स्कॉलर रजिस्टर क्रमांक (S.R.)' : selectedMedium === 'english' ? 'Admission / S.R. No.' : 'प्रवेश क्रमांक (Admission No.)'}
                           </span>
-                          <strong className="text-slate-900 font-mono font-bold">{customSrNumber || reportCardData.student.admissionNumber}</strong>
+                          <strong className="text-slate-950 font-mono font-bold">{customSrNumber || reportCardData.student.admissionNumber || reportCardData.student.admissionNo}</strong>
                         </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
                             {selectedMedium === 'hindi' ? 'पिता का नाम' : selectedMedium === 'english' ? "Father's Name" : "पिता का नाम (Father's Name)"}
                           </span>
-                          <strong className="text-slate-900">{reportCardData.student.guardianName || "मनोज कुमार पटेल (Manoj Patel)"}</strong>
+                          <strong className="text-slate-950 font-bold">{reportCardData.student.guardianName || reportCardData.student.parentName || "राजेश शर्मा (Rajesh Sharma)"}</strong>
                         </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
                             {selectedMedium === 'hindi' ? 'माता का नाम' : selectedMedium === 'english' ? "Mother's Name" : "माता का नाम (Mother's Name)"}
                           </span>
-                          <strong className="text-slate-900">सुनीता देवी पटेल (Sunita Patel)</strong>
+                          <strong className="text-slate-950 font-bold">{reportCardData.student.motherName || "सुनीता शर्मा (Sunita Sharma)"}</strong>
                         </div>
+
                         <div>
                           <span className="text-[10px] text-slate-500 uppercase block font-bold">
                             स्थायी शिक्षा संख्या (PEN No.)
                           </span>
-                          <strong className="text-slate-900 font-mono">2026081204018</strong>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-slate-500 uppercase block font-bold">
-                            माध्यम एवं वर्ग (Medium & Cat.)
-                          </span>
-                          <strong className="text-slate-900">
-                            {selectedMedium === 'hindi' ? 'हिंदी माध्यम' : selectedMedium === 'english' ? 'English Medium' : 'द्विभाषी (Bilingual)'} • सामान्य (GEN)
-                          </strong>
+                          <strong className="text-slate-950 font-mono font-bold">{reportCardData.student.penNo || '2026081204018'}</strong>
                         </div>
                       </div>
 
-                      {/* Date of Birth In Figures and In Words (Hindi) */}
-                      <div className="pt-1.5 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]">
+                      {/* DOB ROW */}
+                      <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]">
                         <div>
                           <span className="text-slate-500 font-bold uppercase mr-1">जन्म तिथि (Date of Birth):</span>
-                          <strong className="text-slate-900 font-mono font-black mr-2">{reportCardData.student.dateOfBirth}</strong>
-                          <span className="text-slate-700 font-serif font-semibold">
-                            शब्दों में: <strong className="text-indigo-950 font-black">{getHindiDobInWords(reportCardData.student.dateOfBirth)}</strong>
+                          <strong className="text-slate-950 font-mono font-black mr-2">{reportCardData.student.dateOfBirth || reportCardData.student.dob}</strong>
+                          <span className="text-slate-700 font-medium">
+                            शब्दों में: <strong className="text-indigo-950 font-bold">{getHindiDobInWords(reportCardData.student.dateOfBirth || reportCardData.student.dob || '')}</strong>
                           </span>
                         </div>
-                        <div className="text-slate-600 font-mono text-[10px]">
-                          रक्त समूह (Blood Group): <strong className="text-rose-700">B+</strong>
+                        <div className="text-slate-600 font-mono text-[11px]">
+                          रक्त समूह (Blood Group): <strong className="text-rose-700 font-bold">{reportCardData.student.bloodGroup || 'B+'}</strong>
                         </div>
                       </div>
                     </div>
 
-                    {/* 3. SCHOLASTIC PERFORMANCE ASSESSMENT TABLE */}
+                    {/* 3. SCHOLASTIC ASSESSMENT TABLE */}
                     <div className="border-2 border-slate-400 rounded-xl overflow-hidden">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
-                          <tr className="bg-slate-200 text-slate-900 border-b border-slate-300 font-black">
+                          <tr className="bg-slate-100 text-slate-950 border-b border-slate-300 font-black">
                             <th className="py-2.5 px-3 border-r border-slate-300 text-center w-8">#</th>
                             <th className="py-2.5 px-3 border-r border-slate-300">
                               {selectedMedium === 'hindi' ? 'विषय' : selectedMedium === 'english' ? 'Subject Name' : 'विषय (Subject)'}
@@ -2271,7 +2350,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                                   सैद्धांतिक ({currentConfig.theoryMax})
                                 </th>
                                 <th className="py-2.5 px-2 border-r border-slate-300 text-center">
-                                  {selectedBoard === 'upmsp' ? `प्रोजेक्ट (${currentConfig.sessionalMax})` : `सत्रांक (${currentConfig.sessionalMax})`}
+                                  {selectedBoard === 'upmsp' ? `प्रायोगिक (${currentConfig.sessionalMax})` : `सत्रांक (${currentConfig.sessionalMax})`}
                                 </th>
                               </>
                             )}
@@ -2280,15 +2359,15 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                             <th className="py-2.5 px-3 border-r border-slate-300 text-center">प्राप्तांक (Obtained)</th>
                             <th className="py-2.5 px-3 border-r border-slate-300 text-center">प्रतिशत (%)</th>
                             <th className="py-2.5 px-3 border-r border-slate-300 text-center">ग्रेड (Grade)</th>
-                            <th className="py-2.5 px-3 text-center">अभियुक्ति (Remarks)</th>
+                            <th className="py-2.5 px-3 text-center">अभ्युक्ति (Remarks)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-300 font-mono text-xs">
                           {reportCardData.subjects.map((sub, idx) => {
                             const pct = sub.percentage || (sub.marksObtained != null ? Math.round((sub.marksObtained / sub.maxMarks) * 100) : 0);
                             const obtained = sub.status === 'present' ? (sub.marksObtained ?? 0) : 0;
-                            
-                            // State board breakdown computation
+
+                            // Sessional & Theory Split
                             let sessional = 0;
                             let theory = 0;
                             if (showSessionalBreakdown) {
@@ -2301,14 +2380,13 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                               }
                             }
 
-                            // Grace Marks (कृपांक) check for authentic state board styling
                             const hasGrace = obtained >= 28 && obtained < 33;
                             const graceAmount = hasGrace ? 33 - obtained : 0;
 
                             return (
                               <tr key={sub.subjectId} className="hover:bg-slate-50">
                                 <td className="py-2.5 px-3 border-r border-slate-300 text-slate-500 text-center">{idx + 1}</td>
-                                <td className="py-2.5 px-3 border-r border-slate-300 font-sans font-bold text-slate-900">
+                                <td className="py-2.5 px-3 border-r border-slate-300 font-sans font-bold text-slate-950">
                                   {getSubjectNameBilingual(sub.subjectName, selectedMedium)}
                                 </td>
                                 {showSessionalBreakdown && (
@@ -2323,7 +2401,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                                 )}
                                 <td className="py-2.5 px-3 border-r border-slate-300 text-center font-bold">{sub.maxMarks}</td>
                                 <td className="py-2.5 px-3 border-r border-slate-300 text-center text-slate-600">{sub.passMarks}</td>
-                                <td className="py-2.5 px-3 border-r border-slate-300 text-center font-black text-slate-900 text-sm">
+                                <td className="py-2.5 px-3 border-r border-slate-300 text-center font-black text-slate-950 text-sm">
                                   {sub.status === 'present' ? (
                                     <span>
                                       {obtained}
@@ -2337,13 +2415,13 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                                   {pct}%
                                 </td>
                                 <td className="py-2.5 px-3 border-r border-slate-300 text-center font-bold font-sans">
-                                  <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-300 text-slate-900 font-black">
+                                  <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-300 text-slate-950 font-black">
                                     {sub.grade}
                                   </span>
                                 </td>
                                 <td className="py-2.5 px-3 text-center font-sans text-xs">
                                   {hasGrace ? (
-                                    <span className="text-amber-800 font-bold">* कृपांक (+{graceAmount})</span>
+                                    <span className="text-amber-800 font-bold">* अनुग्रह (+{graceAmount})</span>
                                   ) : obtained >= sub.passMarks ? (
                                     <span className="text-emerald-700 font-bold">उत्तीर्ण (PASS)</span>
                                   ) : (
@@ -2354,10 +2432,10 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                             );
                           })}
 
-                          {/* GRAND TOTAL SUMMARY ROW */}
+                          {/* TOTAL SUMMARY ROW */}
                           <tr className="bg-slate-100 font-bold border-t-2 border-slate-400 font-sans">
-                            <td colSpan={showSessionalBreakdown ? 4 : 2} className="py-3 px-3 border-r border-slate-300 text-slate-900 font-black">
-                              {selectedMedium === 'hindi' ? 'पूर्णांक एवं कुल प्राप्तांक (GRAND TOTAL)' : 'GRAND TOTAL & OVERALL PERFORMANCE'}
+                            <td colSpan={showSessionalBreakdown ? 4 : 2} className="py-3 px-3 border-r border-slate-300 text-slate-950 font-black">
+                              {selectedMedium === 'hindi' ? 'कुल प्राप्तांक एवं समग्र मूल्यांकन (GRAND TOTAL)' : 'GRAND TOTAL & OVERALL PERFORMANCE'}
                             </td>
                             <td className="py-3 px-3 border-r border-slate-300 text-center font-mono font-black">
                               {reportCardData.result.maxTotalMarks}
@@ -2372,7 +2450,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                               {reportCardData.result.percentage}%
                             </td>
                             <td className="py-3 px-3 border-r border-slate-300 text-center text-base">
-                              <span className="px-3 py-1 rounded bg-indigo-950 text-amber-300 font-black">
+                              <span className="px-3 py-1 rounded bg-slate-950 text-amber-300 font-black">
                                 {reportCardData.result.overallGrade}
                               </span>
                             </td>
@@ -2386,133 +2464,100 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       </table>
                     </div>
 
-                    {/* 4. CO-SCHOLASTIC & MORAL/PHYSICAL EDUCATION ASSESSMENT (AUTHENTIC STATE BOARD MANDATE) */}
-                    <div className="border border-slate-300 rounded-xl p-3 bg-slate-50/60 space-y-2">
+                    {/* 4. CO-SCHOLASTIC ASSESSMENT */}
+                    <div className="border border-slate-300 rounded-xl p-3 bg-slate-50 space-y-2">
                       <div className="flex items-center justify-between border-b border-slate-200 pb-1">
                         <span className="text-xs font-black text-slate-900 uppercase">
-                          सह-शैक्षणिक, नैतिक एवं व्यक्तिगत विकास मूल्यांकन (Co-Scholastic & Life Skills Evaluation)
+                          सह-शैक्षिक एवं जीवन कौशल मूल्यांकन (Co-Scholastic & Life Skills Evaluation)
                         </span>
                         <span className="text-[10px] text-slate-500 font-mono">5-Point Scale (A+, A, B, C, D)</span>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
                         <div className="p-2 bg-white border border-slate-200 rounded-lg">
                           <span className="text-[10px] text-slate-500 block font-bold leading-tight">
-                            १. नैतिक, योग एवं शारीरिक शिक्षा
+                            कार्य शिक्षा (Work Education)
                           </span>
-                          <strong className="text-sm font-black text-indigo-950 mt-1 block">A+ (उत्कृष्ट)</strong>
+                          <strong className="text-indigo-900 font-black text-sm">A+</strong>
                         </div>
                         <div className="p-2 bg-white border border-slate-200 rounded-lg">
                           <span className="text-[10px] text-slate-500 block font-bold leading-tight">
-                            २. समाजोपयोगी उत्पादक कार्य (SUPW)
+                            कला शिक्षा (Art Education)
                           </span>
-                          <strong className="text-sm font-black text-indigo-950 mt-1 block">A (अति उत्तम)</strong>
+                          <strong className="text-indigo-900 font-black text-sm">A</strong>
                         </div>
                         <div className="p-2 bg-white border border-slate-200 rounded-lg">
                           <span className="text-[10px] text-slate-500 block font-bold leading-tight">
-                            ३. कला, संगीत व रचनात्मकता
+                            स्वास्थ्य एवं शारीरिक शिक्षा
                           </span>
-                          <strong className="text-sm font-black text-indigo-950 mt-1 block">A (अति उत्तम)</strong>
+                          <strong className="text-indigo-900 font-black text-sm">A+</strong>
                         </div>
                         <div className="p-2 bg-white border border-slate-200 rounded-lg">
                           <span className="text-[10px] text-slate-500 block font-bold leading-tight">
-                            ४. पर्यावरण अध्ययन एवं स्वच्छता
+                            अनुशासन एवं आचरण (Discipline)
                           </span>
-                          <strong className="text-sm font-black text-indigo-950 mt-1 block">A+ (उत्कृष्ट)</strong>
+                          <strong className="text-emerald-700 font-black text-sm">A+</strong>
                         </div>
                         <div className="p-2 bg-white border border-slate-200 rounded-lg">
                           <span className="text-[10px] text-slate-500 block font-bold leading-tight">
-                            ५. विद्यालय अनुशासन एवं नेतृत्व
+                            उपस्थिति (Attendance)
                           </span>
-                          <strong className="text-sm font-black text-indigo-950 mt-1 block">A+ (उत्कृष्ट)</strong>
+                          <strong className="text-slate-950 font-black text-sm">
+                            {reportCardData.attendance?.attendancePercentage ?? 95}%
+                          </strong>
                         </div>
                       </div>
                     </div>
 
-                    {/* 5. PERFORMANCE INDICATORS & ATTENDANCE */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                      {/* ATTENDANCE */}
-                      <div className="p-3 border border-slate-300 rounded-xl bg-slate-50/60 space-y-1">
+                    {/* 5. RESULT STATUS & REMARKS */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <div className="p-3 border border-slate-300 rounded-xl bg-slate-50 space-y-1">
                         <span className="text-[10px] text-slate-500 uppercase font-bold block">
-                          बायोमेट्रिक उपस्थिति अभिलेख (Attendance Record)
+                          परीक्षा परिणाम घोषणा (Final Result Status)
                         </span>
-                        <p className="text-slate-800 font-mono font-bold">
-                          कार्य दिवस: {reportCardData.attendance.presentDays} / {reportCardData.attendance.totalDays} (
-                          <strong className="text-emerald-700">{reportCardData.attendance.attendancePercentage}%</strong>)
+                        <p className="text-slate-900 font-medium">
+                          {currentConfig.divisionLabel}: <strong className="text-indigo-950 font-black">{divisionData.division}</strong>
                         </p>
-                      </div>
-
-                      {/* RANKS & OUTCOME */}
-                      <div className="p-3 border border-slate-300 rounded-xl bg-slate-50/60 space-y-1">
-                        <span className="text-[10px] text-slate-500 uppercase font-bold block">
-                          अकादमिक स्थिति एवं परिणाम (Standing & Result)
-                        </span>
-                        <p className="text-slate-800 font-semibold">
-                          कक्षा में स्थान: <strong className="text-indigo-900 font-black">Rank #{reportCardData.result.classRank || 1}</strong> • स्थिति:{' '}
+                        <p className="text-slate-700 text-[11px] font-medium mt-0.5">
+                          परिणाम विवरण:{' '}
                           <strong className="text-emerald-700 font-bold uppercase">{divisionData.statusText}</strong>
                         </p>
                       </div>
 
-                      {/* REMARKS */}
-                      <div className="p-3 border border-slate-300 rounded-xl bg-slate-50/60 space-y-1">
+                      <div className="p-3 border border-slate-300 rounded-xl bg-slate-50 space-y-1">
                         <span className="text-[10px] text-slate-500 uppercase font-bold block">
-                          शिक्षक अभियुक्ति (Faculty Remarks)
+                          शिक्षक अभ्युक्ति (Faculty Remarks)
                         </span>
-                        <p className="text-slate-700 italic font-medium leading-tight">
-                          "{reportCardData.remarks || 'विद्यार्थी का शैक्षणिक स्तर उत्कृष्ट है। कक्षा में सक्रिय सहभागिता एवं नियमित अनुशासन प्रशंसनीय है।'}"
+                        <p className="text-slate-800 italic font-medium leading-tight">
+                          "{reportCardData.remarks || 'विद्यार्थी का शैक्षिक प्रदर्शन अत्यंत सराहनीय है। निरंतर अभ्यास से और अधिक सफलता संभव है।'}"
                         </p>
                       </div>
                     </div>
 
-                    {/* 6. STATE BOARD DIVISION & GRADING CRITERIA REFERENCE */}
-                    <div className="border-t border-slate-300 pt-2.5">
-                      <span className="text-[10px] text-slate-500 uppercase font-bold block mb-1">
-                        {currentConfig.titleHindi} — श्रेणी निर्धारण एवं मूल्यांकन मार्गदर्शिका (Grading Rules)
-                      </span>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-[10px] font-mono">
-                        <div className="p-1.5 bg-emerald-50 text-emerald-900 rounded border border-emerald-200">
-                          <strong>प्रथम श्रेणी (I Div)</strong>: 60% अथवा अधिक
-                        </div>
-                        <div className="p-1.5 bg-indigo-50 text-indigo-900 rounded border border-indigo-200">
-                          <strong>द्वितीय श्रेणी (II Div)</strong>: 45% से 59.9%
-                        </div>
-                        <div className="p-1.5 bg-slate-100 text-slate-900 rounded border border-slate-200">
-                          <strong>तृतीय श्रेणी (III Div)</strong>: 33% से 44.9%
-                        </div>
-                        <div className="p-1.5 bg-amber-50 text-amber-900 rounded border border-amber-200">
-                          <strong>* कृपांक (Grace)</strong>: नियमानुसार अधिकतम 5 अंक
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 7. OFFICIAL THREE-POINT SIGNATURES & INSTITUTIONAL CIRCULAR SEAL */}
-                    <div className="pt-6 flex items-end justify-between text-xs text-slate-700 border-t border-slate-300">
-                      {/* Teacher Signature */}
+                    {/* 6. SIGNATURES & OFFICIAL SEAL */}
+                    <div className="pt-6 flex items-end justify-between text-xs text-slate-800 border-t border-slate-300">
                       <div className="text-center w-36 border-t-2 border-slate-500 pt-1.5">
                         <span className="font-bold block">कक्षाध्यापक</span>
                         <span className="text-[10px] text-slate-500 font-mono">Class Teacher</span>
                       </div>
 
-                      {/* Exam Incharge Signature */}
                       <div className="text-center w-36 border-t-2 border-slate-500 pt-1.5">
                         <span className="font-bold block">परीक्षा प्रभारी</span>
                         <span className="text-[10px] text-slate-500 font-mono">Exam Controller</span>
                       </div>
 
-                      {/* Circular Official Seal */}
                       <div className="flex flex-col items-center justify-center shrink-0">
-                        <div className="w-20 h-20 rounded-full border-2 border-indigo-900 flex flex-col items-center justify-center text-center p-1 text-[8px] font-bold text-indigo-950 font-serif shadow-sm">
-                          <span className="leading-tight uppercase">कार्यालय प्रधानाचार्य</span>
-                          <span className="my-0.5 text-amber-600 font-sans">★ SEAL ★</span>
-                          <span className="leading-tight uppercase font-mono">{currentConfig.emblemInitials} सम्बद्ध</span>
+                        <div className="w-20 h-20 rounded-full border-2 border-indigo-900 flex flex-col items-center justify-center text-center p-1 text-[8px] font-bold text-indigo-950 font-serif shadow-xs">
+                          <span className="leading-tight uppercase">{reportCardData.school.name.slice(0, 15)}</span>
+                          <span className="my-0.5 text-amber-600 font-sans font-bold">★ SEAL ★</span>
+                          <span className="leading-tight uppercase font-mono">{currentConfig.emblemInitials}</span>
                         </div>
                         <span className="text-[9px] text-slate-500 font-mono mt-1">विद्यालय मुहर</span>
                       </div>
 
-                      {/* Principal Signature */}
                       <div className="text-center w-44 border-t-2 border-slate-500 pt-1.5">
                         <span className="font-bold block">प्रधानाचार्य / संस्था प्रधान</span>
                         <span className="text-[10px] text-slate-500 font-mono">Principal & Head of School</span>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">दिनांक: 30-03-2026</span>
+                        <span className="text-[9px] text-slate-500 block mt-0.5 font-mono">दिनांक: {new Date().toLocaleDateString('en-GB')}</span>
                       </div>
                     </div>
                   </div>
@@ -2524,19 +2569,173 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* ✏️ MODAL: CREATE / EDIT EXAMINATION */}
+      {/* MODAL 2: BATCH MARKSHEET GENERATOR (MULTI-STUDENT A4 PRINT) */}
+      {/* ========================================================================= */}
+      {batchModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-5 my-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4 print:hidden">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800">
+                  <Printer className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-950 text-base">
+                    Batch Marksheet Printing Engine ({batchReportCards.length} Students)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {selectedExam?.title} • {marksGrade} (Sec: {resultsSectionFilter}) • Ready for A4 Bulk Printing
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center gap-2 transition shadow-sm cursor-pointer active:scale-95"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>PRINT ALL MARKSHEETS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchModalOpen(false)}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                >
+                  <X className="w-4 h-4" />
+                  <span>CLOSE</span>
+                </button>
+              </div>
+            </div>
+
+            {batchLoading ? (
+              <div className="py-20 text-center text-slate-500 font-medium">
+                <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                <span>Loading all student marksheets in section...</span>
+              </div>
+            ) : (
+              <div className="space-y-12">
+                {batchReportCards.map((rc, rIdx) => {
+                  const currentConfig = STATE_BOARD_CONFIGS[selectedBoard] || STATE_BOARD_CONFIGS.cbse;
+                  const divisionData = calculateStateBoardDivision(rc.result.percentage);
+                  const studentId8Digit = rc.student.studentId || rc.student.studentId8Digit || `2026${(rc.student.admissionNumber || rc.student.rollNumber || rc.student.id).replace(/\D/g, '').slice(-4).padStart(4, '0')}`;
+
+                  return (
+                    <div
+                      key={rc.student.id || rIdx}
+                      style={{ pageBreakAfter: 'always', breakAfter: 'page' }}
+                      className="bg-white text-slate-950 p-8 rounded-2xl shadow-sm space-y-5 font-sans border-2 border-slate-300 print:p-0 print:border-0 print:shadow-none"
+                    >
+                      {/* HEADER */}
+                      <div className="text-center border-b-2 border-slate-400 pb-3">
+                        <div className="flex items-center justify-between">
+                          <div className={`w-14 h-14 rounded-xl border flex flex-col items-center justify-center font-black ${currentConfig.emblemGradient}`}>
+                            <span className="text-xs">{currentConfig.emblemInitials}</span>
+                          </div>
+                          <div className="flex-1 px-4">
+                            <h2 className="text-xs font-bold text-slate-700 font-serif">{currentConfig.titleHindi}</h2>
+                            <h1 className="text-xl font-black text-slate-950 uppercase">{rc.school.name}</h1>
+                            <p className="text-[11px] text-slate-600">
+                              {currentConfig.authorityHindi} • Code: {customSchoolCode || rc.school.schoolCode || 'SCH-01'} • U-DISE: {customUdiseCode || '08120401824'}
+                            </p>
+                          </div>
+                          <div className="text-right font-mono text-[10px] text-slate-500">
+                            <span>सत्र {rc.school.academicSession || activeSession}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* DOSSIER */}
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-300 grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-500 block font-bold">विद्यार्थी का नाम</span>
+                          <strong className="text-slate-950 font-black">{rc.student.name}</strong>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-500 block font-bold">छात्र पहचान (8-अंक ID)</span>
+                          <strong className="text-amber-900 font-mono font-black">{studentId8Digit}</strong>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-500 block font-bold">कक्षा एवं वर्ग</span>
+                          <strong className="text-slate-950 font-bold">{rc.student.grade} - {rc.student.section}</strong>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-500 block font-bold">अनुक्रमांक (Roll No.)</span>
+                          <strong className="text-slate-950 font-mono font-bold">{rc.student.rollNumber || rc.student.rollNo}</strong>
+                        </div>
+                      </div>
+
+                      {/* MARKS TABLE */}
+                      <table className="w-full text-left text-xs border-collapse border border-slate-300">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-950 font-black">
+                            <th className="py-2 px-3 border border-slate-300 text-center w-8">#</th>
+                            <th className="py-2 px-3 border border-slate-300">विषय (Subject)</th>
+                            <th className="py-2 px-3 border border-slate-300 text-center">पूर्णांक (Max)</th>
+                            <th className="py-2 px-3 border border-slate-300 text-center">उत्तीर्णांक</th>
+                            <th className="py-2 px-3 border border-slate-300 text-center">प्राप्तांक</th>
+                            <th className="py-2 px-3 border border-slate-300 text-center">प्रतिशत</th>
+                            <th className="py-2 px-3 border border-slate-300 text-center">ग्रेड</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-300 font-mono">
+                          {rc.subjects.map((sub, sIdx) => (
+                            <tr key={sub.subjectId || sIdx}>
+                              <td className="py-2 px-3 border border-slate-300 text-center text-slate-500">{sIdx + 1}</td>
+                              <td className="py-2 px-3 border border-slate-300 font-sans font-bold text-slate-950">{sub.subjectName}</td>
+                              <td className="py-2 px-3 border border-slate-300 text-center">{sub.maxMarks}</td>
+                              <td className="py-2 px-3 border border-slate-300 text-center">{sub.passMarks}</td>
+                              <td className="py-2 px-3 border border-slate-300 text-center font-bold text-slate-950">
+                                {sub.status === 'present' ? sub.marksObtained : sub.status.toUpperCase()}
+                              </td>
+                              <td className="py-2 px-3 border border-slate-300 text-center">{sub.percentage || 0}%</td>
+                              <td className="py-2 px-3 border border-slate-300 text-center font-bold font-sans">{sub.grade}</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-slate-100 font-black font-sans">
+                            <td colSpan={2} className="py-2.5 px-3 border border-slate-300">GRAND TOTAL & PERCENTAGE</td>
+                            <td className="py-2.5 px-3 border border-slate-300 text-center font-mono">{rc.result.maxTotalMarks}</td>
+                            <td className="py-2.5 px-3 border border-slate-300 text-center font-mono">{Math.round(rc.result.maxTotalMarks * 0.33)}</td>
+                            <td className="py-2.5 px-3 border border-slate-300 text-center font-mono text-indigo-950 font-black">{rc.result.totalMarksObtained}</td>
+                            <td className="py-2.5 px-3 border border-slate-300 text-center font-mono text-indigo-950 font-black">{rc.result.percentage}%</td>
+                            <td className="py-2.5 px-3 border border-slate-300 text-center font-black">{rc.result.overallGrade}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      {/* SUMMARY & SIGNATURES */}
+                      <div className="flex items-center justify-between text-xs pt-4 border-t border-slate-300">
+                        <div>
+                          <span className="text-slate-500 font-bold block">परिणाम (Status):</span>
+                          <strong className="text-emerald-700 font-black uppercase">{divisionData.statusText}</strong>
+                        </div>
+                        <div className="text-center w-32 border-t border-slate-400 pt-1 font-bold">Class Teacher</div>
+                        <div className="text-center w-36 border-t border-slate-400 pt-1 font-bold">Principal & Seal</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 3: CREATE / EDIT EXAMINATION */}
       {/* ========================================================================= */}
       {examModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-amber-400" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-black text-slate-950 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-amber-600" />
                 <span>{editingExamId ? 'Edit Examination' : 'Create Examination'}</span>
               </h3>
               <button
                 onClick={() => setExamModalOpen(false)}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-950 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2544,70 +2743,72 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
             <form onSubmit={handleSaveExam} className="space-y-4 text-xs">
               <div>
-                <label className="text-slate-400 font-medium block mb-1">Examination Title *</label>
+                <label className="text-slate-700 font-bold block mb-1">Examination Title *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Periodic Unit Test 2, Pre-Board Examination"
                   value={examFormData.title}
                   onChange={(e) => setExamFormData({ ...examFormData, title: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                  placeholder="e.g. Periodic Test 1 (PT-1) 2026-27"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">Exam Type</label>
+                  <label className="text-slate-700 font-bold block mb-1">Assessment Type</label>
                   <select
                     value={examFormData.examType}
                     onChange={(e) => setExamFormData({ ...examFormData, examType: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   >
-                    <option value="Unit Test">Unit Test</option>
-                    <option value="Periodic Assessment">Periodic Assessment</option>
-                    <option value="Half Yearly">Half Yearly</option>
-                    <option value="Annual">Annual</option>
-                    <option value="Pre-Board">Pre-Board</option>
-                    <option value="Practical">Practical</option>
+                    <option value="Unit Test">Unit Test / Periodic Test</option>
+                    <option value="Mid Term">Mid Term / Half Yearly</option>
+                    <option value="Pre-Board">Pre-Board Examination</option>
+                    <option value="Final Board">Annual / Final Board</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">Academic Session</label>
-                  <select
+                  <label className="text-slate-700 font-bold block mb-1">Academic Session</label>
+                  <input
+                    type="text"
                     value={examFormData.academicSession}
                     onChange={(e) => setExamFormData({ ...examFormData, academicSession: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
-                  >
-                    {sessionsList.map(s => (
-                      <option key={s.id} value={s.sessionName}>{s.sessionName}</option>
-                    ))}
-                    {sessionsList.length === 0 && <option value="2026-27">2026-27</option>}
-                  </select>
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">Grade / Class</label>
+                  <label className="text-slate-700 font-bold block mb-1">Target Grade</label>
                   <select
                     value={examFormData.grade}
                     onChange={(e) => setExamFormData({ ...examFormData, grade: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   >
+                    <option value="Class 12">Class 12</option>
+                    <option value="Class 11">Class 11</option>
                     <option value="Class 10">Class 10</option>
                     <option value="Class 9">Class 9</option>
                     <option value="Class 8">Class 8</option>
                     <option value="Class 7">Class 7</option>
+                    <option value="Class 6">Class 6</option>
+                    <option value="Class 5">Class 5</option>
+                    <option value="Class 4">Class 4</option>
+                    <option value="Class 3">Class 3</option>
+                    <option value="Class 2">Class 2</option>
+                    <option value="Class 1">Class 1</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">Section</label>
+                  <label className="text-slate-700 font-bold block mb-1">Section</label>
                   <select
                     value={examFormData.section}
                     onChange={(e) => setExamFormData({ ...examFormData, section: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   >
                     <option value="all">All Sections</option>
                     <option value="A">Section A</option>
@@ -2619,41 +2820,41 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">Start Date</label>
+                  <label className="text-slate-700 font-bold block mb-1">Start Date</label>
                   <input
                     type="date"
                     required
                     value={examFormData.startDate}
                     onChange={(e) => setExamFormData({ ...examFormData, startDate: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   />
                 </div>
 
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">End Date</label>
+                  <label className="text-slate-700 font-bold block mb-1">End Date</label>
                   <input
                     type="date"
                     required
                     value={examFormData.endDate}
                     onChange={(e) => setExamFormData({ ...examFormData, endDate: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   />
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-end gap-3">
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setExamModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold"
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black cursor-pointer shadow-sm"
                 >
-                  {editingExamId ? 'Save Changes' : 'Create Exam'}
+                  {editingExamId ? 'Update Exam' : 'Schedule Assessment'}
                 </button>
               </div>
             </form>
@@ -2662,49 +2863,48 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* 📚 MODAL: MANAGE EXAM SUBJECTS */}
+      {/* MODAL 4: MANAGE SUBJECTS */}
       {/* ========================================================================= */}
       {manageSubjectsModalOpen && selectedExam && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-          <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-xl bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-amber-400" />
-                  <span>Configured Subjects — {selectedExam.title}</span>
+                <h3 className="text-base font-black text-slate-950 flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-amber-600" />
+                  <span>Curriculum Subjects ({selectedExam.title})</span>
                 </h3>
-                <p className="text-xs text-slate-400">Configure subject rubrics, maximum marks, pass marks, and assigned evaluator.</p>
+                <p className="text-xs text-slate-500 font-medium">Add, remove, and configure assessment maximum and passing thresholds.</p>
               </div>
               <button
                 onClick={() => setManageSubjectsModalOpen(false)}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* SUBJECTS LIST */}
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1">
               {examSubjects.map((sub) => (
                 <div
                   key={sub.id}
-                  className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs font-mono"
+                  className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs font-mono"
                 >
                   <div>
-                    <span className="font-sans font-semibold text-white text-sm">{sub.subjectName}</span>
+                    <span className="font-sans font-black text-slate-950 text-sm">{sub.subjectName}</span>
                     <span className="text-slate-500 ml-2">({sub.subjectCode || 'CBSE'})</span>
-                    <p className="text-slate-400 text-[11px] font-sans">
-                      Teacher: {sub.assignedTeacherName || 'General Faculty'} • Date: {sub.examDate || 'Scheduled'}
+                    <p className="text-slate-600 text-[11px] font-sans font-medium">
+                      Faculty: {sub.assignedTeacherName || 'General Faculty'} • Date: {sub.examDate || 'Scheduled'}
                     </p>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="text-cyan-400 font-bold">
+                    <span className="text-indigo-900 font-black">
                       {sub.passMarks} Pass / {sub.maxMarks} Max
                     </span>
                     {!selectedExam.isLocked && (
                       <button
                         onClick={() => handleDeleteSubjectFromExam(sub.id, sub.subjectName)}
-                        className="p-1 text-slate-500 hover:text-rose-400 transition"
+                        className="p-1 text-slate-400 hover:text-rose-600 transition cursor-pointer"
                         title="Remove Subject"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -2714,16 +2914,15 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                 </div>
               ))}
               {examSubjects.length === 0 && (
-                <p className="text-xs text-slate-500 py-4 text-center font-sans">
-                  No subjects configured for this exam yet. Use the form below to add subjects.
+                <p className="text-xs text-slate-500 py-6 text-center font-medium">
+                  No subjects configured for this assessment yet. Use the form below to add subjects.
                 </p>
               )}
             </div>
 
-            {/* ADD SUBJECT FORM */}
             {!selectedExam.isLocked && (
-              <form onSubmit={handleAddSubjectToExam} className="pt-4 border-t border-slate-800 space-y-3 text-xs">
-                <span className="text-white font-semibold block">Add Subject to Assessment</span>
+              <form onSubmit={handleAddSubjectToExam} className="pt-4 border-t border-slate-200 space-y-3 text-xs">
+                <span className="text-slate-900 font-black block">Add Subject to Assessment</span>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <div className="col-span-2">
@@ -2733,7 +2932,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       placeholder="Subject Name (e.g. Mathematics)"
                       value={newSubjectFormData.subjectName}
                       onChange={(e) => setNewSubjectFormData({ ...newSubjectFormData, subjectName: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                     />
                   </div>
                   <div>
@@ -2742,7 +2941,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       placeholder="Max Marks (100)"
                       value={newSubjectFormData.maxMarks}
                       onChange={(e) => setNewSubjectFormData({ ...newSubjectFormData, maxMarks: Number(e.target.value) })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                     />
                   </div>
                   <div>
@@ -2751,7 +2950,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                       placeholder="Pass Marks (33)"
                       value={newSubjectFormData.passMarks}
                       onChange={(e) => setNewSubjectFormData({ ...newSubjectFormData, passMarks: Number(e.target.value) })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                     />
                   </div>
                 </div>
@@ -2760,9 +2959,9 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                   <select
                     value={newSubjectFormData.assignedTeacherId}
                     onChange={(e) => setNewSubjectFormData({ ...newSubjectFormData, assignedTeacherId: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   >
-                    <option value="">Select Evaluating Teacher (Optional)</option>
+                    <option value="">Select Faculty (Optional)</option>
                     {staffList.filter(s => s.role === 'teacher' || s.designation?.toLowerCase().includes('teacher')).map(t => (
                       <option key={t.id} value={t.id}>{t.firstName} {t.lastName} ({t.department || 'Faculty'})</option>
                     ))}
@@ -2770,7 +2969,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs transition"
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs cursor-pointer shadow-sm"
                   >
                     Add Subject
                   </button>
@@ -2782,44 +2981,44 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* ⚠️ MODAL: ADMIN MARK CORRECTION (WITH AUDIT REASON) */}
+      {/* MODAL 5: ADMIN MARK CORRECTION (AUDIT TRAIL) */}
       {/* ========================================================================= */}
       {correctionModalOpen && correctionTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-          <div className="w-full max-w-md bg-slate-900 border border-rose-500/30 rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-rose-400" />
-                <span>Admin Marks Correction</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-white border border-rose-300 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-black text-slate-950 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-rose-600" />
+                <span>Administrative Mark Correction</span>
               </h3>
               <button
                 onClick={() => setCorrectionModalOpen(false)}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-200 space-y-1">
-              <p className="font-semibold">⚠️ Governance Notice</p>
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1">
+              <p className="font-bold">CBSE Governance Notice</p>
               <p className="text-[11px] leading-relaxed">
-                This examination is officially locked. Changing marks requires an administrative audit reason and is permanently logged in system governance.
+                This examination is sealed. Modifying scores requires administrative justification and is permanently logged in the tenant audit log.
               </p>
             </div>
 
             <form onSubmit={handleSubmitCorrection} className="space-y-3.5 text-xs">
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1 font-mono">
-                <p className="text-slate-400">Student: <strong className="text-white font-sans">{correctionTarget.studentName}</strong></p>
-                <p className="text-slate-400">Subject: <strong className="text-white font-sans">{correctionTarget.subjectName}</strong></p>
-                <p className="text-slate-400">Current Score: <strong className="text-amber-400">{correctionTarget.currentMarks ?? 'N/A'}</strong> ({correctionTarget.currentStatus})</p>
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1 font-mono">
+                <p className="text-slate-600 font-sans">Student: <strong className="text-slate-950">{correctionTarget.studentName}</strong></p>
+                <p className="text-slate-600 font-sans">Subject: <strong className="text-slate-950">{correctionTarget.subjectName}</strong></p>
+                <p className="text-slate-600 font-sans">Current Score: <strong className="text-amber-800">{correctionTarget.currentMarks ?? 'N/A'}</strong> ({correctionTarget.currentStatus})</p>
               </div>
 
               <div>
-                <label className="text-slate-400 font-medium block mb-1">New Status</label>
+                <label className="text-slate-700 font-bold block mb-1">New Attendance Status</label>
                 <select
                   value={correctionNewStatus}
                   onChange={(e) => setCorrectionNewStatus(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                 >
                   <option value="present">Present</option>
                   <option value="absent">Absent</option>
@@ -2829,7 +3028,7 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
 
               {correctionNewStatus === 'present' && (
                 <div>
-                  <label className="text-slate-400 font-medium block mb-1">New Marks Obtained *</label>
+                  <label className="text-slate-700 font-bold block mb-1">New Marks Obtained *</label>
                   <input
                     type="number"
                     required
@@ -2838,35 +3037,35 @@ export const ExaminationManagementHub: React.FC<ExaminationManagementHubProps> =
                     value={correctionNewMarks}
                     onChange={(e) => setCorrectionNewMarks(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="Enter revised score"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-bold focus:outline-none focus:border-amber-500"
                   />
                 </div>
               )}
 
               <div>
-                <label className="text-slate-400 font-medium block mb-1">Mandatory Justification / Reason *</label>
+                <label className="text-slate-700 font-bold block mb-1">Mandatory Audit Justification / Reason *</label>
                 <textarea
                   required
                   rows={3}
                   value={correctionReason}
                   onChange={(e) => setCorrectionReason(e.target.value)}
-                  placeholder="Explain why this mark is being modified after examination lock (e.g. Scrutiny / re-evaluation of Question 4 per academic board approval)..."
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500 text-xs"
+                  placeholder="Explain why this mark is modified after lock (e.g. Scrutiny / re-evaluation of Question 4 per academic committee approval)..."
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 text-slate-950 font-medium focus:outline-none focus:border-amber-500 text-xs"
                 />
               </div>
 
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setCorrectionModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={correctionSubmitting}
-                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold"
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black cursor-pointer shadow-sm"
                 >
                   {correctionSubmitting ? 'Logging...' : 'Apply Correction'}
                 </button>

@@ -1677,6 +1677,19 @@ export async function fetchStudentReportCard(examId: string, studentId: string) 
   );
 }
 
+export async function fetchBatchReportCards(examId: string, grade?: string, section?: string) {
+  const q = new URLSearchParams();
+  if (grade) q.set('grade', grade);
+  if (section) q.set('section', section);
+  const qs = q.toString() ? `?${q.toString()}` : '';
+  return makeApiCall<{
+    success: boolean;
+    exam: any;
+    count: number;
+    reportCards: ReportCardPayload[];
+  }>(`/api/erp/report-cards/batch/${encodeURIComponent(examId)}${qs}`);
+}
+
 // Legacy helpers for backward compatibility
 export async function fetchErpExams() {
   return makeApiCall<{ exams: any[] }>('/api/erp/exams');

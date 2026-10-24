@@ -1749,8 +1749,12 @@ export interface ExamMarkItem {
   examId?: string;
   subjectId?: string;
   studentId: string;
+  studentId8Digit?: string;
+  penNo?: string;
   studentName?: string;
   rollNumber?: string;
+  rollNo?: string;
+  admissionNo?: string;
   grade?: string;
   section?: string;
   marksObtained: number | null;
@@ -1803,8 +1807,12 @@ export interface StudentExamResultRecord {
   examType?: string;
   academicSession?: string;
   studentId: string;
+  studentId8Digit?: string;
+  penNo?: string;
   studentName: string;
   rollNumber?: string;
+  rollNo?: string;
+  admissionNo?: string;
   grade: string;
   section: string;
   totalMarksObtained: number;
@@ -1842,16 +1850,28 @@ export interface ReportCardPayload {
     address: string;
     contact: string;
     academicSession: string;
+    logoUrl?: string | null;
+    schoolCode?: string;
+    principalName?: string;
   };
   student: {
     id: string;
+    studentId?: string;
+    studentId8Digit?: string;
+    penNo?: string;
     name: string;
     rollNumber: string;
+    rollNo?: string;
     admissionNumber: string;
+    admissionNo?: string;
     grade: string;
     section: string;
     dateOfBirth: string;
+    dob?: string;
     guardianName: string;
+    parentName?: string;
+    motherName?: string;
+    bloodGroup?: string;
     address?: string;
   };
   exam: {

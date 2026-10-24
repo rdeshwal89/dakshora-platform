@@ -21210,9 +21210,11 @@ app.get("/api/erp/marks", (req, res) => {
 
     return {
       studentId: std.id,
+      studentId8Digit: std.studentId || (std.admissionNo && std.admissionNo.startsWith('2026') ? std.admissionNo : `2026${(std.admissionNo || std.rollNo || std.id || '0001').replace(/\D/g, '').slice(-4).padStart(4, '0')}`),
       studentName: std.name,
       rollNo: std.rollNo || "ROLL",
       admissionNo: std.admissionNo || "ADM",
+      penNo: std.penNo || `20260${(std.admissionNo || '101').replace(/\D/g, '').padStart(6, '0')}`,
       grade: std.grade,
       section: std.section,
       markId: existingMark?.id || null,
@@ -21603,14 +21605,19 @@ app.get("/api/erp/results/exam/:examId", (req, res) => {
   const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
   const startIndex = (pageNum - 1) * pageSize;
   const paginated = results.slice(startIndex, startIndex + pageSize);
-  const enrichedResults = paginated.map(r => ({
-    ...r,
-    classRank: r.classRank || r.rank || 1,
-    sectionRank: r.sectionRank || r.rank || 1,
-    totalMarksObtained: r.totalMarksObtained !== undefined ? r.totalMarksObtained : (r.totalObtained || 0),
-    maxTotalMarks: r.maxTotalMarks !== undefined ? r.maxTotalMarks : (r.totalMax || 500),
-    rollNumber: r.rollNumber || r.rollNo || "ROLL"
-  }));
+  const enrichedResults = paginated.map(r => {
+    const std = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.id === r.studentId || s.db_id === r.studentId));
+    return {
+      ...r,
+      studentId8Digit: std?.studentId || (r.admissionNo && r.admissionNo.startsWith('2026') ? r.admissionNo : `2026${(r.admissionNo || r.rollNo || r.studentId || '0001').replace(/\D/g, '').slice(-4).padStart(4, '0')}`),
+      penNo: std?.penNo || `20260${(r.admissionNo || '101').replace(/\D/g, '').padStart(6, '0')}`,
+      classRank: r.classRank || r.rank || 1,
+      sectionRank: r.sectionRank || r.rank || 1,
+      totalMarksObtained: r.totalMarksObtained !== undefined ? r.totalMarksObtained : (r.totalObtained || 0),
+      maxTotalMarks: r.maxTotalMarks !== undefined ? r.maxTotalMarks : (r.totalMax || 500),
+      rollNumber: r.rollNumber || r.rollNo || "ROLL"
+    };
+  });
 
   res.json({
     success: true,
@@ -21772,17 +21779,21 @@ app.get("/api/erp/report-cards/:examId/:studentId", async (req, res) => {
 
   const studentInfo = {
     id: student.id,
+    studentId: student.studentId || (student.admissionNo && student.admissionNo.startsWith('2026') ? student.admissionNo : `2026${(student.admissionNo || student.rollNo || student.id || "0001").replace(/\D/g, "").slice(-4).padStart(4, "0")}`),
     name: student.name,
     rollNumber: student.rollNo || "DPS-2026-101",
     rollNo: student.rollNo || "DPS-2026-101",
     admissionNumber: student.admissionNo || "ADM-2026-001",
     admissionNo: student.admissionNo || "ADM-2026-001",
+    penNo: student.penNo || `20260${(student.admissionNo || '101').replace(/\D/g, '').padStart(6, '0')}`,
     grade: student.grade,
     section: student.section,
     dateOfBirth: student.dob || "2011-04-12",
     dob: student.dob || "2011-04-12",
     guardianName: student.parentName || "Rajesh Sharma",
     parentName: student.parentName || "Rajesh Sharma",
+    motherName: student.motherName || "Sunita Sharma",
+    bloodGroup: student.bloodGroup || "B+",
     attendancePercent: attendancePercentage,
     address: student.address || "Sector 45, Gurugram",
     avatarUrl: student.avatarUrl
@@ -22002,6 +22013,173 @@ app.get("/api/erp/report-cards/:examId/:studentId", async (req, res) => {
       subjects: subjectRows,
       summary: resultInfo
     }
+  });
+});
+
+// 5n-batch. GET /api/erp/report-cards/batch/:examId - Official Batch Marksheets for all students in class/section
+app.get("/api/erp/report-cards/batch/:examId", async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { examId } = req.params;
+  const { grade, section } = req.query;
+
+  const exam = ERP_EXAMS.find(e => (e.organization_id === orgId) && (e.id === examId || e.db_id === examId));
+  if (!exam) return res.status(404).json({ success: false, message: "Exam not found" });
+
+  const targetGrade = grade || exam.grade || "Class 10";
+  const targetSection = section || exam.section || "all";
+
+  let students = ERP_STUDENTS.filter(s =>
+    (s.organization_id === orgId) &&
+    s.grade.toLowerCase() === targetGrade.toLowerCase() &&
+    (!targetSection || targetSection === "all" || s.section.toLowerCase() === targetSection.toLowerCase()) &&
+    s.status === "active"
+  );
+
+  const tenantBrand = await getTenantSettings(orgId);
+  const isDemo = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const school = {
+    name: tenantBrand?.schoolName || (isDemo ? ERP_SETTINGS.schoolName : "School"),
+    logoUrl: tenantBrand?.logoUrl || null,
+    affiliationNumber: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
+    affiliationNo: tenantBrand?.affiliationNo || (isDemo ? ERP_SETTINGS.affiliationNo : "CBSE"),
+    schoolCode: tenantBrand?.schoolCode || (isDemo ? ERP_SETTINGS.schoolCode : "SCH-01"),
+    board: tenantBrand?.board || (isDemo ? ERP_SETTINGS.board : "CBSE"),
+    address: tenantBrand?.address || (isDemo ? ERP_SETTINGS.address : "Campus Address"),
+    contact: tenantBrand?.contactPhone || (isDemo ? ERP_SETTINGS.phone : "+91 9876543210"),
+    principalName: tenantBrand?.principalName || (isDemo ? ERP_SETTINGS.principalName : "Principal"),
+    academicSession: exam.academicSession || "2026-27"
+  };
+
+  const examInfo = {
+    id: exam.id,
+    title: exam.title,
+    examType: exam.examType,
+    academicSession: exam.academicSession,
+    startDate: exam.startDate,
+    endDate: exam.endDate,
+    isLocked: exam.isLocked || false,
+    publishedAt: exam.publishedAt || null
+  };
+
+  const examSubjects = ERP_EXAM_SUBJECTS.filter(es =>
+    (es.organization_id === orgId) &&
+    (es.examId === exam.id || (exam.db_id && es.examId === exam.db_id))
+  );
+
+  const reportCards = students.map(student => {
+    let result = ERP_EXAM_RESULTS.find(r =>
+      (r.organization_id === orgId) &&
+      (r.examId === exam.id || (exam.db_id && r.examId === exam.db_id)) &&
+      (r.studentId === student.id || (student.db_id && r.studentId === student.db_id))
+    );
+    if (!result) {
+      result = calculateStudentExamResult(exam.id, student.id, orgId);
+    }
+
+    const studentMarks = ERP_EXAM_MARKS.filter(m =>
+      (m.organization_id === orgId) &&
+      (m.examId === exam.id || (exam.db_id && m.examId === exam.db_id)) &&
+      (m.studentId === student.id || (student.db_id && m.studentId === student.db_id))
+    );
+
+    const subjectRows = examSubjects.map(es => {
+      const markRec = studentMarks.find(m =>
+        m.examSubjectId === es.id ||
+        (es.db_id && m.examSubjectId === es.db_id) ||
+        m.subjectId === es.subjectId
+      );
+      const score = markRec && markRec.status === "present" ? Number(markRec.marksObtained) : null;
+      const max = Number(es.maxMarks) || 100;
+      const pass = Number(es.passMarks) || 33;
+      const pct = score !== null ? Math.round((score / max) * 100) : 0;
+
+      let grade = "E";
+      if (score !== null) {
+        if (pct >= 91) grade = "A1";
+        else if (pct >= 81) grade = "A2";
+        else if (pct >= 71) grade = "B1";
+        else if (pct >= 61) grade = "B2";
+        else if (pct >= 51) grade = "C1";
+        else if (pct >= 41) grade = "C2";
+        else if (pct >= 33) grade = "D";
+      }
+
+      return {
+        subjectId: es.subjectId,
+        subjectName: es.subjectName,
+        subjectCode: es.subjectCode,
+        maxMarks: max,
+        passMarks: pass,
+        marksObtained: score,
+        status: markRec?.status || "present",
+        grade,
+        result: score !== null && score >= pass ? "PASS" : "FAIL"
+      };
+    });
+
+    const studentAtt = ERP_ATTENDANCE.filter(a => (a.organization_id === orgId) && (a.studentId === student.id || (student.db_id && a.studentId === student.db_id)));
+    const totalDays = studentAtt.length > 0 ? studentAtt.length : 120;
+    const presentDays = studentAtt.length > 0 ? studentAtt.filter(a => a.status === 'present').length : 114;
+    const attendancePercentage = Math.round((presentDays / totalDays) * 100);
+
+    const reportCardId = result?.reportCardNo || `RC/${exam.academicSession || '2026-27'}/${(student.grade || '10').replace(/\D/g, '')}${student.section || 'A'}/${(student.rollNo || '001').replace(/\D/g, '').slice(-3).padStart(3, '0')}`;
+
+    const sInfo = {
+      id: student.id,
+      studentId: student.studentId || (student.admissionNo && student.admissionNo.startsWith('2026') ? student.admissionNo : `2026${(student.admissionNo || student.rollNo || student.id || "0001").replace(/\D/g, "").slice(-4).padStart(4, "0")}`),
+      name: student.name,
+      rollNumber: student.rollNo || "DPS-2026-101",
+      rollNo: student.rollNo || "DPS-2026-101",
+      admissionNumber: student.admissionNo || "ADM-2026-001",
+      admissionNo: student.admissionNo || "ADM-2026-001",
+      penNo: student.penNo || `20260${(student.admissionNo || '101').replace(/\D/g, '').padStart(6, '0')}`,
+      grade: student.grade,
+      section: student.section,
+      dateOfBirth: student.dob || "2011-04-12",
+      dob: student.dob || "2011-04-12",
+      guardianName: student.parentName || "Rajesh Sharma",
+      parentName: student.parentName || "Rajesh Sharma",
+      motherName: student.motherName || "Sunita Sharma",
+      bloodGroup: student.bloodGroup || "B+",
+      attendancePercent: attendancePercentage,
+      address: student.address || "Sector 45, Gurugram",
+      avatarUrl: student.avatarUrl
+    };
+
+    const resultInfo = {
+      totalMarksObtained: result?.totalMarksObtained !== undefined ? result.totalMarksObtained : (result?.totalObtained || 0),
+      maxTotalMarks: result?.maxTotalMarks !== undefined ? result.maxTotalMarks : (result?.totalMax || 500),
+      percentage: result?.percentage || 0,
+      overallGrade: result?.overallGrade || "A1",
+      resultStatus: result?.resultStatus || "PASS",
+      classRank: result?.classRank || result?.rank || 1,
+      sectionRank: result?.sectionRank || result?.rank || 1,
+      teacherRemarks: result?.teacherRemarks || "Good performance.",
+      principalRemarks: result?.principalRemarks || "Promoted."
+    };
+
+    return {
+      reportCardId,
+      generatedAt: new Date().toISOString(),
+      school,
+      student: sInfo,
+      exam: examInfo,
+      subjects: subjectRows,
+      result: resultInfo,
+      attendance: {
+        totalDays,
+        presentDays,
+        attendancePercentage
+      },
+      remarks: resultInfo.teacherRemarks
+    };
+  });
+
+  res.json({
+    success: true,
+    exam: examInfo,
+    count: reportCards.length,
+    reportCards
   });
 });
 
