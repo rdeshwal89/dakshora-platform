@@ -43,8 +43,10 @@ import {
   Menu,
   LogOut,
   ArrowLeft,
-  Smartphone
+  Smartphone,
+  FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { LiveBusMap } from './LiveBusMap';
 import { DriverGpsBroadcastModal } from './DriverGpsBroadcastModal';
 import {
@@ -200,7 +202,43 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
     activePeriod: any;
     nextPeriod: any;
     weeklyRoutine: Record<string, any[]>;
+    liveStatus?: string;
   } | null>(null);
+
+  // Real-time IST Clock & Timetable Live Countdown (Updates every 1000ms)
+  const [liveIstClock, setLiveIstClock] = useState<string>('');
+  const [liveMinsLeft, setLiveMinsLeft] = useState<number>(0);
+  const [liveSecsLeft, setLiveSecsLeft] = useState<number>(0);
+
+  useEffect(() => {
+    const tick = () => {
+      const istDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const timeStr = istDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+      setLiveIstClock(`${timeStr} (IST)`);
+
+      if (timetable?.activePeriod?.endTime) {
+        const [eh, em] = timetable.activePeriod.endTime.split(':').map(Number);
+        if (!isNaN(eh) && !isNaN(em)) {
+          const nowSecs = (istDate.getHours() * 3600) + (istDate.getMinutes() * 60) + istDate.getSeconds();
+          const endSecs = (eh * 3600) + (em * 60);
+          const diff = endSecs - nowSecs;
+          if (diff > 0) {
+            setLiveMinsLeft(Math.floor(diff / 60));
+            setLiveSecsLeft(diff % 60);
+          } else {
+            setLiveMinsLeft(0);
+            setLiveSecsLeft(0);
+          }
+        }
+      } else if (timetable?.activePeriod?.minutesRemaining) {
+        setLiveMinsLeft(timetable.activePeriod.minutesRemaining);
+        setLiveSecsLeft(0);
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [timetable]);
   const [transport, setTransport] = useState<ErpPortalTransport | null>(null);
   const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
   const [notices, setNotices] = useState<any[]>([]);
@@ -1015,33 +1053,54 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                       </div>
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                        <span>{t('portal.card_timetable_in_session', 'In Session')}</span>
+                        <span>
+                          {timetable?.liveStatus === 'school_over'
+                            ? 'Day Over'
+                            : timetable?.liveStatus === 'before_school'
+                            ? 'Starting Soon'
+                            : timetable?.liveStatus === 'sunday'
+                            ? 'Holiday'
+                            : t('portal.card_timetable_in_session', 'In Session')}
+                        </span>
                       </span>
                     </div>
 
                     <div className="p-3 rounded-2xl bg-slate-950/70 border border-cyan-500/30">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-mono font-bold text-cyan-400 uppercase">
-                          {timetable?.activePeriod?.periodNumber ? `Period ${timetable.activePeriod.periodNumber} (Live)` : t('portal.card_timetable_live', 'Period 2 (Live)')}
+                          {timetable?.activePeriod?.periodNumber !== undefined ? (
+                            timetable.activePeriod.isBreak
+                              ? `${timetable.activePeriod.name} (Live)`
+                              : `Period ${timetable.activePeriod.periodNumber} (Live)`
+                          ) : 'Live Bell Pulse'}
                         </span>
                         <span className="text-xs font-mono text-slate-300">{timetable?.activePeriod?.roomNumber || 'Room 201'}</span>
                       </div>
                       <h5 className="text-base font-extrabold text-white mt-1">
-                        {timetable?.activePeriod?.subjectName || 'Physics (Optics Lab)'}
+                        {timetable?.activePeriod?.subjectName || 'Regular Academic Session'}
                       </h5>
                       <p className="text-xs text-slate-400 font-mono mt-0.5">
-                        {t('portal.card_timetable_teacher', 'Teacher:')} {timetable?.activePeriod?.teacherName || 'Dr. Vikram Sethi'}
+                        {t('portal.card_timetable_teacher', 'Teacher:')} {timetable?.activePeriod?.teacherName || 'Assigned Faculty'}
                       </p>
-                      <div className="mt-2 text-xs font-mono text-cyan-300 font-bold flex items-center gap-1.5">
+                      <div className="mt-2 text-xs font-mono text-cyan-300 font-bold flex flex-wrap items-center gap-1.5">
                         <Clock3 className="w-3.5 h-3.5" />
-                        <span>{timetable?.activePeriod?.minutesRemaining || 24} {t('portal.card_timetable_remaining', 'mins remaining')}</span>
+                        <span>
+                          {liveMinsLeft > 0 || liveSecsLeft > 0
+                            ? `${liveMinsLeft}m ${String(liveSecsLeft).padStart(2, '0')}s remaining`
+                            : (timetable?.liveStatus === 'school_over'
+                                ? 'School Day Concluded'
+                                : (timetable?.activePeriod?.minutesRemaining
+                                    ? `${timetable.activePeriod.minutesRemaining}m remaining`
+                                    : 'In Session'))}
+                        </span>
+                        {liveIstClock && <span className="text-[10px] text-slate-400 font-normal ml-1">• {liveIstClock}</span>}
                       </div>
                     </div>
 
                     <div className="mt-2.5 px-3 py-2 rounded-xl bg-slate-950/40 border border-slate-800 flex items-center justify-between text-xs font-mono">
-                      <span className="text-slate-400">{t('portal.card_timetable_next', 'Next (Period 3):')}</span>
+                      <span className="text-slate-400">{t('portal.card_timetable_next', 'Next Period:')}</span>
                       <span className="text-white font-bold">
-                        {timetable?.nextPeriod?.subjectName ? `${timetable.nextPeriod.subjectName} • ${timetable.nextPeriod.startTime || '10:45 AM'}` : 'Chemistry (Organic) • 10:45 AM'}
+                        {timetable?.nextPeriod?.subjectName ? `${timetable.nextPeriod.subjectName} • ${timetable.nextPeriod.startTime || 'Next'}` : (timetable?.liveStatus === 'school_over' ? 'Tomorrow 08:15 AM' : 'Routine in progress')}
                       </span>
                     </div>
                   </div>
@@ -1730,10 +1789,55 @@ export const ParentStudentPortalHub: React.FC<ParentStudentPortalHubProps> = ({
                 Weekly period timetable for {timetable?.grade || 'Class 10'}-{timetable?.section || 'A'}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="hidden sm:inline-block px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
                 8 Periods Scheduled
               </span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const wb = XLSX.utils.book_new();
+                    const wsData: any[][] = [
+                      [`CLASS TIMETABLE: ${(timetable?.grade || 'Class 10').toUpperCase()} - SECTION ${(timetable?.section || 'A').toUpperCase()}`],
+                      [`Session: 2026-27 | Generated on: ${new Date().toLocaleDateString('en-IN')} (IST)`],
+                      [],
+                      ['Day', 'Period 1', 'Period 2', 'Period 3', 'Period 4', 'Period 5', 'Period 6', 'Period 7', 'Period 8']
+                    ];
+                    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].forEach(day => {
+                      const dSlots = timetable?.weeklyRoutine?.[day] || [];
+                      const row = [day];
+                      for (let p = 1; p <= 8; p++) {
+                        const s = dSlots.find((x: any) => x.periodNumber === p);
+                        row.push(s ? `${s.subjectName} (${s.teacherName || 'Faculty'}, Rm ${s.roomNumber || '201'})` : 'Free');
+                      }
+                      wsData.push(row);
+                    });
+                    const ws = XLSX.utils.aoa_to_sheet(wsData);
+                    XLSX.utils.book_append_sheet(wb, ws, 'Class_Routine');
+                    XLSX.writeFile(wb, `Class_${(timetable?.grade || '10').replace(/\s+/g, '_')}_${timetable?.section || 'A'}_Routine.xlsx`);
+                    onShowToast('success', 'Excel Exported! 📊', 'Class routine downloaded successfully.');
+                  } catch (e: any) {
+                    onShowToast('error', 'Export Failed', e.message);
+                  }
+                }}
+                className="px-3 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 transition-all"
+                title="Download Class Routine as Excel Spreadsheet"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Export Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 transition-all"
+                title="Print Class Routine for Study Table / Fridge"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print PDF</span>
+              </button>
             </div>
           </div>
 

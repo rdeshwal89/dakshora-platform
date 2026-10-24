@@ -3082,6 +3082,9 @@ export interface ErpBellPeriod {
 export interface ErpBellScheduleResponse {
   success: boolean;
   serverTime: string;
+  serverIstTime?: string;
+  currentDayOfWeek?: string;
+  liveStatus?: 'before_school' | 'assembly' | 'in_period' | 'recess' | 'school_over' | 'sunday';
   periods: ErpBellPeriod[];
   activePeriod: ErpBellPeriod | null;
   nextPeriod: ErpBellPeriod | null;

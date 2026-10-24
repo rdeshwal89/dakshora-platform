@@ -35478,45 +35478,128 @@ app.get("/api/erp/timetable", requireAuth, (req, res) => {
   });
 });
 
-// 15a. GET /api/erp/timetable/bell-schedule - Daily Period Bell Timings & Live Active Period
+// 15a. GET /api/erp/timetable/bell-schedule - Daily Period Bell Timings & Live Active Period in Indian Standard Time (IST)
 app.get("/api/erp/timetable/bell-schedule", requireAuth, (req, res) => {
-  // Calculate current active period based on local time
-  const now = new Date();
-  const currentHours = now.getHours();
-  const currentMinutes = now.getMinutes();
+  // Real Indian Standard Time (IST - Asia/Kolkata)
+  const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const currentDayOfWeek = daysOfWeek[istDate.getDay()];
+  const currentHours = istDate.getHours();
+  const currentMinutes = istDate.getMinutes();
+  const currentSeconds = istDate.getSeconds();
   const currentTimeString = `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`;
+  const currentIstFullTime = `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}:${String(currentSeconds).padStart(2, "0")}`;
   const currentTotalMins = currentHours * 60 + currentMinutes;
 
   let activePeriod = null;
   let nextPeriod = null;
   let minutesRemaining = 0;
+  let liveStatus = "in_session"; // 'before_school' | 'assembly' | 'in_period' | 'recess' | 'school_over' | 'sunday'
 
-  for (let i = 0; i < ERP_BELL_SCHEDULES.length; i++) {
-    const p = ERP_BELL_SCHEDULES[i];
-    const [startH, startM] = p.startTime.split(":").map(Number);
-    const [endH, endM] = p.endTime.split(":").map(Number);
-    const startMins = startH * 60 + startM;
-    const endMins = endH * 60 + endM;
+  if (currentDayOfWeek === "Sunday") {
+    liveStatus = "sunday";
+  } else {
+    for (let i = 0; i < ERP_BELL_SCHEDULES.length; i++) {
+      const p = ERP_BELL_SCHEDULES[i];
+      const [startH, startM] = (p.startTime || "00:00").split(":").map(Number);
+      const [endH, endM] = (p.endTime || "00:00").split(":").map(Number);
+      const startMins = startH * 60 + startM;
+      const endMins = endH * 60 + endM;
 
-    if (currentTotalMins >= startMins && currentTotalMins < endMins) {
-      activePeriod = p;
-      minutesRemaining = endMins - currentTotalMins;
-      if (i + 1 < ERP_BELL_SCHEDULES.length) {
-        nextPeriod = ERP_BELL_SCHEDULES[i + 1];
+      if (currentTotalMins >= startMins && currentTotalMins < endMins) {
+        activePeriod = p;
+        minutesRemaining = endMins - currentTotalMins;
+        liveStatus = p.periodType === 'recess' ? 'recess' : p.periodType === 'assembly' ? 'assembly' : 'in_period';
+        if (i + 1 < ERP_BELL_SCHEDULES.length) {
+          nextPeriod = ERP_BELL_SCHEDULES[i + 1];
+        }
+        break;
+      } else if (currentTotalMins < startMins && !nextPeriod) {
+        nextPeriod = p;
       }
-      break;
-    } else if (currentTotalMins < startMins && !nextPeriod) {
-      nextPeriod = p;
+    }
+
+    if (!activePeriod) {
+      const firstBell = ERP_BELL_SCHEDULES[0];
+      const lastBell = ERP_BELL_SCHEDULES[ERP_BELL_SCHEDULES.length - 1];
+      const [firstH, firstM] = (firstBell?.startTime || "07:50").split(":").map(Number);
+      const [lastH, lastM] = (lastBell?.endTime || "14:35").split(":").map(Number);
+
+      if (currentTotalMins < firstH * 60 + firstM) {
+        liveStatus = "before_school";
+        minutesRemaining = (firstH * 60 + firstM) - currentTotalMins;
+        if (!nextPeriod) nextPeriod = firstBell;
+      } else if (currentTotalMins >= lastH * 60 + lastM) {
+        liveStatus = "school_over";
+      }
     }
   }
 
   res.json({
     success: true,
     serverTime: currentTimeString,
+    serverIstTime: currentIstFullTime,
+    currentDayOfWeek,
+    liveStatus,
     periods: ERP_BELL_SCHEDULES,
     activePeriod,
     nextPeriod,
     minutesRemaining
+  });
+});
+
+// 15a2. POST /api/erp/timetable/bell-schedule - Update / Re-set Bell Timings (Timetable Incharge / Admin)
+app.post("/api/erp/timetable/bell-schedule", requireAuth, async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { periods, scheduleName } = req.body;
+
+  if (!Array.isArray(periods) || periods.length === 0) {
+    return res.status(400).json({ success: false, error: "INVALID_PERIODS", message: "Periods array is required" });
+  }
+
+  // Sanitize and validate periods format
+  const sanitized = periods.map((p, idx) => ({
+    id: p.id || `bell-${idx}`,
+    periodNumber: typeof p.periodNumber === 'number' ? p.periodNumber : idx,
+    label: p.label || `Period ${idx}`,
+    startTime: p.startTime || "08:00",
+    endTime: p.endTime || "08:45",
+    durationMinutes: p.durationMinutes || 45,
+    isBreak: Boolean(p.isBreak),
+    periodType: p.periodType || (p.isBreak ? 'recess' : 'regular')
+  }));
+
+  ERP_BELL_SCHEDULES = sanitized;
+
+  // Persist to Supabase if table exists
+  if (typeof supabase !== 'undefined' && supabase) {
+    try {
+      for (const b of sanitized) {
+        await supabase.from("erp_bell_schedules").upsert({
+          id: b.id,
+          organization_id: orgId,
+          period_number: b.periodNumber,
+          label: b.label,
+          start_time: b.startTime,
+          end_time: b.endTime,
+          duration_minutes: b.durationMinutes,
+          is_break: b.isBreak,
+          period_type: b.periodType,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "organization_id,period_number" });
+      }
+    } catch (e) {
+      console.warn("Could not upsert bell schedules to Supabase:", e.message);
+    }
+  }
+
+  await recordAuditLog("timetable.bell_schedule_updated", req.user?.email || "admin", "bell_schedule", orgId, req);
+
+  res.json({
+    success: true,
+    message: `Bell schedule successfully updated and reset! (${sanitized.length} periods configured)`,
+    periods: ERP_BELL_SCHEDULES,
+    scheduleName: scheduleName || "Custom Bell Schedule"
   });
 });
 
@@ -35856,6 +35939,63 @@ app.get("/api/erp/timetable/teachers/:teacherId", requireAuth, (req, res) => {
     }
   });
 
+  // Calculate live Indian Standard Time (IST) Active Period for Teacher
+  const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const currentDayOfWeek = daysOfWeek[istDate.getDay()];
+  const currentHours = istDate.getHours();
+  const currentMinutes = istDate.getMinutes();
+  const currentSeconds = istDate.getSeconds();
+  const currentTotalMins = currentHours * 60 + currentMinutes;
+
+  let liveActiveBell = null;
+  let liveNextBell = null;
+  let liveRemainingMins = 0;
+  let liveStatus = "in_session"; // 'before_school' | 'assembly' | 'in_period' | 'recess' | 'school_over' | 'sunday'
+
+  if (currentDayOfWeek === "Sunday") {
+    liveStatus = "sunday";
+  } else {
+    for (let i = 0; i < ERP_BELL_SCHEDULES.length; i++) {
+      const b = ERP_BELL_SCHEDULES[i];
+      const [sh, sm] = (b.startTime || "00:00").split(":").map(Number);
+      const [eh, em] = (b.endTime || "00:00").split(":").map(Number);
+      const startMins = sh * 60 + sm;
+      const endMins = eh * 60 + em;
+
+      if (currentTotalMins >= startMins && currentTotalMins < endMins) {
+        liveActiveBell = b;
+        liveRemainingMins = endMins - currentTotalMins;
+        liveStatus = b.periodType === 'recess' ? 'recess' : b.periodType === 'assembly' ? 'assembly' : 'in_period';
+        if (i + 1 < ERP_BELL_SCHEDULES.length) {
+          liveNextBell = ERP_BELL_SCHEDULES[i + 1];
+        }
+        break;
+      } else if (currentTotalMins < startMins && !liveNextBell) {
+        liveNextBell = b;
+      }
+    }
+
+    if (!liveActiveBell) {
+      const firstBell = ERP_BELL_SCHEDULES[0];
+      const lastBell = ERP_BELL_SCHEDULES[ERP_BELL_SCHEDULES.length - 1];
+      const [firstH, firstM] = (firstBell?.startTime || "07:50").split(":").map(Number);
+      const [lastH, lastM] = (lastBell?.endTime || "14:35").split(":").map(Number);
+
+      if (currentTotalMins < firstH * 60 + firstM) {
+        liveStatus = "before_school";
+        liveRemainingMins = (firstH * 60 + firstM) - currentTotalMins;
+        if (!liveNextBell) liveNextBell = firstBell;
+      } else if (currentTotalMins >= lastH * 60 + lastM) {
+        liveStatus = "school_over";
+      }
+    }
+  }
+
+  const teacherTodaySlots = routine.filter(s => s.dayOfWeek === currentDayOfWeek);
+  const activeTeachingSlot = liveActiveBell ? teacherTodaySlots.find(s => s.periodNumber === liveActiveBell.periodNumber) : null;
+  const nextTeachingSlot = liveNextBell ? teacherTodaySlots.find(s => s.periodNumber === liveNextBell.periodNumber) : null;
+
   res.json({
     success: true,
     teacher: {
@@ -35872,7 +36012,30 @@ app.get("/api/erp/timetable/teachers/:teacherId", requireAuth, (req, res) => {
     periodsByDay,
     freePeriodsCount: freePeriods.length,
     freePeriods,
-    routine
+    routine,
+    istTime: `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`,
+    currentDayOfWeek,
+    liveStatus,
+    activePeriod: liveActiveBell ? {
+      periodNumber: liveActiveBell.periodNumber,
+      label: liveActiveBell.label,
+      startTime: liveActiveBell.startTime,
+      endTime: liveActiveBell.endTime,
+      durationMinutes: liveActiveBell.durationMinutes,
+      isBreak: liveActiveBell.isBreak,
+      isFreePeriod: !activeTeachingSlot && !liveActiveBell.isBreak,
+      teachingSlot: activeTeachingSlot || null,
+      minutesRemaining: liveRemainingMins
+    } : null,
+    nextPeriod: liveNextBell ? {
+      periodNumber: liveNextBell.periodNumber,
+      label: liveNextBell.label,
+      startTime: liveNextBell.startTime,
+      endTime: liveNextBell.endTime,
+      isBreak: liveNextBell.isBreak,
+      isFreePeriod: !nextTeachingSlot && !liveNextBell.isBreak,
+      teachingSlot: nextTeachingSlot || null
+    } : null
   });
 });
 
@@ -37680,60 +37843,128 @@ app.get("/api/erp/portal/timetable/:studentId", (req, res) => {
     weeklyRoutine[day] = Array.from(periodMap.values()).sort((a, b) => a.periodNumber - b.periodNumber);
   });
 
-  // rawWeeklyRoutine removed
-  const curPeriodSlot = (weeklyRoutine.Monday || []).find(s => s.periodNumber === 2);
-  const nextPeriodSlot = (weeklyRoutine.Monday || []).find(s => s.periodNumber === 3);
-  /*
-    Tuesday: slots.filter(s => s.dayOfWeek === "Tuesday").sort((a, b) => a.periodNumber - b.periodNumber),
-    Wednesday: slots.filter(s => s.dayOfWeek === "Wednesday").sort((a, b) => a.periodNumber - b.periodNumber),
-    Thursday: slots.filter(s => s.dayOfWeek === "Thursday").sort((a, b) => a.periodNumber - b.periodNumber),
-    Friday: slots.filter(s => s.dayOfWeek === "Friday").sort((a, b) => a.periodNumber - b.periodNumber),
-    Saturday: slots.filter(s => s.dayOfWeek === "Saturday").sort((a, b) => a.periodNumber - b.periodNumber)
-  };
+  // Calculate Live Period and Remaining Time based on real Indian Standard Time (IST)
+  const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const currentDayOfWeek = daysOfWeek[istDate.getDay()];
+  const currentHours = istDate.getHours();
+  const currentMinutes = istDate.getMinutes();
+  const currentSeconds = istDate.getSeconds();
+  const currentTotalMins = currentHours * 60 + currentMinutes;
 
-  */
-  // Determine active period
-  const activePeriod = ERP_BELL_SCHEDULES.find(b => b.periodNumber === 2) || ERP_BELL_SCHEDULES[1];
-  const nextPeriod = ERP_BELL_SCHEDULES.find(b => b.periodNumber === 3) || ERP_BELL_SCHEDULES[2];
+  const todaySlots = weeklyRoutine[currentDayOfWeek] || weeklyRoutine["Monday"] || [];
+
+  let liveActiveBell = null;
+  let liveNextBell = null;
+  let liveRemainingMins = 0;
+  let liveStatus = "in_session"; // 'before_school' | 'assembly' | 'in_period' | 'recess' | 'school_over' | 'sunday'
+
+  if (currentDayOfWeek === "Sunday") {
+    liveStatus = "sunday";
+  } else {
+    for (let i = 0; i < ERP_BELL_SCHEDULES.length; i++) {
+      const b = ERP_BELL_SCHEDULES[i];
+      const [sh, sm] = (b.startTime || "00:00").split(":").map(Number);
+      const [eh, em] = (b.endTime || "00:00").split(":").map(Number);
+      const startMins = sh * 60 + sm;
+      const endMins = eh * 60 + em;
+
+      if (currentTotalMins >= startMins && currentTotalMins < endMins) {
+        liveActiveBell = b;
+        liveRemainingMins = endMins - currentTotalMins;
+        liveStatus = b.periodType === 'recess' ? 'recess' : b.periodType === 'assembly' ? 'assembly' : 'in_period';
+        if (i + 1 < ERP_BELL_SCHEDULES.length) {
+          liveNextBell = ERP_BELL_SCHEDULES[i + 1];
+        }
+        break;
+      } else if (currentTotalMins < startMins && !liveNextBell) {
+        liveNextBell = b;
+      }
+    }
+
+    if (!liveActiveBell) {
+      const firstBell = ERP_BELL_SCHEDULES[0];
+      const lastBell = ERP_BELL_SCHEDULES[ERP_BELL_SCHEDULES.length - 1];
+      const [firstH, firstM] = (firstBell?.startTime || "07:50").split(":").map(Number);
+      const [lastH, lastM] = (lastBell?.endTime || "14:35").split(":").map(Number);
+
+      if (currentTotalMins < firstH * 60 + firstM) {
+        liveStatus = "before_school";
+        liveRemainingMins = (firstH * 60 + firstM) - currentTotalMins;
+        if (!liveNextBell) liveNextBell = firstBell;
+      } else if (currentTotalMins >= lastH * 60 + lastM) {
+        liveStatus = "school_over";
+      }
+    }
+  }
+
+  // Find slot for active bell in today's class schedule
+  const curPeriodSlot = liveActiveBell 
+    ? (todaySlots.find(s => s.periodNumber === liveActiveBell.periodNumber) || {
+        subjectName: liveActiveBell.label,
+        teacherName: liveActiveBell.isBreak ? "Break Supervisor" : "Class Teacher",
+        roomNumber: student.section ? `Room ${student.grade || '10'}-${student.section}` : "Main Hall"
+      })
+    : null;
+
+  const nextPeriodSlot = liveNextBell
+    ? (todaySlots.find(s => s.periodNumber === liveNextBell.periodNumber) || {
+        subjectName: liveNextBell.label,
+        teacherName: liveNextBell.isBreak ? "Break Supervisor" : "Faculty",
+        roomNumber: student.section ? `Room ${student.grade || '10'}-${student.section}` : "Main Hall",
+        startTime: liveNextBell.startTime,
+        endTime: liveNextBell.endTime
+      })
+    : null;
 
   res.json({
     success: true,
     grade: student.grade,
     section: student.section,
     totalSlots: slots.length,
-    activePeriod: {
-      periodNumber: 2,
-      name: "Period 2",
-      startTime: curPeriodSlot?.startTime || "09:00 AM",
-      endTime: curPeriodSlot?.endTime || "09:45 AM",
-      minutesRemaining: 24,
-      subjectName: curPeriodSlot?.subjectName || "English Language & Literature",
-      teacherName: curPeriodSlot?.teacherName || "Sunita Sharma",
-      roomNumber: curPeriodSlot?.roomNumber || "Room 201"
-    },
-    nextPeriod: {
-      periodNumber: 3,
-      name: "Period 3",
-      startTime: nextPeriodSlot?.startTime || "09:45 AM",
-      endTime: nextPeriodSlot?.endTime || "10:30 AM",
-      subjectName: nextPeriodSlot?.subjectName || "Science & Physics Lab",
-      teacherName: nextPeriodSlot?.teacherName || "Dr. Meenakshi Sundaram",
-      roomNumber: nextPeriodSlot?.roomNumber || "PHY-LAB"
-    },
-    /* oldActivePeriod: {
-      ...activePeriod,
-      minutesRemaining: 24,
-      subjectName: slots.find(s => s.periodNumber === activePeriod.periodNumber)?.subjectName || "Physics",
-      teacherName: slots.find(s => s.periodNumber === activePeriod.periodNumber)?.teacherName || "Dr. Meenakshi Sundaram",
-      roomNumber: slots.find(s => s.periodNumber === activePeriod.periodNumber)?.roomNumber || "PHY-LAB"
-    },
-    nextPeriod: {
-      ...nextPeriod,
-      subjectName: slots.find(s => s.periodNumber === nextPeriod.periodNumber)?.subjectName || "Chemistry",
-      teacherName: slots.find(s => s.periodNumber === nextPeriod.periodNumber)?.teacherName || "Anita Sharma",
-      roomNumber: slots.find(s => s.periodNumber === nextPeriod.periodNumber)?.roomNumber || "CHEM-LAB"
-    },
-    */
+    currentDayOfWeek,
+    istTime: `${String(currentHours).padStart(2, "0")}:${String(currentMinutes).padStart(2, "0")}`,
+    liveStatus,
+    activePeriod: liveActiveBell ? {
+      periodNumber: liveActiveBell.periodNumber,
+      name: liveActiveBell.label,
+      startTime: liveActiveBell.startTime,
+      endTime: liveActiveBell.endTime,
+      minutesRemaining: liveRemainingMins,
+      isBreak: liveActiveBell.isBreak,
+      subjectName: curPeriodSlot?.subjectName || liveActiveBell.label,
+      teacherName: curPeriodSlot?.teacherName || "Assigned Faculty",
+      roomNumber: curPeriodSlot?.roomNumber || `Room ${student.grade}-${student.section}`
+    } : (liveStatus === "before_school" ? {
+      periodNumber: 0,
+      name: "Before School Hours",
+      startTime: "07:50 AM",
+      endTime: "08:15 AM",
+      minutesRemaining: liveRemainingMins,
+      isBreak: true,
+      subjectName: "Morning Arrival & Gate Opening",
+      teacherName: "Duty Incharge",
+      roomNumber: "Campus Gate / Assembly Ground"
+    } : {
+      periodNumber: 99,
+      name: "School Hours Completed",
+      startTime: "02:35 PM",
+      endTime: "--:--",
+      minutesRemaining: 0,
+      isBreak: true,
+      subjectName: "Day Concluded (Self-Study & Extracurriculars)",
+      teacherName: "Office of the Principal",
+      roomNumber: "Campus Closed"
+    }),
+    nextPeriod: liveNextBell ? {
+      periodNumber: liveNextBell.periodNumber,
+      name: liveNextBell.label,
+      startTime: liveNextBell.startTime,
+      endTime: liveNextBell.endTime,
+      subjectName: nextPeriodSlot?.subjectName || liveNextBell.label,
+      teacherName: nextPeriodSlot?.teacherName || "Assigned Faculty",
+      roomNumber: nextPeriodSlot?.roomNumber || `Room ${student.grade}-${student.section}`
+    } : null,
     weeklyRoutine
   });
 });

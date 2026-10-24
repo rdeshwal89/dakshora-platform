@@ -2791,6 +2791,18 @@ export async function fetchErpBellSchedule() {
   return makeApiCall<ErpBellScheduleResponse>('/api/erp/timetable/bell-schedule');
 }
 
+export async function updateErpBellSchedule(periods: ErpBellPeriod[], scheduleName?: string) {
+  return makeApiCall<{
+    success: boolean;
+    message: string;
+    periods: ErpBellPeriod[];
+    scheduleName?: string;
+  }>('/api/erp/timetable/bell-schedule', {
+    method: 'POST',
+    body: JSON.stringify({ periods, scheduleName })
+  });
+}
+
 export async function fetchErpClassTimetable(params?: {
   grade?: string;
   section?: string;

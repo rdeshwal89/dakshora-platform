@@ -1845,6 +1845,8 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
         <TimetableManagementHub
           activeSession={activeSession}
           activeRole={activeRole}
+          currentUser={currentUser}
+          schoolBrand={schoolBrand}
           onShowToast={onShowToast}
           onNavigateToModule={(mod) => setActiveModule(mod as ErpModule)}
         />
