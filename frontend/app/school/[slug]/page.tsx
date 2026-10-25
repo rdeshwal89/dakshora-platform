@@ -718,7 +718,7 @@ export default function SchoolPublicPage() {
     }
   };
 
-  const apkUrl = slugParam.includes("dakshora") ? "/assets/mobile/dakshora-academy-parentapp-v2.0.0.apk" : "/assets/mobile/newidealpublicschool-parentapp-v2.0.0.apk";
+  const apkUrl = `/assets/mobile/${slugParam}-parentapp-v2.0.0.apk`;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-indigo-600 selection:text-white">

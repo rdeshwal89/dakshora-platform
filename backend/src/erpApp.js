@@ -15586,10 +15586,10 @@ const handleStudentBulkImport = async (req, res) => {
 
   students.forEach((row, index) => {
     const rowNum = index + 1;
-    const name = (row.name || row.fullName || `${row.firstName || ""} ${row.lastName || ""}`).trim();
-    const grade = (row.grade || row.class || "").trim();
-    const admNo = (row.admissionNo || row.admNo || `DPS-ADM-2026-IMP-${1000 + index}`).trim();
-    const penNo = (row.penNo || row.pen || "").trim();
+    const name = (row.name || row.studentName || row.fullName || row['Student Name'] || row['student_name'] || `${row.firstName || ""} ${row.lastName || ""}`).trim();
+    const grade = (row.grade || row.class || row['Class'] || row['Grade'] || "Class 1").trim();
+    const admNo = (row.admissionNo || row.admission_no || row.admNo || row.rollNo || row['Admission No'] || row['Admission Number'] || `ADM-${Date.now().toString().slice(-4)}-${index + 1}`).toString().trim();
+    const penNo = (row.penNo || row.pen || row['PEN'] || "").trim();
 
     if (!name) {
       errors.push({ row: rowNum, error: "Missing required student name", data: row });
@@ -15624,18 +15624,18 @@ const handleStudentBulkImport = async (req, res) => {
       lastName: row.lastName || name.split(" ").slice(1).join(" ") || "",
       name,
       grade,
-      section: row.section || "A",
-      gender: row.gender || "Not specified",
-      dob: row.dob || "2012-01-01",
-      bloodGroup: row.bloodGroup || "B+",
-      parentName: row.parentName || "Parent",
+      section: (row.section || row['Section'] || "A").toString().trim().toUpperCase(),
+      gender: row.gender || row['Gender'] || "Not specified",
+      dob: row.dob || row['DOB'] || row['Date of Birth'] || "2012-01-01",
+      bloodGroup: row.bloodGroup || row['Blood Group'] || "B+",
+      parentName: row.parentName || row['Parent Name'] || row['Father Name'] || "Parent",
       parentRelation: row.parentRelation || "Father",
-      parentPhone: row.parentPhone || row.phone || "+91 98000 00000",
-      parentEmail: row.parentEmail || row.email || "",
+      parentPhone: row.parentPhone || row.phone || row['Mobile'] || row['Phone'] || "+91 98000 00000",
+      parentEmail: row.parentEmail || row.email || row['Email'] || "",
       address: row.address || "",
       city: row.city || "Gurugram",
       state: row.state || "Haryana",
-      pinCode: row.pinCode || "122001",
+      pinCode: row.pinCode || row.pincode || "122001",
       status: row.status || "active",
       admissionDate: row.admissionDate || new Date().toISOString().split("T")[0],
       academicSession: row.academicSession || "2026-27",
@@ -15714,7 +15714,7 @@ const handleStudentBulkImport = async (req, res) => {
 
       const { data: insertedDbStudents, error: batchErr } = await supabase
         .from("students")
-        .insert(dbBatch)
+        .upsert(dbBatch, { onConflict: "organization_id, admission_no" })
         .select("id, admission_no");
 
       if (batchErr) {
@@ -15746,8 +15746,134 @@ const handleStudentBulkImport = async (req, res) => {
   });
 };
 
+// POST /api/erp/staff/import & POST /api/erp/staff/bulk-import - Batch CSV/JSON Import for Faculty & Staff
+const handleStaffBulkImport = async (req, res) => {
+  const orgId = resolveTenantOrgId(req);
+  const { staff = [], dryRun = false } = req.body;
+
+  if (!Array.isArray(staff) || staff.length === 0) {
+    return res.status(400).json({ success: false, message: "No staff records provided for import" });
+  }
+
+  const validRecords = [];
+  const errors = [];
+  const seenEmails = new Set(
+    ERP_STAFF.filter(s => s.organization_id === orgId).map(s => (s.email || "").toLowerCase()).filter(Boolean)
+  );
+  const seenEmpIds = new Set(
+    ERP_STAFF.filter(s => s.organization_id === orgId).map(s => (s.empId || s.employee_code || "").toLowerCase()).filter(Boolean)
+  );
+
+  staff.forEach((row, index) => {
+    const rowNum = index + 1;
+    const name = (row.name || row.staffName || row.fullName || row['Staff Name'] || row['Name'] || `${row.firstName || ""} ${row.lastName || ""}`).trim();
+    const email = (row.email || row.emailAddress || row['Email'] || "").trim().toLowerCase();
+    const phone = (row.phone || row.mobileNo || row['Mobile'] || row['Phone'] || "+91 98000 00000").toString().trim();
+    const empId = (row.empId || row.employeeId || row.empCode || row['EMP ID'] || row['Employee ID'] || `EMP-${Date.now().toString().slice(-4)}-${index + 1}`).toString().trim();
+    const role = (row.role || row['Role'] || "Teacher").trim();
+    const designation = (row.designation || row['Designation'] || role || "Faculty").trim();
+    const department = (row.department || row['Department'] || "Academic Faculty").trim();
+    const staffType = (row.staffType || row['Staff Type'] || "teaching").trim();
+
+    let mappedGender = null;
+    if (row.gender) {
+      const g = String(row.gender).trim().toLowerCase();
+      if (["male", "female", "other"].includes(g)) {
+        mappedGender = g;
+      }
+    }
+
+    if (!name) {
+      errors.push({ row: rowNum, error: "Missing required staff name", data: row });
+      return;
+    }
+
+    if (empId && seenEmpIds.has(empId.toLowerCase())) {
+      errors.push({ row: rowNum, error: `Duplicate Employee ID '${empId}'`, isDuplicate: true, data: row });
+      return;
+    }
+    if (empId) seenEmpIds.add(empId.toLowerCase());
+
+    const safeEmail = email || `${empId.toLowerCase().replace(/[^a-z0-9]/g, "")}@school.edu.in`;
+    if (email && seenEmails.has(safeEmail)) {
+      errors.push({ row: rowNum, error: `Duplicate staff email '${safeEmail}'`, isDuplicate: true, data: row });
+      return;
+    }
+    if (email) seenEmails.add(safeEmail);
+
+    validRecords.push({
+      id: `stf-imp-${Date.now()}-${index}`,
+      organization_id: orgId,
+      empId,
+      name,
+      email: safeEmail,
+      phone,
+      gender: mappedGender,
+      role: role.toLowerCase() === "teacher" ? "teacher" : "staff",
+      staffType,
+      department,
+      designation,
+      status: "active",
+      joiningDate: row.joiningDate || new Date().toISOString().split("T")[0]
+    });
+  });
+
+  if (dryRun) {
+    return res.json({
+      success: true,
+      dryRun: true,
+      totalRows: staff.length,
+      validCount: validRecords.length,
+      invalidCount: errors.length,
+      preview: validRecords.slice(0, 10),
+      errors
+    });
+  }
+
+  // Supabase PostgreSQL Upsert
+  if (supabase && validRecords.length > 0) {
+    try {
+      const dbBatch = validRecords.map(rec => {
+        const parts = rec.name.split(" ");
+        const firstName = parts[0] || "Staff";
+        const lastName = parts.slice(1).join(" ") || "";
+        return {
+          organization_id: orgId,
+          employee_code: rec.empId,
+          first_name: firstName,
+          last_name: lastName,
+          gender: rec.gender || null,
+          email: rec.email,
+          phone: rec.phone,
+          designation: rec.designation,
+          department: rec.department,
+          employment_type: rec.staffType || "full_time",
+          is_active: true
+        };
+      });
+
+      await supabase.from("staff").upsert(dbBatch, { onConflict: "organization_id, employee_code" });
+    } catch (dbEx) {
+      console.warn("[Bulk Import Staff DB] Exception during staff persistence:", dbEx.message);
+    }
+  }
+
+  validRecords.forEach(rec => ERP_STAFF.unshift(rec));
+  await recordAuditLog("erp.staff_imported", req.user?.email || "admin", "staff_batch", `${validRecords.length}_records`, req);
+
+  res.json({
+    success: true,
+    message: `Successfully imported ${validRecords.length} staff records (${errors.length} failed/skipped)`,
+    importedCount: validRecords.length,
+    failedCount: errors.length,
+    errors
+  });
+};
+
 app.post("/api/erp/students/import", handleStudentBulkImport);
 app.post("/api/erp/students/bulk-import", handleStudentBulkImport);
+app.post("/api/erp/staff/import", handleStaffBulkImport);
+app.post("/api/erp/staff/bulk-import", handleStaffBulkImport);
 
 // 2. Staff & Faculty Endpoints (Production SaaS Grade)
 // GET /api/erp/staff - Multi-field search, filters, sorting, server-side pagination & live KPI summary
@@ -40558,23 +40684,31 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
       }
 
       case 7: { // Staff
-        if (Array.isArray(payload.staff) && payload.staff.length > 0) {
-          payload.staff.forEach(st => {
-            if (st.name && st.email) {
-              const empId = st.empId || `EMP-${Date.now().toString().slice(-4)}`;
-              const exists = ERP_STAFF.find(s => (s.organization_id === orgId) && s.empId === empId);
+        const staffArr = Array.isArray(payload.staff) ? payload.staff : (payload.name || payload.staffName ? [payload] : []);
+        if (staffArr.length > 0) {
+          onboarding.draft_data = {
+            ...onboarding.draft_data,
+            staff: staffArr
+          };
+
+          staffArr.forEach(st => {
+            const rawName = (st.name || st.staffName || "").trim();
+            const rawEmail = (st.email || "").trim().toLowerCase();
+            if (rawName) {
+              const empId = st.empId || st.employeeId || `EMP-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 100)}`;
+              const exists = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.empId === empId || (rawEmail && s.email === rawEmail)));
               if (!exists) {
                 ERP_STAFF.push({
                   id: `stf-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                   organization_id: orgId,
                   empId,
-                  name: st.name.trim(),
-                  email: st.email.trim().toLowerCase(),
-                  phone: st.phone || "+91 98000 00000",
+                  name: rawName,
+                  email: rawEmail || `${empId.toLowerCase()}@school.edu.in`,
+                  phone: st.phone || st.mobileNo || "+91 98000 00000",
                   role: st.role || "teacher",
                   staffType: st.staffType || "teaching",
                   department: st.department || "Academic Faculty",
-                  designation: st.designation || "Faculty",
+                  designation: st.designation || st.role || "Faculty",
                   status: "active",
                   joiningDate: st.joiningDate || new Date().toISOString().split('T')[0]
                 });
@@ -40584,10 +40718,12 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
 
           if (supabase) {
             try {
-              for (const st of payload.staff) {
-                if (st.name && st.email) {
-                  const empCode = st.empId || `EMP-${Date.now().toString().slice(-4)}`;
-                  const parts = st.name.trim().split(" ");
+              for (const st of staffArr) {
+                const rawName = (st.name || st.staffName || "").trim();
+                const rawEmail = (st.email || "").trim().toLowerCase();
+                if (rawName) {
+                  const empCode = st.empId || st.employeeId || `EMP-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 100)}`;
+                  const parts = rawName.split(" ");
                   const firstName = parts[0] || "Staff";
                   const lastName = parts.slice(1).join(" ") || "";
                   await supabase.from("staff").upsert([{
@@ -40595,8 +40731,8 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
                     employee_code: empCode,
                     first_name: firstName,
                     last_name: lastName,
-                    email: st.email.trim().toLowerCase(),
-                    phone: st.phone || "+91 98000 00000",
+                    email: rawEmail || `${empCode.toLowerCase()}@school.edu.in`,
+                    phone: st.phone || st.mobileNo || "+91 98000 00000",
                     designation: st.designation || st.role || "Faculty",
                     department: st.department || "Academic Faculty",
                     employment_type: st.staffType || "full_time",
@@ -40613,24 +40749,33 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
       }
 
       case 8: { // Students
-        if (Array.isArray(payload.students) && payload.students.length > 0) {
-          payload.students.forEach(std => {
-            if (std.name && std.grade) {
-              const rollNo = std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`;
-              const exists = ERP_STUDENTS.find(s => (s.organization_id === orgId) && s.rollNo === rollNo);
+        const studentsArr = Array.isArray(payload.students) ? payload.students : (payload.name || payload.studentName ? [payload] : []);
+        if (studentsArr.length > 0) {
+          onboarding.draft_data = {
+            ...onboarding.draft_data,
+            students: studentsArr
+          };
+
+          studentsArr.forEach((std, idx) => {
+            const rawName = (std.name || std.studentName || "").trim();
+            const grade = std.grade || "Class 1";
+            if (rawName) {
+              const rollNo = (std.rollNo || std.admissionNo || `ADM-${Date.now().toString().slice(-4)}-${idx + 1}`).toString().trim();
+              const exists = ERP_STUDENTS.find(s => (s.organization_id === orgId) && (s.rollNo === rollNo || s.admission_no === rollNo));
               if (!exists) {
                 ERP_STUDENTS.push({
                   id: `std-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                   organization_id: orgId,
                   rollNo,
-                  name: std.name.trim(),
-                  grade: std.grade,
-                  section: std.section || "A",
+                  admission_no: rollNo,
+                  name: rawName,
+                  grade: grade,
+                  section: (std.section || "A").toString().trim().toUpperCase(),
                   gender: std.gender || "Not specified",
                   dob: std.dob || "2012-01-01",
                   parentName: std.parentName || "Parent/Guardian",
-                  parentPhone: std.parentPhone || "+91 98000 00000",
-                  parentEmail: std.parentEmail || "parent@example.com",
+                  parentPhone: std.parentPhone || std.phone || "+91 98000 00000",
+                  parentEmail: std.parentEmail || std.email || "parent@example.com",
                   status: "active",
                   attendancePercent: 100,
                   duesINR: std.duesINR || 0
@@ -40641,10 +40786,13 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
 
           if (supabase) {
             try {
-              for (const std of payload.students) {
-                if (std.name && std.grade) {
-                  const rollNo = std.rollNo || `DPS-2026-${Math.floor(100 + Math.random() * 900)}`;
-                  const parts = std.name.trim().split(" ");
+              for (let i = 0; i < studentsArr.length; i++) {
+                const std = studentsArr[i];
+                const rawName = (std.name || std.studentName || "").trim();
+                const grade = std.grade || "Class 1";
+                if (rawName) {
+                  const rollNo = (std.rollNo || std.admissionNo || `ADM-${Date.now().toString().slice(-4)}-${i + 1}`).toString().trim();
+                  const parts = rawName.split(" ");
                   const firstName = parts[0] || "Student";
                   const lastName = parts.slice(1).join(" ") || "";
                   await supabase.from("students").upsert([{
@@ -40653,8 +40801,8 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
                     first_name: firstName,
                     last_name: lastName,
                     gender: std.gender || "other",
-                    phone: std.parentPhone || "+91 98000 00000",
-                    email: std.parentEmail || "parent@example.com",
+                    phone: std.parentPhone || std.phone || "+91 98000 00000",
+                    email: std.parentEmail || std.email || "parent@example.com",
                     admission_status: "admitted"
                   }], { onConflict: "organization_id, admission_no" });
                 }

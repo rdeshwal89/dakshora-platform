@@ -603,6 +603,29 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
       contactPhone: phone,
       principalName
     }));
+
+    if (draftData?.classes && Array.isArray(draftData.classes) && draftData.classes.length > 0) {
+      setClassesList(draftData.classes);
+    }
+    if (draftData?.subjects && Array.isArray(draftData.subjects) && draftData.subjects.length > 0) {
+      setSubjectsList(draftData.subjects);
+    }
+    if (draftData?.streamCombinations && Array.isArray(draftData.streamCombinations)) {
+      setStreamCombinations(draftData.streamCombinations);
+    }
+    if (draftData?.staff && Array.isArray(draftData.staff) && draftData.staff.length > 0) {
+      setStaffList(draftData.staff);
+    } else if (targetOrg?.id && targetOrg.id !== 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e') {
+      setStaffList([]);
+    }
+    if (draftData?.students && Array.isArray(draftData.students) && draftData.students.length > 0) {
+      setStudentsList(draftData.students);
+    } else if (targetOrg?.id && targetOrg.id !== 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e') {
+      setStudentsList([]);
+    }
+    if (draftData?.feeStructures && Array.isArray(draftData.feeStructures) && draftData.feeStructures.length > 0) {
+      setFeeStructures(draftData.feeStructures);
+    }
   };
 
   useEffect(() => {
@@ -677,6 +700,7 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
     setActiveOrgId(newOrgId);
     try {
       localStorage.setItem('dakshora_onboarding_org_id', newOrgId);
+      localStorage.setItem('dakshora_active_org_id', newOrgId);
     } catch {}
 
     const selected = availableOrgs.find(o => o.id === newOrgId);
@@ -685,6 +709,8 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
       try {
         localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify(selected));
         localStorage.setItem('dakshora_school_brand', JSON.stringify({
+          id: selected.id,
+          organization_id: selected.id,
           schoolName: selected.name,
           shortName: (selected.name || '').split(' ')[0] || 'DAKSHORA',
           board: (selected as any).board || 'CBSE',
@@ -778,32 +804,49 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
             capacity: Number(r.Capacity || r.capacity || 40),
             classTeacher: r.ClassTeacher || r.classTeacher || ''
           }));
-          setClassesList(prev => [...prev, ...parsed]);
-          onShowToast('success', 'Classes Imported! 🏫', `Successfully added ${parsed.length} classrooms from spreadsheet.`);
+          setClassesList(parsed);
+          onShowToast('success', 'Classes Imported! 🏫', `Successfully loaded ${parsed.length} classrooms from spreadsheet.`);
         } else if (target === 'staff') {
-          const parsed: StaffItem[] = rows.map((r, i) => ({
-            staffName: r.staffName || r.name || r['Staff Name'] || `Staff Member ${i + 1}`,
-            email: r.email || r['Email Address'] || `staff${i + 1}@school.edu.in`,
-            mobileNo: r.mobileNo || r.phone || r['Mobile'] || '',
-            empId: r.empId || r.employeeId || r['EMP ID'] || `EMP-${i + 101}`,
-            role: r.role || r['Role'] || 'Teacher',
-            department: r.department || r['Department'] || 'Academic Faculty',
-            designation: r.designation || r['Designation'] || 'Faculty'
-          }));
-          setStaffList(prev => [...prev, ...parsed]);
+          const parsed: StaffItem[] = rows.map((r, i) => {
+            const staffName = r.staffName || r.name || r['Staff Name'] || r['Name'] || `Staff Member ${i + 1}`;
+            const email = r.email || r['Email Address'] || r['Email'] || `staff${i + 1}@school.edu.in`;
+            const mobileNo = (r.mobileNo || r.phone || r['Mobile'] || r['Phone'] || '').toString().trim();
+            const empId = (r.empId || r.employeeId || r['EMP ID'] || r['Employee ID'] || `EMP-${i + 101}`).toString().trim();
+            return {
+              staffName,
+              name: staffName,
+              email,
+              mobileNo,
+              phone: mobileNo,
+              empId,
+              employeeId: empId,
+              role: r.role || r['Role'] || 'Teacher',
+              department: r.department || r['Department'] || 'Academic Faculty',
+              designation: r.designation || r['Designation'] || 'Faculty'
+            };
+          });
+          setStaffList(parsed);
           onShowToast('success', 'Staff Uploaded! 👨‍🏫', `Imported ${parsed.length} faculty and staff members.`);
         } else if (target === 'students') {
-          const parsed: StudentItem[] = rows.map((r, i) => ({
-            studentName: r.studentName || r.name || r['Student Name'] || `Student ${i + 1}`,
-            grade: r.grade || r['Class'] || r['Grade'] || 'Class 10',
-            section: (r.section || r['Section'] || 'A').toString().trim().toUpperCase(),
-            rollNo: (r.rollNo || r['Roll No'] || `${101 + i}`).toString(),
-            admissionNo: (r.admissionNo || r['Admission No'] || `ADM-2026-${i + 101}`).toString(),
-            parentName: r.parentName || r['Parent Name'] || 'Guardian',
-            parentPhone: (r.parentPhone || r['Parent Phone'] || '').toString(),
-            parentEmail: r.parentEmail || r['Parent Email'] || ''
-          }));
-          setStudentsList(prev => [...prev, ...parsed]);
+          const parsed: StudentItem[] = rows.map((r, i) => {
+            const studentName = r.studentName || r.name || r['Student Name'] || r['Name'] || `Student ${i + 1}`;
+            const rollNo = (r.rollNo || r['Roll No'] || `${101 + i}`).toString().trim();
+            const admissionNo = (r.admissionNo || r['Admission No'] || `ADM-2026-${i + 101}`).toString().trim();
+            const parentPhone = (r.parentPhone || r.phone || r['Parent Phone'] || r['Mobile'] || '').toString().trim();
+            return {
+              studentName,
+              name: studentName,
+              grade: r.grade || r['Class'] || r['Grade'] || 'Class 10',
+              section: (r.section || r['Section'] || 'A').toString().trim().toUpperCase(),
+              rollNo,
+              admissionNo,
+              parentName: r.parentName || r['Parent Name'] || r['Father Name'] || 'Guardian',
+              parentPhone,
+              phone: parentPhone,
+              parentEmail: r.parentEmail || r.email || r['Parent Email'] || ''
+            };
+          });
+          setStudentsList(parsed);
           onShowToast('success', 'Students Roster Imported! 🎓', `Loaded ${parsed.length} enrolled students from spreadsheet.`);
         } else if (target === 'subjects') {
           const parsed: SubjectItem[] = rows.map((r, i) => ({
@@ -816,7 +859,7 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
             isCompulsory: String(r.IsCompulsory || r.isCompulsory || 'Yes').toLowerCase() === 'yes',
             board: selectedBoard
           }));
-          setSubjectsList(prev => [...prev, ...parsed]);
+          setSubjectsList(parsed);
           onShowToast('success', 'Subjects Catalog Updated! 📚', `Added ${parsed.length} subjects from spreadsheet.`);
         }
       } catch (err: any) {

@@ -223,11 +223,16 @@ export async function makeApiCall<T = any>(
   }
   if (typeof window !== 'undefined') {
     try {
-      const uStr = localStorage.getItem('dakshora_superadmin_user');
-      if (uStr) {
-        const u = JSON.parse(uStr);
-        const org = u?.organizationId || u?.organization_id;
-        if (org) authHeaders['x-organization-id'] = org;
+      const activeOrg = localStorage.getItem('dakshora_active_org_id') || localStorage.getItem('dakshora_onboarding_org_id');
+      if (activeOrg) {
+        authHeaders['x-organization-id'] = activeOrg;
+      } else {
+        const uStr = localStorage.getItem('dakshora_superadmin_user');
+        if (uStr) {
+          const u = JSON.parse(uStr);
+          const org = u?.organizationId || u?.organization_id;
+          if (org) authHeaders['x-organization-id'] = org;
+        }
       }
     } catch {}
   }
@@ -985,10 +990,11 @@ export async function deleteErpStudent(id: string, hard = false) {
   });
 }
 
-export async function importErpStudents(students: any[], dryRun = false) {
+export async function importErpStudents(students: any[], dryRun = false, organizationId?: string) {
+  const org = organizationId || (typeof window !== 'undefined' ? (localStorage.getItem('dakshora_active_org_id') || localStorage.getItem('dakshora_onboarding_org_id') || undefined) : undefined);
   return makeApiCall<StudentImportResult>('/api/erp/students/import', {
     method: 'POST',
-    body: JSON.stringify({ students, dryRun }),
+    body: JSON.stringify({ students, dryRun, organization_id: org }),
   });
 }
 
@@ -1155,10 +1161,11 @@ export async function deleteTeacherAssignment(staffId: string, assignmentId: str
   });
 }
 
-export async function importErpStaff(staff: any[], dryRun = false) {
+export async function importErpStaff(staff: any[], dryRun = false, organizationId?: string) {
+  const org = organizationId || (typeof window !== 'undefined' ? (localStorage.getItem('dakshora_active_org_id') || localStorage.getItem('dakshora_onboarding_org_id') || undefined) : undefined);
   return makeApiCall<StaffImportResult>('/api/erp/staff/import', {
     method: 'POST',
-    body: JSON.stringify({ staff, dryRun }),
+    body: JSON.stringify({ staff, dryRun, organization_id: org }),
   });
 }
 

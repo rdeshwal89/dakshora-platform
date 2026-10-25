@@ -492,6 +492,7 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
     try {
       localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
       localStorage.setItem('dakshora_onboarding_org_id', org.id);
+      localStorage.setItem('dakshora_active_org_id', org.id);
       localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify({ ...org, ...brand }));
     } catch {}
     if (onLaunchOnboarding) {
@@ -563,6 +564,7 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
         try {
           localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
           localStorage.setItem('dakshora_onboarding_org_id', createdOrg?.id || '');
+          localStorage.setItem('dakshora_active_org_id', createdOrg?.id || '');
           localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify({ ...createdOrg, ...brand }));
         } catch {}
 

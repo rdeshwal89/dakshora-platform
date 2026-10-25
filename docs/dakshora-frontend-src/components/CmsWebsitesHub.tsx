@@ -246,7 +246,7 @@ export const DEFAULT_CAMPUS_SLIDES = [
 export const CmsWebsitesHub: React.FC<CmsWebsitesHubProps> = ({ onShowToast }) => {
   const [websites, setWebsites] = useState<WebsiteRecord[]>([]);
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>('site-1');
+  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [cmsTree, setCmsTree] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -361,11 +361,15 @@ export const CmsWebsitesHub: React.FC<CmsWebsitesHubProps> = ({ onShowToast }) =
     setLoading(true);
     try {
       const [sitesRes, tplRes] = await Promise.all([fetchWebsites(), fetchTemplates()]);
-      if (sitesRes.data.websites) {
+      if (sitesRes.data.websites && sitesRes.data.websites.length > 0) {
         setWebsites(sitesRes.data.websites);
-        if (sitesRes.data.websites.length > 0 && !selectedSiteId) {
-          setSelectedSiteId(sitesRes.data.websites[0].id);
+        const activeOrgId = localStorage.getItem('dakshora_active_org_id') || localStorage.getItem('dakshora_onboarding_org_id');
+        let matched = null;
+        if (activeOrgId) {
+          matched = sitesRes.data.websites.find((w: any) => w.organization_id === activeOrgId);
         }
+        const siteToSelect = matched?.id || sitesRes.data.websites[0].id;
+        setSelectedSiteId(siteToSelect);
       }
       if (tplRes.data.templates) setTemplates(tplRes.data.templates);
     } catch {

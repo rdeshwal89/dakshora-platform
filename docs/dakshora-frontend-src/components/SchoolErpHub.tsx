@@ -643,7 +643,18 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
   }, []);
 
   // Step 4: Dynamic School Brand Morphing & 2026–27 Session
-  const effectiveOrgId = currentUser?.organization_id || currentUser?.organizationId || currentUser?.org_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  const effectiveOrgId = (() => {
+    try {
+      const activeOrg = localStorage.getItem('dakshora_active_org_id') || localStorage.getItem('dakshora_onboarding_org_id');
+      if (activeOrg) return activeOrg;
+      const savedBrand = localStorage.getItem('dakshora_school_brand');
+      if (savedBrand) {
+        const b = JSON.parse(savedBrand);
+        if (b.organization_id || b.organizationId || b.id) return b.organization_id || b.organizationId || b.id;
+      }
+    } catch {}
+    return currentUser?.organization_id || currentUser?.organizationId || currentUser?.org_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+  })();
   const [activeSession, setActiveSession] = useState<string>('2026-27');
   const [schoolBrand, setSchoolBrand] = useState<SchoolBrandProfile>(() => {
     try {
@@ -827,8 +838,8 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
           fetchErpCommunication(),
           fetchErpSettings(effectiveOrgId)
         ]);
-        if (stRes.data?.students && stRes.data.students.length > 0) setStudents(stRes.data.students as any);
-        if (sfRes.data?.staff && sfRes.data.staff.length > 0) setStaff(sfRes.data.staff as any);
+        if (stRes.data?.students) setStudents(stRes.data.students as any);
+        if (sfRes.data?.staff) setStaff(sfRes.data.staff as any);
         if (feeRes.data?.invoices && feeRes.data.invoices.length > 0) setFees(feeRes.data.invoices as any);
         if (notRes.data?.notices && notRes.data.notices.length > 0) setNotices(notRes.data.notices as any);
         if (setRes.data?.settings) {
