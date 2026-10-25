@@ -1010,7 +1010,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
         });
       }
 
-      const res = await importErpStaff(parsedRows, false);
+      const res = await importErpStaff(parsedRows, false, organizationId);
       if (res.data) {
         onShowToast('success', 'Import Completed', `Successfully enrolled ${res.data.importedCount || 0} faculty members into ERP!`);
         setImportCsvText('');
@@ -2540,16 +2540,16 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
           subtitle="Ingest teachers, administrators, and non-teaching personnel via Excel (.xlsx, .xls) or CSV with automatic employee ID duplicate detection & institutional role assignment."
           sampleFileName="Dakshora_Staff_Faculty_Roster_Template"
           fields={[
-            { key: 'employeeId', label: 'Employee ID', aliases: ['employee_id', 'empid', 'emp_code', 'employeecode', 'code'], required: false, example: 'DPS-FAC-201' },
-            { key: 'name', label: 'Faculty Full Name', aliases: ['name', 'full_name', 'fullname', 'faculty_name', 'staff_name'], required: true, example: 'Dr. Rajiv Malhotra' },
-            { key: 'email', label: 'Institutional Email', aliases: ['email', 'email_address', 'mail'], required: true, example: 'rajiv.malhotra@dpsheritage.edu.in' },
-            { key: 'mobile', label: 'Mobile Number', aliases: ['mobile', 'phone', 'contact', 'cell'], required: true, example: '+91 98765 00111' },
+            { key: 'employeeId', label: 'Employee ID', aliases: ['employee_id', 'empid', 'emp_code', 'employeecode', 'code', 'emp_id', 'employee_code', 'staff_id', 'staffid', 'faculty_id', 'facultyid', 'id'], required: false, example: 'FAC-2026-201' },
+            { key: 'name', label: 'Faculty Full Name', aliases: ['name', 'full_name', 'fullname', 'faculty_name', 'staff_name', 'teacher_name', 'teachername', 'staffname', 'facultyname', 'employee_name', 'employeename', 'teacher'], required: true, example: 'Dr. Rajiv Malhotra' },
+            { key: 'email', label: 'Institutional Email', aliases: ['email', 'email_address', 'mail', 'emailid', 'official_email'], required: false, example: 'rajiv.malhotra@school.edu.in' },
+            { key: 'mobile', label: 'Mobile Number', aliases: ['mobile', 'phone', 'contact', 'cell', 'mobileno', 'contactno', 'phonenumber', 'mobilenumber', 'whatsapp'], required: false, example: '+91 98765 00111' },
             { key: 'role', label: 'System Role', aliases: ['role', 'user_role', 'access_level'], example: 'teacher' },
-            { key: 'department', label: 'Academic Department', aliases: ['department', 'dept'], example: 'Mathematics' },
-            { key: 'designation', label: 'Designation / Post', aliases: ['designation', 'post', 'title'], example: 'Senior PGT Faculty' },
-            { key: 'subjectSpecialization', label: 'Subject Specialization', aliases: ['subject', 'subjects', 'subject_specialization', 'specialization'], example: 'Advanced Mathematics, Calculus' },
+            { key: 'department', label: 'Academic Department', aliases: ['department', 'dept', 'stream', 'faculty_department'], example: 'Mathematics' },
+            { key: 'designation', label: 'Designation / Post', aliases: ['designation', 'post', 'title', 'role', 'position', 'job_title'], example: 'Senior PGT Faculty' },
+            { key: 'subjectSpecialization', label: 'Subject Specialization', aliases: ['subject', 'subjects', 'subject_specialization', 'specialization', 'teaching_subject'], example: 'Advanced Mathematics, Calculus' },
             { key: 'gender', label: 'Gender', aliases: ['gender', 'sex'], example: 'Male' },
-            { key: 'qualification', label: 'Highest Qualification', aliases: ['qualification', 'degree'], example: 'Ph.D in Mathematics, B.Ed' },
+            { key: 'qualification', label: 'Highest Qualification', aliases: ['qualification', 'degree'], example: 'M.Sc, B.Ed' },
             { key: 'experienceYears', label: 'Experience (Years)', aliases: ['experience', 'experience_years'], example: '12' },
             { key: 'salaryINR', label: 'Basic Salary (INR)', aliases: ['salary', 'salary_inr', 'pay'], example: '75000' }
           ]}
@@ -2573,7 +2573,7 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
               salaryINR: Number(r.salaryINR) || 45000,
               status: 'active'
             }));
-            const res = await importErpStaff(mapped, false);
+            const res = await importErpStaff(mapped, false, organizationId);
             if (res.data?.success) {
               loadStaff(true);
               return { success: true, importedCount: res.data.importedCount || validList.length };

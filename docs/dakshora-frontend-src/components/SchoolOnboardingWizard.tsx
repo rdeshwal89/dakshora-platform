@@ -796,22 +796,46 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
           return;
         }
 
+        const getRowVal = (r: any, ...keys: string[]): string => {
+          for (const k of keys) {
+            if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '') {
+              return String(r[k]).trim();
+            }
+          }
+          const rKeys = Object.keys(r);
+          for (const k of keys) {
+            const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+            for (const rk of rKeys) {
+              const cleanRk = rk.toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (cleanRk === cleanK) {
+                if (r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== '') {
+                  return String(r[rk]).trim();
+                }
+              }
+            }
+          }
+          return '';
+        };
+
         if (target === 'classes') {
           const parsed: ClassroomItem[] = rows.map((r, i) => ({
-            grade: r.Grade || r.grade || r['Class'] || `Class ${i + 1}`,
-            section: (r.Section || r.section || 'A').toString().trim().toUpperCase(),
-            roomNumber: r.RoomNumber || r.roomNumber || r['Room'] || `Room ${101 + i}`,
-            capacity: Number(r.Capacity || r.capacity || 40),
-            classTeacher: r.ClassTeacher || r.classTeacher || ''
+            grade: getRowVal(r, 'grade', 'class', 'standard', 'Grade', 'Class') || `Class ${i + 1}`,
+            section: (getRowVal(r, 'section', 'sec', 'Section', 'Sec') || 'A').toUpperCase(),
+            roomNumber: getRowVal(r, 'roomNumber', 'room', 'RoomNumber', 'Room') || `Room ${101 + i}`,
+            capacity: Number(getRowVal(r, 'capacity', 'Capacity') || 40),
+            classTeacher: getRowVal(r, 'classTeacher', 'teacher', 'ClassTeacher') || ''
           }));
           setClassesList(parsed);
           onShowToast('success', 'Classes Imported! 🏫', `Successfully loaded ${parsed.length} classrooms from spreadsheet.`);
         } else if (target === 'staff') {
           const parsed: StaffItem[] = rows.map((r, i) => {
-            const staffName = r.staffName || r.name || r['Staff Name'] || r['Name'] || `Staff Member ${i + 1}`;
-            const email = r.email || r['Email Address'] || r['Email'] || `staff${i + 1}@school.edu.in`;
-            const mobileNo = (r.mobileNo || r.phone || r['Mobile'] || r['Phone'] || '').toString().trim();
-            const empId = (r.empId || r.employeeId || r['EMP ID'] || r['Employee ID'] || `EMP-${i + 101}`).toString().trim();
+            const staffName = getRowVal(r, 'staffName', 'name', 'staff_name', 'faculty_name', 'teacher_name', 'teacher', 'employee_name', 'Staff Name', 'Faculty Name', 'Teacher Name', 'Name') || `Staff Member ${i + 1}`;
+            const email = getRowVal(r, 'email', 'email_address', 'mail', 'Email', 'Email Address', 'Official Email') || `${staffName.toLowerCase().replace(/[^a-z0-9]/g, '')}${i + 101}@school.edu.in`;
+            const mobileNo = getRowVal(r, 'mobileNo', 'phone', 'mobile', 'contact', 'Mobile', 'Phone', 'Mobile No', 'Contact No', 'Phone Number', 'WhatsApp') || '';
+            const empId = getRowVal(r, 'empId', 'employeeId', 'emp_code', 'employee_code', 'code', 'EMP ID', 'Employee ID', 'Emp Code', 'Code') || `EMP-${i + 101}`;
+            const role = getRowVal(r, 'role', 'Role', 'user_role') || 'Teacher';
+            const department = getRowVal(r, 'department', 'Department', 'dept') || 'Academic Faculty';
+            const designation = getRowVal(r, 'designation', 'Designation', 'post', 'title') || 'Faculty';
             return {
               staffName,
               name: staffName,
@@ -820,30 +844,34 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
               phone: mobileNo,
               empId,
               employeeId: empId,
-              role: r.role || r['Role'] || 'Teacher',
-              department: r.department || r['Department'] || 'Academic Faculty',
-              designation: r.designation || r['Designation'] || 'Faculty'
+              role,
+              department,
+              designation
             };
           });
           setStaffList(parsed);
           onShowToast('success', 'Staff Uploaded! 👨‍🏫', `Imported ${parsed.length} faculty and staff members.`);
         } else if (target === 'students') {
           const parsed: StudentItem[] = rows.map((r, i) => {
-            const studentName = r.studentName || r.name || r['Student Name'] || r['Name'] || `Student ${i + 1}`;
-            const rollNo = (r.rollNo || r['Roll No'] || `${101 + i}`).toString().trim();
-            const admissionNo = (r.admissionNo || r['Admission No'] || `ADM-2026-${i + 101}`).toString().trim();
-            const parentPhone = (r.parentPhone || r.phone || r['Parent Phone'] || r['Mobile'] || '').toString().trim();
+            const studentName = getRowVal(r, 'studentName', 'name', 'student_name', 'fullname', 'full_name', 'Student Name', 'Full Name', 'Name', 'Student', 'Candidate Name', 'Pupil Name') || `Student ${i + 1}`;
+            const grade = getRowVal(r, 'grade', 'class', 'standard', 'std', 'Grade', 'Class', 'Standard') || 'Class 10';
+            const section = (getRowVal(r, 'section', 'sec', 'division', 'Section', 'Sec') || 'A').toUpperCase();
+            const rollNo = getRowVal(r, 'rollNo', 'roll_no', 'roll', 'Roll No', 'Roll Number', 'Roll') || `${101 + i}`;
+            const admissionNo = getRowVal(r, 'admissionNo', 'admission_no', 'adm_no', 'admno', 'Admission No', 'Adm No', 'Admission Number', 'SR No', 'Reg No') || `ADM-2026-${i + 101}`;
+            const parentName = getRowVal(r, 'parentName', 'father_name', 'parent_name', 'guardian_name', 'Parent Name', 'Father Name', 'Father\'s Name', 'Guardian') || 'Guardian';
+            const parentPhone = getRowVal(r, 'parentPhone', 'phone', 'mobile', 'contact', 'Parent Phone', 'Mobile', 'Mobile No', 'Phone', 'Contact No', 'WhatsApp') || '';
+            const parentEmail = getRowVal(r, 'parentEmail', 'email', 'Parent Email', 'Email') || '';
             return {
               studentName,
               name: studentName,
-              grade: r.grade || r['Class'] || r['Grade'] || 'Class 10',
-              section: (r.section || r['Section'] || 'A').toString().trim().toUpperCase(),
+              grade,
+              section,
               rollNo,
               admissionNo,
-              parentName: r.parentName || r['Parent Name'] || r['Father Name'] || 'Guardian',
+              parentName,
               parentPhone,
               phone: parentPhone,
-              parentEmail: r.parentEmail || r.email || r['Parent Email'] || ''
+              parentEmail
             };
           });
           setStudentsList(parsed);
@@ -1042,7 +1070,8 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
         case 16: payload = { ready: true, activated: true }; break;
       }
 
-      const res = await saveOnboardingStep(stepNum, payload, organizationId);
+      const targetOrg = activeOrgId || organizationId;
+      const res = await saveOnboardingStep(stepNum, payload, targetOrg);
       if (res.data?.success) {
         onShowToast('success', `Step ${stepNum} Saved Successfully ✅`, 'Institutional configuration saved securely.');
         setOnboarding(res.data.onboarding);
@@ -1063,6 +1092,7 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
   const handleSaveDraft = async () => {
     setSaving(true);
     try {
+      const targetOrg = activeOrgId || organizationId;
       const res = await saveOnboardingDraft(currentStep, {
         orgForm,
         profileForm,
@@ -1072,7 +1102,7 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
         subjectsCount: subjectsList.length,
         staffCount: staffList.length,
         studentsCount: studentsList.length
-      }, organizationId);
+      }, targetOrg);
       if (res.data?.success) {
         onShowToast('success', 'Draft Saved Safely 💾', 'All setup progress preserved in database.');
       }
@@ -1086,7 +1116,8 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
   const handleActivate = async () => {
     setSaving(true);
     try {
-      const res = await activateSchoolErp(organizationId);
+      const targetOrg = activeOrgId || organizationId;
+      const res = await activateSchoolErp(targetOrg);
       if (res.data?.success) {
         setIsActivated(true);
         setOnboarding(res.data.onboarding);

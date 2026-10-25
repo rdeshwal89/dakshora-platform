@@ -729,8 +729,12 @@ export const SchoolErpHub: React.FC<SchoolErpHubProps> = ({ currentUser, onShowT
   });
 
   // Local state initialized with rich defaults and synced with Fastify API
-  const [students, setStudents] = useState<ErpStudentRecord[]>(DEFAULT_STUDENTS);
-  const [staff, setStaff] = useState<ErpStaffRecord[]>(DEFAULT_STAFF);
+  const [students, setStudents] = useState<ErpStudentRecord[]>(() => {
+    return effectiveOrgId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' ? DEFAULT_STUDENTS : [];
+  });
+  const [staff, setStaff] = useState<ErpStaffRecord[]>(() => {
+    return effectiveOrgId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e' ? DEFAULT_STAFF : [];
+  });
   const [classes] = useState<ErpClassRecord[]>(DEFAULT_CLASSES);
   const [exams, setExams] = useState<ErpExamRecord[]>(DEFAULT_EXAMS);
   const [fees, setFees] = useState<ErpFeeInvoiceRecord[]>(DEFAULT_FEES);

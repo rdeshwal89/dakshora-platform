@@ -180,14 +180,14 @@ export const BulkImportConsole: React.FC<BulkImportConsoleProps> = ({
           }
 
           // Admission Number
-          const admNo = rowObj.admissionNo || `DPS-ADM-IMP-${1000 + rIdx}`;
+          const admNo = rowObj.admissionNo || `ADM-2026-${1000 + rIdx}`;
           rowObj.admissionNo = admNo;
           const admLower = admNo.toLowerCase();
 
-          if (seenBatchKeys.has(`adm:${admLower}`) || existingUniqueKeys.admissionNos?.has(admLower)) {
+          if (seenBatchKeys.has(`adm:${admLower}`)) {
             rowObj._hasError = true;
-            rowObj._errors.push(`Duplicate Admission No: ${admNo}`);
-            errorsList.push({ row: rowNum, field: 'admissionNo', error: `Duplicate Admission No '${admNo}'`, data: rowObj });
+            rowObj._errors.push(`Duplicate Admission No in sheet: ${admNo}`);
+            errorsList.push({ row: rowNum, field: 'admissionNo', error: `Duplicate Admission No '${admNo}' in uploaded sheet`, data: rowObj });
             duplicatesFound++;
           } else {
             seenBatchKeys.add(`adm:${admLower}`);
@@ -207,9 +207,7 @@ export const BulkImportConsole: React.FC<BulkImportConsoleProps> = ({
 
           // Parent Email validation
           if (rowObj.parentEmail && !rowObj.parentEmail.includes('@')) {
-            rowObj._hasError = true;
-            rowObj._errors.push('Invalid Parent Email format');
-            errorsList.push({ row: rowNum, field: 'parentEmail', error: 'Invalid email format', data: rowObj });
+            rowObj.parentEmail = '';
           }
         } else {
           // Staff validation
@@ -219,20 +217,20 @@ export const BulkImportConsole: React.FC<BulkImportConsoleProps> = ({
             errorsList.push({ row: rowNum, field: 'name', error: 'Faculty Name is required', data: rowObj });
           }
 
-          if (!rowObj.email || !rowObj.email.includes('@')) {
-            rowObj._hasError = true;
-            rowObj._errors.push('Valid Email is required');
-            errorsList.push({ row: rowNum, field: 'email', error: 'Valid faculty email is required', data: rowObj });
-          }
-
-          const empId = rowObj.employeeId || rowObj.empId || `FAC-IMP-${1000 + rIdx}`;
+          const empId = rowObj.employeeId || rowObj.empId || `FAC-2026-${1000 + rIdx}`;
           rowObj.employeeId = empId;
           const empLower = empId.toLowerCase();
 
-          if (seenBatchKeys.has(`emp:${empLower}`) || existingUniqueKeys.employeeIds?.has(empLower)) {
+          if (!rowObj.email || !rowObj.email.includes('@')) {
+            const cleanStaffName = (rowObj.name || 'faculty').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const cleanEmp = empId.toLowerCase().replace(/[^a-z0-9]/g, '');
+            rowObj.email = `${cleanStaffName}.${cleanEmp}@school.edu.in`;
+          }
+
+          if (seenBatchKeys.has(`emp:${empLower}`)) {
             rowObj._hasError = true;
-            rowObj._errors.push(`Duplicate Employee Code: ${empId}`);
-            errorsList.push({ row: rowNum, field: 'employeeId', error: `Duplicate Employee Code '${empId}'`, data: rowObj });
+            rowObj._errors.push(`Duplicate Employee Code in sheet: ${empId}`);
+            errorsList.push({ row: rowNum, field: 'employeeId', error: `Duplicate Employee Code '${empId}' in uploaded sheet`, data: rowObj });
             duplicatesFound++;
           } else {
             seenBatchKeys.add(`emp:${empLower}`);

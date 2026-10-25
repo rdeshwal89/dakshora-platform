@@ -381,10 +381,10 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
 
   const isToday = selectedDate === new Date().toISOString().split('T')[0];
 
-  const enrolledCount = students.total || 1248;
-  const staffCount = staff.total || 64;
-  const studentAttRate = attendance.students.attendancePercent > 0 ? attendance.students.attendancePercent : 94.8;
-  const staffAttRate = attendance.staff.attendancePercent > 0 ? attendance.staff.attendancePercent : 98.4;
+  const enrolledCount = students.total;
+  const staffCount = staff.total;
+  const studentAttRate = attendance.students.attendancePercent || 0;
+  const staffAttRate = attendance.staff.attendancePercent || 0;
 
   // Strict Role Guard: LiveDashboardHub is strictly for Administration and Teaching Staff
   // Under NO circumstances should parents or students access aggregate school metrics or administrative action launchpads

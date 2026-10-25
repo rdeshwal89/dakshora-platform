@@ -516,7 +516,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
         bloodGroup: r['Blood Group'] || r['blood_group'] || 'B+'
       }));
 
-      const res = await importErpStudents(mapped, false);
+      const res = await importErpStudents(mapped, false, organizationId);
       if (res.data?.success) {
         onShowToast('success', 'Batch Import Completed! 🎉', `Imported ${res.data.importedCount} students successfully.`);
         setImportCsvText('');
@@ -1748,21 +1748,21 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
           subtitle="Ingest student roster records via Excel (.xlsx, .xls) or CSV with automated duplicate detection, PEN verification & row-level error reporting."
           sampleFileName="Dakshora_Student_Roster_Template"
           fields={[
-            { key: 'admissionNo', label: 'Admission Number', aliases: ['admission_no', 'adm_no', 'admno', 'admnumber', 'admissionnumber'], required: false, example: 'DPS-2026-301' },
-            { key: 'name', label: 'Student Full Name', aliases: ['student_name', 'fullname', 'studentname', 'name'], required: true, example: 'Aarav Patel' },
+            { key: 'admissionNo', label: 'Admission Number', aliases: ['admission_no', 'adm_no', 'admno', 'admnumber', 'admissionnumber', 'admission', 'reg_no', 'regno', 'registration_no', 'sr_no', 'srno', 'scholar_no', 'scholarno'], required: false, example: 'ADM-2026-301' },
+            { key: 'name', label: 'Student Full Name', aliases: ['student_name', 'fullname', 'studentname', 'name', 'student', 'studentsname', 'candidatename', 'pupilname', 'applicantname', 'nameofstudent', 'studentfullname'], required: true, example: 'Aarav Patel' },
             { key: 'penNo', label: 'PEN Number', aliases: ['pen_no', 'pen', 'pennumber'], example: '202606180101' },
-            { key: 'rollNo', label: 'Roll Number', aliases: ['roll_no', 'rollno', 'roll'], example: 'DPS-2026-301' },
-            { key: 'grade', label: 'Class / Grade', aliases: ['class', 'grade', 'standard'], required: true, example: 'Class 10' },
-            { key: 'section', label: 'Section', aliases: ['sec', 'section'], example: 'A' },
+            { key: 'rollNo', label: 'Roll Number', aliases: ['roll_no', 'rollno', 'roll'], example: '101' },
+            { key: 'grade', label: 'Class / Grade', aliases: ['class', 'grade', 'standard', 'std', 'current_class', 'classgrade', 'classname'], required: true, example: 'Class 10' },
+            { key: 'section', label: 'Section', aliases: ['sec', 'section', 'secname', 'division'], example: 'A' },
             { key: 'gender', label: 'Gender', aliases: ['sex', 'gender'], example: 'Male' },
-            { key: 'dob', label: 'Date of Birth', aliases: ['date_of_birth', 'birthdate', 'dob'], example: '2011-04-12' },
-            { key: 'parentName', label: 'Father / Guardian Name', aliases: ['father_name', 'fathername', 'parent_name', 'guardian_name'], example: 'Manoj Patel' },
+            { key: 'dob', label: 'Date of Birth', aliases: ['date_of_birth', 'birthdate', 'dob', 'dateofbirth', 'birth_date'], example: '2011-04-12' },
+            { key: 'parentName', label: 'Father / Guardian Name', aliases: ['father_name', 'fathername', 'parent_name', 'guardian_name', 'fathersname', 'parentname', 'guardianname', 'parent', 'father'], example: 'Manoj Patel' },
             { key: 'motherName', label: 'Mother Name', aliases: ['mother_name', 'mothername'], example: 'Sunita Patel' },
-            { key: 'parentPhone', label: 'Parent Mobile', aliases: ['parent_phone', 'mobile', 'phone', 'contact'], example: '+91 98765 43210' },
+            { key: 'parentPhone', label: 'Parent Mobile', aliases: ['parent_phone', 'mobile', 'phone', 'contact', 'mobileno', 'contactno', 'phonenumber', 'mobilenumber', 'parentmobile', 'parentcontact', 'father_mobile', 'fathermobile', 'whatsapp'], example: '+91 98765 43210' },
             { key: 'parentEmail', label: 'Parent Email', aliases: ['parent_email', 'email'], example: 'parent@gmail.com' },
             { key: 'bloodGroup', label: 'Blood Group', aliases: ['blood_group', 'bloodgroup', 'blood'], example: 'B+' },
             { key: 'category', label: 'Category', aliases: ['caste', 'category'], example: 'General' },
-            { key: 'address', label: 'Residential Address', aliases: ['address', 'residence'], example: 'Sector 45, Gurugram' }
+            { key: 'address', label: 'Residential Address', aliases: ['address', 'residence'], example: 'Sector 45, Bharatpur' }
           ]}
           existingUniqueKeys={{
             admissionNos: new Set(students.map(s => (s.admissionNo || '').toLowerCase())),
@@ -1771,9 +1771,9 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
           onCommitImport={async (validList) => {
             const mapped = validList.map((r, i) => ({
               name: r.name,
-              admissionNo: r.admissionNo || `DPS-ADM-2026-${1000 + i}`,
+              admissionNo: r.admissionNo || `ADM-2026-${1000 + i}`,
               penNo: r.penNo,
-              rollNo: r.rollNo || `DPS-2026-${1000 + i}`,
+              rollNo: r.rollNo || `${101 + i}`,
               grade: r.grade,
               section: r.section || 'A',
               gender: r.gender || 'Not specified',
@@ -1786,7 +1786,7 @@ export const StudentManagementHub: React.FC<StudentManagementHubProps> = ({
               category: r.category || 'General',
               address: r.address || 'Local Residence'
             }));
-            const res = await importErpStudents(mapped, false);
+            const res = await importErpStudents(mapped, false, organizationId);
             if (res.data?.success) {
               loadStudents(true);
               return { success: true, importedCount: res.data.importedCount || validList.length };
