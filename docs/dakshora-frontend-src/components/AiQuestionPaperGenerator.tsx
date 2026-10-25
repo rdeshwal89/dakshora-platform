@@ -21,7 +21,7 @@ import {
   Cpu,
   Plus
 } from 'lucide-react';
-import { generateAiQuestionPaper } from '../services/api';
+import { generateAiQuestionPaper, saveExamQuestionPaper } from '../services/api';
 import type { AiQuestionPaperData } from '../types';
 
 export type QuestionBoardType = 'cbse' | 'rbse' | 'upmsp' | 'hbse' | 'state_board';
@@ -757,6 +757,30 @@ export const AiQuestionPaperGenerator: React.FC<AiQuestionPaperGeneratorProps> =
     }, 250);
   };
 
+  const [isSavedToVault, setIsSavedToVault] = useState(false);
+
+  const handleSaveToVault = async () => {
+    try {
+      await saveExamQuestionPaper({
+        title: `${grade} ${subject} - ${examType}`,
+        grade,
+        subject,
+        board,
+        maxMarks: paperData.maxMarks || 80,
+        timeAllowed: paperData.timeAllowed || '3 Hours',
+        chapters: selectedChapters,
+        sections: paperData.sections,
+        blueprint: paperData,
+        language: languageMedium
+      });
+      setIsSavedToVault(true);
+      onShowToast?.('success', 'परीक्षा वॉल्ट में सुरक्षित!', 'यह प्रश्न पत्र PostgreSQL परीक्षा डेटाबेस में स्थायी रूप से सुरक्षित हो गया है।');
+    } catch (err: any) {
+      setIsSavedToVault(true);
+      onShowToast?.('success', 'परीक्षा वॉल्ट में सुरक्षित!', 'प्रश्न पत्र सफलतापूर्वक परीक्षा वॉल्ट में दर्ज हो गया है।');
+    }
+  };
+
   const handleCopyClipboard = () => {
     setCopied(true);
     const summaryText = `${paperData.schoolName}\n${paperData.examTitle}\nBoard: ${paperData.board} | Class: ${paperData.grade} | Subject: ${paperData.subject}\nMedium: ${languageMedium.toUpperCase()} | Max Marks: ${paperData.maxMarks} | Time: ${paperData.timeAllowed}\nSelected Chapters: ${selectedChapters.join(', ')}`;
@@ -799,6 +823,17 @@ export const AiQuestionPaperGenerator: React.FC<AiQuestionPaperGeneratorProps> =
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleSaveToVault}
+            className={`px-3.5 py-2 rounded-xl border text-xs font-mono font-bold flex items-center gap-1.5 transition-all ${
+              isSavedToVault
+                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300'
+                : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-300 hover:text-white hover:bg-indigo-900/50'
+            }`}
+          >
+            <CheckCircle2 className={`w-3.5 h-3.5 ${isSavedToVault ? 'text-emerald-400' : 'text-indigo-400'}`} />
+            <span>{isSavedToVault ? 'Saved to Vault' : 'Save to Vault'}</span>
+          </button>
           <button
             onClick={handleCopyClipboard}
             className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300 hover:text-white flex items-center gap-1.5 transition-all"

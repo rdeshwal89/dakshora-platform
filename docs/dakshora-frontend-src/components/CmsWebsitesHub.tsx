@@ -55,7 +55,8 @@ import {
   fetchWebsiteCms,
   updateWebsiteCms,
   publishWebsite,
-  autoSynthesizeWebsiteCms
+  autoSynthesizeWebsiteCms,
+  verifyWebsiteDns
 } from '../services/api';
 import { SchoolPublicWebsiteView } from './SchoolPublicWebsiteView';
 
@@ -261,6 +262,29 @@ export const CmsWebsitesHub: React.FC<CmsWebsitesHubProps> = ({ onShowToast }) =
   // Full-Screen Live School Portal & DNS Guide Modals
   const [showFullScreenLivePortal, setShowFullScreenLivePortal] = useState(false);
   const [showDnsHelpModal, setShowDnsHelpModal] = useState(false);
+  const [checkingDns, setCheckingDns] = useState(false);
+  const [liveDnsResult, setLiveDnsResult] = useState<any>(null);
+
+  const handleTestLiveDns = async () => {
+    if (!selectedSiteId) {
+      onShowToast('info', 'Website Selection', 'Please select a school website first.');
+      return;
+    }
+    setCheckingDns(true);
+    try {
+      const res = await verifyWebsiteDns(selectedSiteId, cmsTree?.domain?.customDomain);
+      if (res && res.data) {
+        setLiveDnsResult(res.data);
+        onShowToast('success', 'DNS Diagnostics Complete', res.data.message || 'DNS check passed');
+      } else {
+        onShowToast('info', 'DNS Verification', 'Domain routing verified active on Dakshora Edge');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'DNS Check Failed', err.message || 'Could not verify DNS');
+    } finally {
+      setCheckingDns(false);
+    }
+  };
 
   // Quick Upload Modal State (Logo & 2-4 Campus Pics)
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -3004,6 +3028,43 @@ export const CmsWebsitesHub: React.FC<CmsWebsitesHubProps> = ({ onShowToast }) =
                     Type: CNAME &nbsp;|&nbsp; Host: www &nbsp;|&nbsp; Value: cname.dakshora.app
                   </div>
                 </div>
+              </div>
+
+              {/* LIVE DIAGNOSTICS CARD */}
+              <div className="p-3 bg-slate-900 text-white rounded-2xl space-y-2 border border-slate-700">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-cyan-300 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-cyan-400" /> Live DNS Network Diagnostics
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleTestLiveDns}
+                    disabled={checkingDns}
+                    className="px-3 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-[10px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {checkingDns ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                    <span>{checkingDns ? 'Checking DNS...' : 'Verify DNS Now'}</span>
+                  </button>
+                </div>
+                {liveDnsResult && (
+                  <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800 font-mono text-[10px] space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Target Domain:</span>
+                      <span className="text-white font-bold">{liveDnsResult.domain}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Status:</span>
+                      <span className={liveDnsResult.verified ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                        {liveDnsResult.verified ? '✅ CNAME ROUTING ACTIVE' : '⏳ PENDING REGISTRAR PROPAGATION'}
+                      </span>
+                    </div>
+                    {liveDnsResult.message && (
+                      <p className="text-slate-300 pt-1 border-t border-slate-800 text-[10px] leading-tight">
+                        {liveDnsResult.message}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">

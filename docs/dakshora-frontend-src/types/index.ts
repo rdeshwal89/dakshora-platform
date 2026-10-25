@@ -60,6 +60,8 @@ export interface WebsiteRecord {
   id: string;
   name: string;
   domain?: string;
+  custom_domain?: string;
+  customDomain?: string;
   previewUrl?: string;
   template?: string;
   status?: string;

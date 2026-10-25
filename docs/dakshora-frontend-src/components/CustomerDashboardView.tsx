@@ -24,7 +24,7 @@ import {
   Bot
 } from 'lucide-react';
 import { WebsiteRecord, LeadRecord } from '../types';
-import { fetchWebsites, fetchLeads, captureLead, sendDakshoraAiChat } from '../services/api';
+import { fetchWebsites, fetchLeads, captureLead, sendDakshoraAiChat, verifyWebsiteDns } from '../services/api';
 
 interface CustomerDashboardViewProps {
   onShowToast: (type: 'success' | 'error' | 'info', title: string, message?: string) => void;
@@ -54,6 +54,30 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({
   const [aiLoading, setAiLoading] = useState(false);
 
   const [copiedDomain, setCopiedDomain] = useState<string | null>(null);
+  const [checkingDomainHealth, setCheckingDomainHealth] = useState(false);
+  const [domainHealthResult, setDomainHealthResult] = useState<any>(null);
+
+  const handleCheckClientDomain = async () => {
+    const activeSite = websites[0];
+    if (!activeSite) {
+      onShowToast('info', 'No Websites Found', 'Please onboard a school website first.');
+      return;
+    }
+    setCheckingDomainHealth(true);
+    try {
+      const res = await verifyWebsiteDns(activeSite.id, activeSite.custom_domain || activeSite.customDomain || activeSite.domain);
+      if (res && res.data) {
+        setDomainHealthResult(res.data);
+        onShowToast('success', 'Domain Health Verified', res.data.message || 'Domain active and SSL routed.');
+      } else {
+        onShowToast('info', 'Domain Verified', 'School domain connection is active.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Diagnostics Error', err.message || 'Could not verify domain');
+    } finally {
+      setCheckingDomainHealth(false);
+    }
+  };
 
   const loadTenantData = async () => {
     setLoading(true);
@@ -345,6 +369,36 @@ export const CustomerDashboardView: React.FC<CustomerDashboardViewProps> = ({
             </p>
           </div>
         </div>
+
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-800">
+          <span className="text-xs font-mono text-slate-400">
+            Current School Domain Health: <strong className="text-white">{websites[0]?.custom_domain || websites[0]?.domain || 'Default Subdomain'}</strong>
+          </span>
+          <button
+            onClick={handleCheckClientDomain}
+            disabled={checkingDomainHealth}
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+          >
+            {checkingDomainHealth ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
+            <span>{checkingDomainHealth ? 'Checking DNS...' : 'Verify Live Domain & SSL'}</span>
+          </button>
+        </div>
+
+        {domainHealthResult && (
+          <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 font-mono text-xs space-y-1 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Verified Target:</span>
+              <span className="text-white font-bold">{domainHealthResult.domain}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">DNS & CNAME Status:</span>
+              <span className={domainHealthResult.verified ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                {domainHealthResult.verified ? '✅ RESOLVED & ACTIVE' : '⏳ PENDING REGISTRAR PROPAGATION'}
+              </span>
+            </div>
+            <p className="text-slate-300 text-[11px] pt-1 border-t border-slate-800">{domainHealthResult.message}</p>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}

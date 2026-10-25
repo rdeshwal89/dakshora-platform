@@ -724,6 +724,28 @@ export async function autoSynthesizeWebsiteCms(payload: {
   );
 }
 
+export async function verifyWebsiteDns(websiteId: string, customDomain?: string) {
+  return makeApiCall<{ success: boolean; data: any }>(`/api/websites/${websiteId}/verify-dns`, {
+    method: 'POST',
+    body: JSON.stringify({ customDomain })
+  });
+}
+
+export async function fetchSchoolDnsStatus(slug: string) {
+  return makeApiCall<{ success: boolean; domain: string; dnsVerified: boolean; sslStatus: string; lastCheck: string }>(`/api/public/schools/${slug}/dns-status`);
+}
+
+export async function saveExamQuestionPaper(paperData: any) {
+  return makeApiCall<{ success: boolean; message: string; paper: any }>('/api/erp/exams/papers', {
+    method: 'POST',
+    body: JSON.stringify(paperData)
+  });
+}
+
+export async function fetchExamQuestionPapers() {
+  return makeApiCall<{ success: boolean; papers: any[] }>('/api/erp/exams/papers');
+}
+
 // 5. Leads & CRM Module
 export async function fetchLeads() {
   return makeApiCall<{ leads: LeadRecord[] }>('/api/leads');
