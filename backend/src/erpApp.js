@@ -3941,7 +3941,7 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       const { error: schErr } = await supabase.from("schools").insert([{
         id: schoolId,
         organization_id: newOrgId,
-        school_code: cleanInstituteCode,
+        school_code: isExplicitInstituteCode ? cleanInstituteCode : tenantCode,
         name: rawSchoolName,
         short_name: rawSchoolName.slice(0, 10).toUpperCase(),
         board: matchedBoard.code,
@@ -4301,12 +4301,12 @@ https://dakshora.co.in`;
       tenantId: newOrgId,
       tenantCode,
       instituteCode: cleanInstituteCode,
-      schoolCode: cleanInstituteCode,
+      schoolCode: isExplicitInstituteCode ? cleanInstituteCode : tenantCode,
       organization: {
         ...newOrg,
         instituteCode: cleanInstituteCode,
         institute_code: cleanInstituteCode,
-        schoolCode: cleanInstituteCode
+        schoolCode: isExplicitInstituteCode ? cleanInstituteCode : tenantCode
       },
       credentials: {
         email: cleanEmail,
@@ -4317,6 +4317,7 @@ https://dakshora.co.in`;
         activationToken: rawActivationToken,
         activationUrl,
         instituteCode: cleanInstituteCode,
+        schoolCode: isExplicitInstituteCode ? cleanInstituteCode : tenantCode,
         role: "school-admin",
         loginUrl: "https://dakshora.co.in/portal"
       },
@@ -14165,8 +14166,7 @@ app.use("/api/erp", (req, res, next) => {
     req.path.startsWith("/teacher") ||
     req.originalUrl?.includes("/api/erp/teacher") ||
     req.originalUrl?.includes("/api/erp/transport/driver-gps") ||
-    req.originalUrl?.includes("/api/erp/transport/live-telemetry") ||
-    (req.method === "GET" && (req.path === "/students" || req.originalUrl?.includes("/api/erp/students")));
+    req.originalUrl?.includes("/api/erp/transport/live-telemetry");
 
   if (isPortalOrTeacherOrPublic) {
     try {
@@ -14257,8 +14257,11 @@ function resolveTenantOrgId(req) {
     return null; // Signals unauthorized cross-tenant attempt, triggering 403
   }
 
-  // For standard users, use authenticated org ID or fallback to single tenant
-  return userOrgId || reqOrgId || (typeof IN_MEMORY_ORGANIZATIONS !== "undefined" && IN_MEMORY_ORGANIZATIONS.length === 1 ? IN_MEMORY_ORGANIZATIONS[0].id : "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+  // For standard users, use authenticated org ID. If authenticated but has no organization, fail closed (null)
+  if (req.user) {
+    return userOrgId || null;
+  }
+  return reqOrgId || null;
 }
 
 // 1. Students Endpoints (Production SaaS Grade)
@@ -25098,10 +25101,10 @@ app.get("/api/erp/fees", async (req, res) => {
   res.json({ success: true, invoices: tenantInvoices, summary: { totalDues, totalCollected } });
 });
 
-// 6s. Legacy Compatibility Route: POST /api/erp/fees/pay (Tenant-Isolated & DB Persisted)
+// 6s. Hardened Route: POST /api/erp/fees/pay (Tenant-Isolated, Atomically Validated & DB Persisted)
 app.post("/api/erp/fees/pay", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { invoiceId, paymentMethod, amount } = req.body;
+  const { invoiceId, paymentMethod, amount } = req.body || {};
   if (!invoiceId) {
     return res.status(400).json({ success: false, message: "invoiceId is required" });
   }
@@ -25125,8 +25128,24 @@ app.post("/api/erp/fees/pay", async (req, res) => {
     return res.status(404).json({ success: false, message: "Invoice not found or does not belong to this organization" });
   }
 
-  const payAmt = Number(amount || inv?.balanceAmount || inv?.amountINR || dbFeeRecord?.amount_due || 0);
-  const receiptNo = `RCP-${Math.floor(100000 + Math.random() * 900000)}`;
+  const currentOutstanding = inv
+    ? (inv.balanceAmount !== undefined ? Number(inv.balanceAmount) : (Number(inv.netAmount) || Number(inv.amountINR) || 0))
+    : (dbFeeRecord ? Math.max(0, Number(dbFeeRecord.amount_due || 0) - Number(dbFeeRecord.amount_paid || 0)) : 0);
+
+  const payAmt = Number(amount !== undefined ? amount : currentOutstanding);
+  if (isNaN(payAmt) || payAmt <= 0) {
+    return res.status(400).json({ success: false, message: "Payment amount must be a positive number greater than 0" });
+  }
+
+  if (payAmt > currentOutstanding + 0.01) {
+    return res.status(400).json({
+      success: false,
+      message: `Payment amount (₹${payAmt}) exceeds outstanding balance (₹${currentOutstanding})`
+    });
+  }
+
+  // Generate Authoritative Sequential FY Receipt Number
+  const receiptNo = await generateNextReceiptNo(orgId);
 
   if (inv) {
     inv.status = "paid";
@@ -25151,15 +25170,19 @@ app.post("/api/erp/fees/pay", async (req, res) => {
     });
   }
 
+  await recordAuditLog("erp.fee_payment_pay", req.user?.email || "cashier", "fee_payment", receiptNo, req);
+
   res.json({
     success: true,
     message: "Payment processed successfully",
+    receiptNo,
     invoice: inv || {
       id: dbFeeRecord.id,
       organization_id: orgId,
-      status: "paid",
+      status: currentOutstanding - payAmt <= 0.01 ? "paid" : "partially_paid",
       receiptNo,
-      paidAmount: payAmt
+      paidAmount: payAmt,
+      balanceAmount: Math.max(0, currentOutstanding - payAmt)
     }
   });
 });

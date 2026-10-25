@@ -430,8 +430,8 @@ export default function SchoolPublicPage() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [loginRole, setLoginRole] = useState<"principal" | "teacher" | "parent">("principal");
   const [loginMethod, setLoginMethod] = useState<"password" | "otp">("password");
-  const [loginIdentifier, setLoginIdentifier] = useState("principal@dakshoraacademy.edu.in");
-  const [loginPassword, setLoginPassword] = useState("Principal@2026");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loginMobile, setLoginMobile] = useState("");
   const [loginOtp, setLoginOtp] = useState("");
@@ -565,69 +565,25 @@ export default function SchoolPublicPage() {
     }
   };
 
-  // Instant Persona Login (Direct Live Supabase Authentication)
-  const handlePersonaLogin = async (role: "principal" | "teacher" | "parent") => {
-    setAuthenticating(true);
+  // Persona Quick Switch (Safeguarded: Zero Hardcoded Passwords in Client Source)
+  const handlePersonaLogin = (role: "principal" | "teacher" | "parent") => {
+    setLoginRole(role);
     setLoginError("");
     setLoginSuccessMsg("");
 
     const isDakshora = slugParam.includes("dakshora") || !slugParam.includes("new-ideal");
-    const creds: Record<string, { id: string; pass: string }> = isDakshora
-      ? {
-          principal: { id: "principal@dakshoraacademy.edu.in", pass: "Principal@2026" },
-          teacher: { id: "teacher@dakshoraacademy.edu.in", pass: "Teacher@2026" },
-          parent: { id: "parent@dakshoraacademy.edu.in", pass: "Parent@2026" }
-        }
-      : {
-          principal: { id: "principal@newidealpublicschool.edu.in", pass: "Admin@2026" },
-          teacher: { id: "teacher@newidealpublicschool.edu.in", pass: "Teacher@2026" },
-          parent: { id: "parent@newidealpublicschool.edu.in", pass: "Parent@2026" }
-        };
-
-    const targetCred = creds[role];
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          identifier: targetCred.id,
-          password: targetCred.pass,
-        }),
-      });
-
-      const data = await parseJsonRes(res);
-      if (res.ok && data?.success && (data?.token || data?.access_token) && data?.user) {
-        const token = data.access_token || data.token;
-        localStorage.setItem("dakshora_auth_token", token);
-        localStorage.setItem("dakshora_superadmin_user", JSON.stringify(data.user));
-        if (data.school) {
-          localStorage.setItem("dakshora_school_brand", JSON.stringify(data.school));
-        }
-
-        const userRole = (data.user.role || "").toLowerCase();
-        const surface =
-          userRole === "parent" || userRole === "student"
-            ? "parent_portal"
-            : userRole === "superadmin"
-            ? "admin_panel"
-            : "school_erp";
-
-        setLoginSuccessMsg(
-          isHi
-            ? "प्रमाणीकरण सफल! " + (data.user.name || role) + " के कार्यक्षेत्र में प्रवेश हो रहा है..."
-            : "Authentication Successful! Entering " + (data.user.name || role) + "'s workspace..."
-        );
-        setTimeout(() => {
-          window.location.href = "/portal?surface=" + surface + "&school=" + slugParam;
-        }, 500);
-        return;
-      } else {
-        setLoginError(data?.message || (isHi ? "लॉगिन असफल रहा।" : "Login failed."));
-      }
-    } catch {
-      setLoginError(isHi ? "सर्वर से संपर्क नहीं हो पाया।" : "Server communication error.");
-    } finally {
-      setAuthenticating(false);
+    const domain = isDakshora ? "dakshoraacademy.edu.in" : "newidealpublicschool.edu.in";
+    if (role === "principal") {
+      setLoginIdentifier(`principal@${domain}`);
+    } else if (role === "teacher") {
+      setLoginIdentifier(`teacher@${domain}`);
+    } else {
+      setLoginIdentifier(`parent@${domain}`);
+    }
+    setLoginPassword("");
+    const pwdInput = document.getElementById("login-password-input");
+    if (pwdInput) {
+      pwdInput.focus();
     }
   };
 
@@ -1471,16 +1427,16 @@ export default function SchoolPublicPage() {
                       onClick={() => {
                         setLoginRole(role.id);
                         setLoginError("");
+                        const isDakshora = slugParam.includes("dakshora") || !slugParam.includes("new-ideal");
+                        const domain = isDakshora ? "dakshoraacademy.edu.in" : "newidealpublicschool.edu.in";
                         if (role.id === "principal") {
-                          setLoginIdentifier("principal@dakshoraacademy.edu.in");
-                          setLoginPassword("Principal@2026");
+                          setLoginIdentifier(`principal@${domain}`);
                         } else if (role.id === "teacher") {
-                          setLoginIdentifier("teacher@dakshoraacademy.edu.in");
-                          setLoginPassword("Teacher@2026");
+                          setLoginIdentifier(`teacher@${domain}`);
                         } else {
-                          setLoginIdentifier("parent@dakshoraacademy.edu.in");
-                          setLoginPassword("Parent@2026");
+                          setLoginIdentifier(`parent@${domain}`);
                         }
+                        setLoginPassword("");
                       }}
                       className={`p-3 rounded-2xl text-center border-2 transition-all cursor-pointer ${
                         loginRole === role.id
@@ -1593,6 +1549,7 @@ export default function SchoolPublicPage() {
                       </button>
                     </div>
                     <input
+                      id="login-password-input"
                       type={showPassword ? "text" : "password"}
                       required
                       value={loginPassword}

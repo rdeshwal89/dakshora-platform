@@ -465,56 +465,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // =========================================================================
   // 7. Instant Demo Sandbox Persona (Direct Live Supabase Authentication)
   // =========================================================================
-  const handleDemoPersonaLogin = async (role: string, name: string, targetSurface?: any) => {
-    const creds: Record<string, { email: string; pass: string }> = {
-      admin: { email: 'principal@dakshoraacademy.edu.in', pass: 'Principal@2026' },
-      teacher: { email: 'teacher@dakshoraacademy.edu.in', pass: 'Teacher@2026' },
-      parent: { email: 'parent@dakshoraacademy.edu.in', pass: 'Parent@2026' },
-      account: { email: 'accountant@dakshoraacademy.edu.in', pass: 'Accountant@2026' },
-      superadmin: { email: 'superadmin@dakshora.ai', pass: 'SuperAdmin@2026' },
+  const handleDemoPersonaLogin = (role: string, name: string) => {
+    const roleEmails: Record<string, string> = {
+      admin: 'principal@dakshoraacademy.edu.in',
+      teacher: 'teacher@dakshoraacademy.edu.in',
+      parent: 'parent@dakshoraacademy.edu.in',
+      account: 'accountant@dakshoraacademy.edu.in',
+      superadmin: 'superadmin@dakshora.ai',
     };
-
-    const targetCred = creds[role] || creds.admin;
-    setIsSubmitting(true);
-    try {
-      const res = await loginSuperAdmin({
-        email: targetCred.email,
-        password: targetCred.pass,
-      });
-      if (res.data?.success && res.data?.user && (res.data?.token || res.data?.access_token)) {
-        const token = res.data.access_token || res.data.token;
-        localStorage.setItem('dakshora_auth_token', token);
-        localStorage.setItem('dakshora_superadmin_user', JSON.stringify(res.data.user));
-        if (res.data.school) {
-          localStorage.setItem('dakshora_school_brand', JSON.stringify(res.data.school));
-        }
-        const resolvedTarget = targetSurface || resolveTargetSurface(res.data.user.role);
-        onShowToast('success', 'Live Demo Activated 🚀', 'Logged in as ' + (res.data.user.name || name) + ' (' + (res.data.user.schoolName || 'Dakshora Academy') + ')');
-        onLoginSuccess(res.data.user, token, resolvedTarget);
-        onClose();
-        return;
-      }
-    } catch (err) {
-      console.warn('Real demo login fallback:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
-
-    const demoUser = {
-      id: 'usr-demo-' + role,
-      name: name + ' (Live Demo)',
-      email: targetCred.email,
-      role: role === 'account' ? 'accountant' : role === 'admin' ? 'school-admin' : role,
-      isDemo: true,
-      organization_id: 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e',
-      schoolName: 'Dakshora Academy, New Delhi'
-    };
-    const demoToken = 'dakshora-demo-token-' + role + '-' + Date.now();
-    localStorage.setItem('dakshora_auth_token', demoToken);
-    localStorage.setItem('dakshora_superadmin_user', JSON.stringify(demoUser));
-    const resolvedTarget = targetSurface || resolveTargetSurface(role);
-    onLoginSuccess(demoUser, demoToken, resolvedTarget);
-    onClose();
+    const targetEmail = roleEmails[role] || roleEmails.admin;
+    setEmail(targetEmail);
+    setPassword('');
+    setAuthMethod('password');
+    onShowToast('info', 'Identity Selected', `Enter your password to sign in as ${name}`);
+    const pwdInput = document.getElementById('portal-password-input');
+    if (pwdInput) pwdInput.focus();
   };
 
   return (
@@ -1134,7 +1099,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => {
                         setEmail('principal@dakshoraacademy.edu.in');
-                        setPassword('Principal@2026');
+                        setPassword('');
                       }}
                       className="px-2 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-bold text-center cursor-pointer transition-all"
                     >
@@ -1144,7 +1109,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => {
                         setEmail('teacher@dakshoraacademy.edu.in');
-                        setPassword('Teacher@2026');
+                        setPassword('');
                       }}
                       className="px-2 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 font-bold text-center cursor-pointer transition-all"
                     >
@@ -1154,7 +1119,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => {
                         setEmail('parent@dakshoraacademy.edu.in');
-                        setPassword('Parent@2026');
+                        setPassword('');
                       }}
                       className="px-2 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-bold text-center cursor-pointer transition-all"
                     >
@@ -1164,7 +1129,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => {
                         setEmail('superadmin@dakshora.ai');
-                        setPassword('SuperAdmin@2026');
+                        setPassword('');
                       }}
                       className="px-2 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/40 text-purple-300 font-bold text-center cursor-pointer transition-all"
                     >
@@ -1209,6 +1174,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div className="relative">
                       <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                       <input
+                        id="portal-password-input"
                         type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
