@@ -107,7 +107,24 @@ export function App() {
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [wizardOrgId, setWizardOrgId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem('dakshora_onboarding_org_id') || undefined;
+    } catch {
+      return undefined;
+    }
+  });
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  const handleLaunchWizard = (orgId?: string) => {
+    if (orgId) {
+      setWizardOrgId(orgId);
+      try {
+        localStorage.setItem('dakshora_onboarding_org_id', orgId);
+      } catch {}
+    }
+    handleSetSurface('school_onboarding');
+  };
   const [apiLogs, setApiLogs] = useState<ApiLogEntry[]>([]);
 
   const handleSetSurface = (newSurface: ClientSurface, userOverride?: any) => {
@@ -535,6 +552,7 @@ export function App() {
             {/* Surface 7: School ERP Onboarding & Configuration Wizard (16 Steps) */}
             {surface === 'school_onboarding' && (
               <SchoolOnboardingWizard
+                organizationId={wizardOrgId}
                 onShowToast={showToast}
                 onNavigateToErp={() => setSurface('school_erp')}
               />
@@ -569,13 +587,21 @@ export function App() {
                       onShowToast={showToast}
                       onNavigateToTab={(tab) => handleSetAdminTab(tab as any)}
                       onSwitchToSchool={handleSwitchToSchool}
-                      onNavigateToSurface={handleSetSurface}
+                      onNavigateToSurface={(surf: string, targetOrgId?: string) => {
+                        if (surf === 'school_onboarding' && targetOrgId) {
+                          setWizardOrgId(targetOrgId);
+                          try {
+                            localStorage.setItem('dakshora_onboarding_org_id', targetOrgId);
+                          } catch {}
+                        }
+                        handleSetSurface(surf as any);
+                      }}
                     />
                   )}
                   {adminTab === 'organizations' && (
                     <OrganizationsHub
                       onShowToast={showToast}
-                      onLaunchOnboarding={() => handleSetSurface('school_onboarding')}
+                      onLaunchOnboarding={handleLaunchWizard}
                       onNavigateToErp={() => handleSetSurface('school_erp')}
                     />
                   )}

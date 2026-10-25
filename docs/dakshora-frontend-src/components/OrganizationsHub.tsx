@@ -130,11 +130,23 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
   const [onboardingRequests, setOnboardingRequests] = useState<OnboardingApplicationRecord[]>([]);
   const [reqFilter, setReqFilter] = useState<'all' | 'pending_verification' | 'contacted_interested' | 'onboarded'>('all');
 
-  // Form State
+  // Upgraded Organization Creation Form State
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
-  const [plan, setPlan] = useState('starter');
+  const [plan, setPlan] = useState('growth');
   const [instituteCode, setInstituteCode] = useState('');
+  const [board, setBoard] = useState('CBSE');
+  const [principalName, setPrincipalName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('Rajasthan');
+  const [students, setStudents] = useState('500 - 1500 Students');
+  const [notes, setNotes] = useState('');
+  const [session, setSession] = useState('2026-27');
+  const [sourceRequestId, setSourceRequestId] = useState<string | null>(null);
+  const [sourceRequestRef, setSourceRequestRef] = useState<string | null>(null);
+  const [isFormHighlighted, setIsFormHighlighted] = useState(false);
   const [isValidatingCode, setIsValidatingCode] = useState(false);
   const [codeAvailability, setCodeAvailability] = useState<{ checked: boolean; available: boolean; message: string }>({
     checked: false,
@@ -391,6 +403,102 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
     }
   };
 
+  const handleAutoFillFromRequest = async (req: OnboardingApplicationRecord) => {
+    setName(req.schoolName);
+    const autoSlug = req.schoolName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+    setSlug(autoSlug);
+    setBoard(req.board || 'CBSE');
+    setPrincipalName(req.principalName || '');
+    setEmail(req.email || '');
+    setPhone(req.phone || '');
+
+    // Parse city & state if separated by comma
+    const parts = (req.city || '').split(',');
+    setCity(parts[0]?.trim() || '');
+    setState(parts[1]?.trim() || 'Rajasthan');
+
+    setStudents(req.students || '500 - 1500 Students');
+    setNotes(req.notes || '');
+    setSourceRequestId(req.id);
+    setSourceRequestRef(req.refId);
+    setPlan('growth');
+
+    // Automatically allocate next available 5-digit Institute Code
+    try {
+      const res = await fetchNextInstituteCode();
+      if (res.data?.success && res.data.nextCode) {
+        setInstituteCode(res.data.nextCode);
+        setCodeAvailability({
+          checked: true,
+          available: true,
+          message: `Code ${res.data.nextCode} allocated for ${req.schoolName}`
+        });
+      }
+    } catch {
+      const fallback = String(Math.floor(10000 + Math.random() * 89999));
+      setInstituteCode(fallback);
+      setCodeAvailability({ checked: true, available: true, message: `Auto-generated: ${fallback}` });
+    }
+
+    setIsFormHighlighted(true);
+    setTimeout(() => setIsFormHighlighted(false), 3500);
+
+    // Smooth scroll down to the upgraded organization form
+    setTimeout(() => {
+      document.getElementById('create-organization-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+
+    onShowToast(
+      'success',
+      'Application Transferred into Form! 📋✨',
+      `Auto-filled school name, principal (${req.principalName}), contact, and board from application ${req.refId}.`
+    );
+  };
+
+  const handleClearForm = () => {
+    setName('');
+    setSlug('');
+    setPlan('growth');
+    setInstituteCode('');
+    setBoard('CBSE');
+    setPrincipalName('');
+    setEmail('');
+    setPhone('');
+    setCity('');
+    setState('Rajasthan');
+    setStudents('500 - 1500 Students');
+    setNotes('');
+    setSession('2026-27');
+    setSourceRequestId(null);
+    setSourceRequestRef(null);
+    setCodeAvailability({ checked: false, available: true, message: '' });
+  };
+
+  const handleLaunchSetupWizard = (org: OrganizationRecord) => {
+    const code = (org as any).instituteCode || (org as any).institute_code || (org as any).school_code || (org as any).schoolCode || (org as any).tenant_code || '10001';
+    const brand = {
+      schoolName: org.name,
+      shortName: (org.name || '').split(' ')[0] || 'DAKSHORA',
+      board: (org as any).board || 'CBSE',
+      affiliationNo: (org as any).affiliationNo || (org as any).affiliation_no || `CBSE-AFF-${code}`,
+      schoolCode: code,
+      motto: 'Excellence in Education',
+      themeColor: 'indigo',
+      principalName: (org as any).principal_name || (org as any).principalName || 'Principal',
+      contactEmail: (org as any).contact_email || (org as any).email || '',
+      contactPhone: (org as any).contact_phone || (org as any).phone || '',
+      address: (org as any).address || `${(org as any).city || ''}, ${(org as any).state || ''}`.trim()
+    };
+    try {
+      localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+      localStorage.setItem('dakshora_onboarding_org_id', org.id);
+      localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify({ ...org, ...brand }));
+    } catch {}
+    if (onLaunchOnboarding) {
+      onLaunchOnboarding(org.id);
+    }
+  };
+
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !slug.trim()) {
@@ -414,14 +522,57 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
         name: name.trim(),
         slug: slug.trim(),
         plan,
-        instituteCode: instituteCode.trim() || undefined
+        instituteCode: instituteCode.trim() || undefined,
+        board: board.trim() || 'CBSE',
+        principalName: principalName.trim() || undefined,
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        city: city.trim() || undefined,
+        state: state.trim() || undefined,
+        students: students.trim() || undefined,
+        notes: notes.trim() || undefined,
+        session: session.trim() || '2026-27'
       });
       if (res.data.success) {
-        onShowToast('success', 'Organization Created! 🏢', `Tenant: ${name} (Code: ${res.data.organization?.instituteCode || res.data.organization?.schoolCode || instituteCode || 'Assigned'})`);
-        setName('');
-        setSlug('');
-        setInstituteCode('');
-        setCodeAvailability({ checked: false, available: true, message: '' });
+        const createdOrg = res.data.organization;
+        const code = createdOrg?.instituteCode || createdOrg?.schoolCode || instituteCode || '10001';
+
+        // If created from an onboarding request, automatically mark that request as onboarded!
+        if (sourceRequestId) {
+          const updated = onboardingRequests.map((r) =>
+            r.id === sourceRequestId || r.refId === sourceRequestRef ? { ...r, status: 'onboarded' as const } : r
+          );
+          setOnboardingRequests(updated);
+          localStorage.setItem('dakshora_onboarding_requests', JSON.stringify(updated));
+        }
+
+        // Cache brand in localStorage for instant setup wizard auto-fill!
+        const brand = {
+          schoolName: createdOrg?.name || name,
+          shortName: (name.split(' ')[0] || 'DAKSHORA'),
+          board: board || 'CBSE',
+          affiliationNo: `CBSE-AFF-${code}`,
+          schoolCode: code,
+          motto: 'Excellence in Education',
+          themeColor: 'indigo',
+          principalName: principalName || 'Principal',
+          contactEmail: email || '',
+          contactPhone: phone || '',
+          address: city ? `${city}, ${state || ''}`.trim() : ''
+        };
+        try {
+          localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+          localStorage.setItem('dakshora_onboarding_org_id', createdOrg?.id || '');
+          localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify({ ...createdOrg, ...brand }));
+        } catch {}
+
+        onShowToast(
+          'success',
+          'School Organization Created! 🏫🎉',
+          `Tenant: ${name} (5-Digit Code: ${code}). Basic organization pre-filled for Setup Wizard.`
+        );
+
+        handleClearForm();
         loadOrganizations();
       } else {
         onShowToast('error', 'Creation Failed', res.data.message || 'Could not create organization');
@@ -695,6 +846,17 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
 
                   {req.status !== 'onboarded' && (
                     <button
+                      onClick={() => handleAutoFillFromRequest(req)}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs hover:border-indigo-400"
+                      title="Auto-fill this application's school, principal, contact, and board info into Create Organization form below"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Auto-Fill Form 📝</span>
+                    </button>
+                  )}
+
+                  {req.status !== 'onboarded' && (
+                    <button
                       onClick={() => handleApproveAndOnboard(req)}
                       className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
                       title="1-Click Provision Official School Tenant and Admin Account"
@@ -733,121 +895,297 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Create Form (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
-          <div className="glass-panel rounded-2xl p-6 border border-slate-800 space-y-5">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-sm text-white flex items-center gap-2">
-                <Plus className="w-4 h-4 text-indigo-400" />
-                <span>Create New Organization Directly</span>
-              </h3>
-              <span className="text-[10px] font-mono text-slate-400">SuperAdmin Direct Provision</span>
+          <div
+            id="create-organization-card"
+            className={`glass-panel rounded-2xl p-6 border transition-all space-y-5 ${
+              isFormHighlighted
+                ? 'border-indigo-400 bg-indigo-950/30 ring-2 ring-indigo-500/50 shadow-2xl shadow-indigo-500/20'
+                : 'border-slate-800'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">Create Organization Directly</h3>
+                  <p className="text-[10px] font-mono text-slate-400">Enterprise Multi-Tenant Provisioning</p>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-500/40">
+                5-Digit Shortcode
+              </span>
             </div>
 
+            {/* Auto-filled from Application Banner */}
+            {sourceRequestRef && (
+              <div className="p-3 rounded-xl bg-gradient-to-r from-indigo-950/80 to-purple-950/80 border border-indigo-500/50 flex items-center justify-between gap-3 text-xs font-mono text-indigo-200 shadow-md animate-in fade-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="truncate">
+                    Auto-filled from Request: <strong className="text-white font-bold">{sourceRequestRef}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearForm}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] cursor-pointer shrink-0 transition-colors"
+                >
+                  Clear Form
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleCreateOrg} className="space-y-4">
+              {/* Row 1: School Name */}
               <div>
                 <label className="block text-xs font-mono text-slate-300 mb-1.5">
-                  Organization / School Name <span className="text-rose-400">*</span>
+                  School / Organization Name <span className="text-rose-400">*</span>
                 </label>
                 <input
                   type="text"
                   value={name}
                   onChange={(e) => handleNameChange(e.target.value)}
-                  placeholder="e.g. DPS Heritage Global"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  placeholder="e.g. Tagore Public Senior Secondary Academy"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
                   required
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-mono text-slate-300 mb-1.5">
-                  Tenant Slug URL <span className="text-rose-400">*</span>
-                </label>
-                <div className="flex items-center">
-                  <span className="px-3 py-2.5 bg-slate-900 border border-r-0 border-slate-800 rounded-l-xl text-xs font-mono text-slate-500">
-                    dakshora.app/
-                  </span>
-                  <input
-                    type="text"
-                    value={slug}
-                    onChange={(e) => setSlug(e.target.value)}
-                    placeholder="dps-heritage"
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-r-xl px-3 py-2.5 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-mono text-slate-300 flex items-center gap-1.5">
-                    <Hash className="w-3.5 h-3.5 text-amber-400" />
-                    <span>5-Digit Institute Code</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleGenerateInstituteCode}
-                    className="text-[11px] font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1 underline cursor-pointer"
-                  >
-                    <Dice5 className="w-3 h-3" />
-                    <span>🎲 Auto-Generate</span>
-                  </button>
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={instituteCode}
-                    onChange={(e) => handleInstituteCodeChange(e.target.value)}
-                    maxLength={5}
-                    placeholder="e.g. 10002 (or leave blank to auto-assign)"
-                    className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-xs font-mono tracking-widest text-white placeholder-slate-600 focus:outline-none transition-colors ${
-                      codeAvailability.checked && !codeAvailability.available
-                        ? 'border-rose-500 bg-rose-950/20'
-                        : codeAvailability.checked && codeAvailability.available
-                        ? 'border-emerald-500 bg-emerald-950/20'
-                        : 'border-slate-800 focus:border-indigo-500'
-                    }`}
-                  />
-                  {isValidatingCode && (
-                    <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+              {/* Row 2: 5-Digit Code & Slug */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-mono text-slate-300 flex items-center gap-1.5">
+                      <Hash className="w-3.5 h-3.5 text-amber-400" />
+                      <span>5-Digit Code</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGenerateInstituteCode}
+                      className="text-[10px] font-mono text-amber-400 hover:text-amber-300 flex items-center gap-0.5 underline cursor-pointer"
+                    >
+                      <Dice5 className="w-3 h-3" />
+                      <span>Auto</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={instituteCode}
+                      onChange={(e) => handleInstituteCodeChange(e.target.value)}
+                      maxLength={5}
+                      placeholder="e.g. 10002"
+                      className={`w-full bg-slate-950 border rounded-xl px-3 py-2 text-xs font-mono tracking-widest text-white placeholder-slate-600 focus:outline-none transition-colors ${
+                        codeAvailability.checked && !codeAvailability.available
+                          ? 'border-rose-500 bg-rose-950/20'
+                          : codeAvailability.checked && codeAvailability.available
+                          ? 'border-emerald-500 bg-emerald-950/20'
+                          : 'border-slate-800 focus:border-indigo-500'
+                      }`}
+                    />
+                    {isValidatingCode && (
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                    )}
+                  </div>
+                  {codeAvailability.message && (
+                    <p className={`text-[9px] mt-1 font-mono truncate ${codeAvailability.available ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {codeAvailability.available ? '✓ ' : '✗ '}{codeAvailability.message}
+                    </p>
                   )}
                 </div>
-                {codeAvailability.message && (
-                  <p className={`text-[10px] mt-1 font-mono ${codeAvailability.available ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {codeAvailability.available ? '✓ ' : '✗ '}
-                    {codeAvailability.message}
-                  </p>
-                )}
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Unique 5-digit institutional shortcode for student IDs, faculty codes & multi-tenancy.
-                </p>
+
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Tenant Slug URL <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="flex items-center">
+                    <span className="px-2 py-2 bg-slate-900 border border-r-0 border-slate-800 rounded-l-xl text-[10px] font-mono text-slate-500">
+                      /
+                    </span>
+                    <input
+                      type="text"
+                      value={slug}
+                      onChange={(e) => setSlug(e.target.value)}
+                      placeholder="tagore-academy"
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-r-xl px-2.5 py-2 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500 min-w-0"
+                      required
+                    />
+                  </div>
+                </div>
               </div>
 
+              {/* Row 3: Board & Academic Session */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Affiliation Board
+                  </label>
+                  <select
+                    value={board}
+                    onChange={(e) => setBoard(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="CBSE">CBSE (Central Board)</option>
+                    <option value="ICSE">ICSE / ISC Board</option>
+                    <option value="RBSE Rajasthan">RBSE Rajasthan</option>
+                    <option value="UP Board">UP State Board</option>
+                    <option value="Maharashtra State Board">Maharashtra State Board</option>
+                    <option value="IB / Cambridge">IB / Cambridge</option>
+                    <option value="State Board">State Board (General)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Academic Session
+                  </label>
+                  <input
+                    type="text"
+                    value={session}
+                    onChange={(e) => setSession(e.target.value)}
+                    placeholder="2026-27"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Row 4: Subscription Tier */}
               <div>
                 <label className="block text-xs font-mono text-slate-300 mb-1.5">
-                  Subscription Tier
+                  Subscription Tier & Plan
                 </label>
                 <select
                   value={plan}
                   onChange={(e) => setPlan(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs font-mono text-slate-300 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="starter">Starter (Free Community)</option>
-                  <option value="growth">Growth (Pro AI & CBSE Compliant)</option>
-                  <option value="enterprise">Enterprise (Multi-Site Dedicated)</option>
+                  <option value="starter">Starter — ₹4,999/mo (Core Attendance & Students)</option>
+                  <option value="growth">Growth — ₹12,500/mo (Pro AI & CBSE Compliant)</option>
+                  <option value="enterprise">Enterprise — ₹24,999/mo (Multi-Site Dedicated)</option>
                 </select>
               </div>
 
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-                <span>{isSubmitting ? 'Creating Org...' : 'Register Tenant Organization'}</span>
-              </button>
+              {/* Row 5: Principal Admin & Contact Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Principal Admin Name
+                  </label>
+                  <input
+                    type="text"
+                    value={principalName}
+                    onChange={(e) => setPrincipalName(e.target.value)}
+                    placeholder="e.g. Dr. Rajesh Sharma"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Principal Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="principal@school.edu.in"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Row 6: Phone & City/State */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Contact Phone / WhatsApp
+                  </label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="10-digit mobile"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Campus City & State
+                  </label>
+                  <input
+                    type="text"
+                    value={city ? (state ? `${city}, ${state}` : city) : ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const parts = val.split(',');
+                      setCity(parts[0]?.trim() || '');
+                      if (parts.length > 1) setState(parts[1]?.trim() || '');
+                    }}
+                    placeholder="e.g. Jaipur, Rajasthan"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Row 7: Estimated Strength & Notes */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Estimated Student Strength
+                  </label>
+                  <select
+                    value={students}
+                    onChange={(e) => setStudents(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="Under 500 Students">Under 500 Students</option>
+                    <option value="500 - 1500 Students">500 - 1500 Students</option>
+                    <option value="1500 - 3000 Students">1500 - 3000 Students</option>
+                    <option value="3000+ Students">3000+ Students</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-slate-300 mb-1.5">
+                    Implementation Notes
+                  </label>
+                  <input
+                    type="text"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="e.g. CBSE 2026 Question Paper Generator"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Buttons: Submit & Reset */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:brightness-110 text-white font-bold text-xs shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  <span>{isSubmitting ? 'Provisioning...' : 'Register & Provision Tenant Organization'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleClearForm}
+                  className="px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs font-mono font-bold cursor-pointer transition-colors"
+                  title="Clear form inputs"
+                >
+                  Clear
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -1030,12 +1368,12 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
                           {onLaunchOnboarding && (
                             <button
                               type="button"
-                              onClick={() => onLaunchOnboarding(org.id)}
-                              className="px-2.5 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-[11px] text-indigo-300 font-bold flex items-center gap-1 transition-all cursor-pointer"
-                              title="Open 16-step Setup Wizard for this School"
+                              onClick={() => handleLaunchSetupWizard(org)}
+                              className="px-2.5 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-[11px] text-indigo-300 font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                              title="Open 16-step Setup Wizard with this School's profile pre-filled"
                             >
                               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>Setup Wizard</span>
+                              <span>Setup Wizard ⚡</span>
                             </button>
                           )}
 
@@ -1472,8 +1810,8 @@ export const OrganizationsHub: React.FC<OrganizationsHubProps> = ({ onShowToast,
                     <button
                       type="button"
                       onClick={() => {
+                        handleLaunchSetupWizard(managingOrg);
                         setManagingOrg(null);
-                        onLaunchOnboarding(managingOrg.id);
                       }}
                       className="p-3 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40 text-left transition-all group cursor-pointer"
                     >

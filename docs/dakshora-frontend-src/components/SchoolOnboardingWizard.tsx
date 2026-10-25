@@ -59,7 +59,8 @@ import confetti from 'canvas-confetti';
 import {
   SchoolOnboardingRecord,
   OnboardingChecklist,
-  ImportPreviewSummary
+  ImportPreviewSummary,
+  OrganizationRecord
 } from '../types';
 import {
   fetchOnboardingStatus,
@@ -68,7 +69,8 @@ import {
   activateSchoolErp,
   inviteSchoolAdmin,
   importOnboardingStudents,
-  importOnboardingStaff
+  importOnboardingStaff,
+  fetchOrganizations
 } from '../services/api';
 
 // ============================================================================
@@ -335,6 +337,16 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
   onNavigateToErp,
   organizationId = 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e'
 }) => {
+  // Multi-Tenant School Selector State
+  const [availableOrgs, setAvailableOrgs] = useState<OrganizationRecord[]>([]);
+  const [activeOrgId, setActiveOrgId] = useState<string>(() => {
+    try {
+      return organizationId || localStorage.getItem('dakshora_onboarding_org_id') || 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+    } catch {
+      return organizationId || 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+    }
+  });
+
   // Navigation & Step Control
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
@@ -549,46 +561,94 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
   });
 
   // ============================================================================
-  // 4. PRE-FILLING INSTITUTIONAL DATA FROM ACTIVE TENANT STORAGE ON MOUNT
+  // 4. AUTOMATIC INSTITUTIONAL DATA PRE-FILLING & ACTIVE SCHOOL SWITCHER
   // ============================================================================
+  const populateWizardWithOrgData = (targetOrg: any, draftData?: any) => {
+    if (!targetOrg && !draftData) return;
+    const name = draftData?.schoolName || targetOrg?.name || 'Dakshora Academy New Delhi';
+    const code = draftData?.instituteCode || targetOrg?.instituteCode || targetOrg?.institute_code || targetOrg?.schoolCode || targetOrg?.school_code || targetOrg?.tenant_code || draftData?.tenantCode || '10001';
+    const slug = draftData?.slug || targetOrg?.slug || name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const plan = draftData?.plan || targetOrg?.plan || 'growth';
+    const board = draftData?.board || targetOrg?.board || 'CBSE';
+    const affiliationNo = draftData?.affiliationNo || targetOrg?.affiliationNo || targetOrg?.affiliation_no || (code ? `CBSE-AFF-${code}` : 'CBSE-AFF-202601');
+    const principalName = draftData?.principalName || targetOrg?.principal_name || targetOrg?.principalName || 'Dr. Rajesh Sharma';
+    const email = draftData?.email || targetOrg?.contact_email || targetOrg?.email || '';
+    const phone = draftData?.phone || targetOrg?.contact_phone || targetOrg?.phone || '';
+    const city = draftData?.city || targetOrg?.city || 'New Delhi';
+    const state = draftData?.state || targetOrg?.state || 'Delhi';
+    const address = draftData?.address || targetOrg?.address || (city ? `${city}, ${state}` : 'Institutional Area, Vasant Kunj');
+
+    setOrgForm({ name, slug, plan });
+    setProfileForm(prev => ({
+      ...prev,
+      schoolName: name,
+      schoolCode: code,
+      board,
+      affiliationNo,
+      principalName,
+      email,
+      phone,
+      city,
+      state,
+      address
+    }));
+    setCampusForm(prev => ({
+      ...prev,
+      name: `${name} - Main Campus`,
+      code: `CAMPUS-${code}`,
+      address,
+      city,
+      state,
+      contactEmail: email,
+      contactPhone: phone,
+      principalName
+    }));
+  };
+
   useEffect(() => {
-    try {
-      const savedBrand = localStorage.getItem('dakshora_school_brand');
-      if (savedBrand) {
-        const brand = JSON.parse(savedBrand);
-        setOrgForm({
-          name: brand.schoolName || 'Dakshora Academy New Delhi',
-          slug: (brand.shortName || brand.schoolName || 'dakshora-academy').toLowerCase().replace(/[^a-z0-9]/g, '-'),
-          plan: 'enterprise'
-        });
-        setProfileForm(prev => ({
-          ...prev,
-          schoolName: brand.schoolName || prev.schoolName,
-          schoolCode: brand.schoolCode || prev.schoolCode,
-          board: brand.board || prev.board,
-          affiliationNo: brand.affiliationNo || prev.affiliationNo,
-          phone: brand.contactPhone || prev.phone,
-          email: brand.contactEmail || prev.email,
-          address: brand.address || prev.address,
-          principalName: brand.principalName || prev.principalName
-        }));
-        setCampusForm(prev => ({
-          ...prev,
-          name: `${brand.schoolName || 'Dakshora Academy'} - Main Campus`,
-          address: brand.address || prev.address,
-          contactEmail: brand.contactEmail || prev.contactEmail,
-          contactPhone: brand.contactPhone || prev.contactPhone,
-          principalName: brand.principalName || prev.principalName
-        }));
+    const initOrgsAndWizard = async () => {
+      let orgsList: OrganizationRecord[] = [];
+      try {
+        const res = await fetchOrganizations();
+        if (res.data?.success && Array.isArray(res.data.organizations)) {
+          orgsList = res.data.organizations;
+          setAvailableOrgs(orgsList);
+        }
+      } catch (err: any) {
+        console.warn('Failed to load organizations for wizard:', err);
       }
-    } catch {}
-    loadStatus();
+
+      // Determine active target organization
+      const targetId = organizationId || activeOrgId;
+      let matchedOrg = orgsList.find(o => o.id === targetId);
+
+      // Check stored selection or brand in localStorage
+      if (!matchedOrg) {
+        try {
+          const storedSelected = localStorage.getItem('dakshora_selected_school_wizard');
+          if (storedSelected) matchedOrg = JSON.parse(storedSelected);
+          if (!matchedOrg) {
+            const savedBrand = localStorage.getItem('dakshora_school_brand');
+            if (savedBrand) matchedOrg = JSON.parse(savedBrand);
+          }
+        } catch {}
+      }
+
+      if (matchedOrg) {
+        populateWizardWithOrgData(matchedOrg);
+      }
+
+      loadStatus(targetId, matchedOrg);
+    };
+
+    initOrgsAndWizard();
   }, [organizationId]);
 
-  const loadStatus = async () => {
+  const loadStatus = async (targetOrgId?: string, matchedOrgFallback?: any) => {
+    const idToFetch = targetOrgId || activeOrgId || organizationId;
     setLoading(true);
     try {
-      const res = await fetchOnboardingStatus(organizationId);
+      const res = await fetchOnboardingStatus(idToFetch);
       if (res.data?.success) {
         setOnboarding(res.data.onboarding);
         setChecklist(res.data.checklist);
@@ -599,11 +659,48 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
         if (res.data.onboarding.status === 'active') {
           setIsActivated(true);
         }
+
+        // Intelligently populate forms with draft data returned by backend
+        const draft = res.data.onboarding.draft_data || res.data.onboarding.data;
+        if (draft) {
+          populateWizardWithOrgData(matchedOrgFallback, draft);
+        }
       }
     } catch (err: any) {
       console.warn('Onboarding status fetch warning:', err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSwitchSchool = (newOrgId: string) => {
+    setActiveOrgId(newOrgId);
+    try {
+      localStorage.setItem('dakshora_onboarding_org_id', newOrgId);
+    } catch {}
+
+    const selected = availableOrgs.find(o => o.id === newOrgId);
+    if (selected) {
+      populateWizardWithOrgData(selected);
+      try {
+        localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify(selected));
+        localStorage.setItem('dakshora_school_brand', JSON.stringify({
+          schoolName: selected.name,
+          shortName: (selected.name || '').split(' ')[0] || 'DAKSHORA',
+          board: (selected as any).board || 'CBSE',
+          schoolCode: (selected as any).instituteCode || (selected as any).schoolCode || (selected as any).tenant_code || '10001',
+          principalName: (selected as any).principal_name || (selected as any).principalName || 'Principal',
+          contactEmail: (selected as any).contact_email || (selected as any).email || '',
+          contactPhone: (selected as any).contact_phone || (selected as any).phone || '',
+          address: (selected as any).address || ''
+        }));
+      } catch {}
+      loadStatus(newOrgId, selected);
+      onShowToast(
+        'info',
+        'Loaded School Tenant Profile 🏫',
+        `Setup Wizard basic organization pre-filled for '${selected.name}'.`
+      );
     }
   };
 
@@ -1042,6 +1139,47 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
           </div>
         </div>
 
+        {/* ACTIVE ONBOARDED SCHOOL SELECTOR & AUTO-FILL STATUS BAR */}
+        <div className="my-4 p-3.5 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]" />
+            <span className="text-slate-400 font-mono text-xs">Active Setup Tenant:</span>
+            <span className="font-black text-white text-sm tracking-wide">
+              {profileForm.schoolName}
+            </span>
+            <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-black bg-amber-500 text-slate-950 shadow-xs flex items-center gap-1">
+              <span>Code:</span>
+              <span>{profileForm.schoolCode || '10001'}</span>
+            </span>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              {profileForm.board}
+            </span>
+            <span className="text-emerald-400 font-mono text-[11px] font-bold flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Basic Org Data Auto-Filled</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-slate-400 font-mono text-xs whitespace-nowrap">Switch School:</label>
+            <select
+              value={activeOrgId}
+              onChange={(e) => handleSwitchSchool(e.target.value)}
+              className="bg-slate-950 text-indigo-200 border border-indigo-500/40 rounded-xl px-3 py-1.5 text-xs font-mono font-bold focus:outline-none focus:border-indigo-400 cursor-pointer shadow-inner"
+            >
+              {availableOrgs.length > 0 ? (
+                availableOrgs.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name} ({org.instituteCode || (org as any).school_code || (org as any).tenant_code || '10001'})
+                  </option>
+                ))
+              ) : (
+                <option value={activeOrgId}>{profileForm.schoolName} ({profileForm.schoolCode || '10001'})</option>
+              )}
+            </select>
+          </div>
+        </div>
+
         {/* Progress Bar & Current Status */}
         <div className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs font-mono font-bold text-slate-700">
@@ -1181,10 +1319,15 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
           {/* ================================================================== */}
           {currentStep === 1 && (
             <div className="space-y-5">
-              <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 leading-relaxed flex items-center gap-3">
-                <Sparkles className="w-5 h-5 text-indigo-600 shrink-0" />
-                <span>
-                  <strong>Tenant Details Auto-Loaded:</strong> The organization legal boundary and SaaS tier are pre-filled from your authenticated institutional session.
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 via-purple-50 to-emerald-50 border border-indigo-200 text-xs text-indigo-950 leading-relaxed flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>
+                    <strong>Tenant Organization Auto-Filled:</strong> Basic legal organization details for <strong>{orgForm.name}</strong> (Code: <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-300">{profileForm.schoolCode || '10001'}</code>) have been loaded automatically. No re-entry required!
+                  </span>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-mono font-bold border border-emerald-300 shrink-0">
+                  ✓ Pre-filled
                 </span>
               </div>
 
@@ -1253,6 +1396,18 @@ export const SchoolOnboardingWizard: React.FC<SchoolOnboardingWizardProps> = ({
           {/* ================================================================== */}
           {currentStep === 2 && (
             <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 border border-emerald-200 text-xs text-emerald-950 leading-relaxed flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>
+                    <strong>School Profile Auto-Populated:</strong> School name, 5-digit code (<code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-emerald-300">{profileForm.schoolCode || '10001'}</code>), board affiliation, and principal contacts are populated from the active tenant record.
+                  </span>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[11px] font-mono font-bold border border-emerald-300 shrink-0">
+                  ✓ Verified
+                </span>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">

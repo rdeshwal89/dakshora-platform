@@ -103,7 +103,7 @@ interface SuperAdminHubProps {
   onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
   onNavigateToTab?: (tab: string) => void;
   onSwitchToSchool?: (school: any) => void;
-  onNavigateToSurface?: (surface: any) => void;
+  onNavigateToSurface?: (surface: any, targetOrgId?: string) => void;
 }
 
 type PlatformTab =
@@ -555,6 +555,18 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
       onSwitchToSchool(schoolOrOrg);
     } else if (onNavigateToSurface) {
       onNavigateToSurface('school_erp');
+    }
+  };
+
+  const handleOpenSchoolWizard = (schoolOrOrg: any) => {
+    handleLaunchSchool(schoolOrOrg);
+    const orgId = schoolOrOrg.organizationId || schoolOrOrg.organization_id || schoolOrOrg.id || 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+    try {
+      localStorage.setItem('dakshora_onboarding_org_id', orgId);
+      localStorage.setItem('dakshora_selected_school_wizard', JSON.stringify(schoolOrOrg));
+    } catch {}
+    if (onNavigateToSurface) {
+      onNavigateToSurface('school_onboarding', orgId);
     }
   };
 
@@ -1525,6 +1537,14 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
                               <td className="p-3 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
                                   <button
+                                    onClick={() => handleOpenSchoolWizard(sch)}
+                                    className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                                    title="Open 16-Step Setup Wizard with this School's profile pre-filled"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                                    <span>Setup Wizard</span>
+                                  </button>
+                                  <button
                                     onClick={() => handleLaunchSchool(sch)}
                                     className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
                                   >
@@ -1826,6 +1846,14 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
 
                 <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                   <button
+                    onClick={() => handleOpenSchoolWizard(sch)}
+                    className="px-2.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                    title="Open 16-Step Setup Wizard with this School's profile pre-filled"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Wizard</span>
+                  </button>
+                  <button
                     onClick={() => handleLaunchSchool(sch)}
                     className="flex-1 px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
@@ -2048,9 +2076,19 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
                   ></div>
                 </div>
 
-                <div className="flex justify-between items-center text-xs font-mono text-slate-600">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-slate-600">
                   <span>Current Step: <strong className="text-slate-900">Step {onb.currentStep} of 16</strong> ({onb.completedStepsCount} Completed)</span>
-                  <span>Started: {new Date(onb.startedAt).toLocaleDateString()}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">Started: {new Date(onb.startedAt).toLocaleDateString()}</span>
+                    <button
+                      onClick={() => handleOpenSchoolWizard({ organizationId: onb.organizationId, name: onb.organizationName })}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                      title="Open 16-Step Setup Wizard for this School"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-200" />
+                      <span>Setup Wizard</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

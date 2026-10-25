@@ -526,7 +526,22 @@ export async function fetchOrganizations() {
   return makeApiCall<{ organizations: OrganizationRecord[] }>('/api/organizations');
 }
 
-export async function createOrganization(data: { name: string; slug: string; plan?: string; instituteCode?: string }) {
+export async function createOrganization(data: {
+  name: string;
+  slug: string;
+  plan?: string;
+  instituteCode?: string;
+  board?: string;
+  principalName?: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  state?: string;
+  address?: string;
+  students?: string;
+  notes?: string;
+  session?: string;
+}) {
   return makeApiCall<{ organization: OrganizationRecord }>('/api/organizations', {
     method: 'POST',
     body: JSON.stringify(data),

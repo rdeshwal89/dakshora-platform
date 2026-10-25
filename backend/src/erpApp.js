@@ -2877,7 +2877,26 @@ app.get("/api/organizations", requireAuth, async (req, res) => {
 
 app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
-    const { name, slug, plan, instituteCode, institute_code, board, city, state } = req.body;
+    const {
+      name,
+      slug,
+      plan,
+      instituteCode,
+      institute_code,
+      board,
+      city,
+      state,
+      principalName,
+      principal_name,
+      email,
+      contact_email,
+      phone,
+      contact_phone,
+      students,
+      notes,
+      session,
+      address
+    } = req.body;
     if (!name || !slug) return res.status(400).json({ success: false, message: "Name and Slug are required" });
 
     // 5-Digit Institute Code Validation & Allocation
@@ -2894,6 +2913,15 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
       cleanInstituteCode = await generateUnique5DigitInstituteCode(supabase);
     }
 
+    const assignedPrincipal = principalName || principal_name || "Principal";
+    const assignedEmail = email || contact_email || "";
+    const assignedPhone = phone || contact_phone || "";
+    const assignedCity = city || "New Delhi";
+    const assignedState = state || "Delhi";
+    const assignedAddress = address || (assignedCity ? `${assignedCity}, ${assignedState}` : "");
+    const assignedSession = session || "2026-27";
+    const assignedBoard = board || "CBSE";
+
     const newOrg = {
       id: crypto.randomUUID(),
       name: name.trim(),
@@ -2904,9 +2932,20 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
       schoolCode: cleanInstituteCode,
       tenant_code: cleanInstituteCode,
       tenantCode: cleanInstituteCode,
-      board: board || "CBSE",
-      city: city || "New Delhi",
-      state: state || "Delhi",
+      board: assignedBoard,
+      city: assignedCity,
+      state: assignedState,
+      address: assignedAddress,
+      principal_name: assignedPrincipal,
+      principalName: assignedPrincipal,
+      contact_email: assignedEmail,
+      contact_phone: assignedPhone,
+      email: assignedEmail,
+      phone: assignedPhone,
+      students: students || "",
+      notes: notes || "",
+      session: assignedSession,
+      currentSession: assignedSession,
       plan: plan || "growth",
       status: "active",
       industry: "Education",
@@ -2918,6 +2957,56 @@ app.post("/api/organizations", requireAuth, requireSuperAdmin, async (req, res) 
 
     // Auto-bootstrap classes, session, subjects, and full module entitlements immediately
     ensureTenantBootstrapped(newOrg.id, newOrg.name, newOrg.slug, newOrg.plan);
+
+    // Auto-initialize Onboarding Wizard state for instant pre-population
+    if (typeof ERP_ONBOARDING !== "undefined") {
+      ERP_ONBOARDING[newOrg.id] = {
+        id: "onb-" + newOrg.id.slice(0, 8),
+        organization_id: newOrg.id,
+        organizationId: newOrg.id,
+        current_step: 1,
+        completed_steps: [1],
+        status: "in_progress",
+        draft_data: {
+          organizationId: newOrg.id,
+          tenantId: newOrg.id,
+          tenantCode: cleanInstituteCode,
+          instituteCode: cleanInstituteCode,
+          schoolCode: cleanInstituteCode,
+          schoolName: newOrg.name,
+          name: newOrg.name,
+          slug: newOrg.slug,
+          board: assignedBoard,
+          medium: "English",
+          schoolType: "K-12 Day Cum Boarding",
+          principalName: assignedPrincipal,
+          email: assignedEmail,
+          phone: assignedPhone,
+          city: assignedCity,
+          state: assignedState,
+          address: assignedAddress,
+          students: students || "",
+          notes: notes || "",
+          academicSession: { name: assignedSession, startDate: "2026-04-01", endDate: "2027-03-31", isCurrent: true },
+          campus: {
+            name: `${newOrg.name} - Main Campus`,
+            code: `CAMPUS-${cleanInstituteCode}`,
+            city: assignedCity,
+            state: assignedState,
+            address: assignedAddress,
+            contactEmail: assignedEmail,
+            contactPhone: assignedPhone,
+            principalName: assignedPrincipal,
+            isMain: true
+          }
+        },
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        activated_at: null,
+        created_by: req?.user?.email || "admin@dakshora.com",
+        updated_at: new Date().toISOString()
+      };
+    }
 
     if (supabase) {
       try {
