@@ -1,5 +1,19 @@
 [
   {
+    "id": "struct-1792983043067",
+    "academicSession": "2026-27",
+    "grade": "Class 9",
+    "feeHead": "Tuition Fee",
+    "amountINR": 12000,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:43.067Z",
+    "db_id": "d7ab5007-27fc-473b-9c72-8af0f9a39107"
+  },
+  {
     "id": "fc4f8cfb-e5a7-4c88-bb11-2adde9446c75",
     "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     "academic_session_id": "97bb2de7-1040-4483-97e4-f89fd9f81f1a",
@@ -82,5 +96,83 @@
     "created_at": "2026-10-23T15:02:30.915926+00:00",
     "amountINR": 12000,
     "feeHead": "Term 2 Composite Tuition Fee"
+  },
+  {
+    "id": "struct-862158eb-1",
+    "academicSession": "2026-27",
+    "grade": "Class 10",
+    "feeHead": "Tuition Fee",
+    "amountINR": 12500,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
+  },
+  {
+    "id": "struct-862158eb-2",
+    "academicSession": "2026-27",
+    "grade": "Class 10",
+    "feeHead": "Annual Development Fee",
+    "amountINR": 5000,
+    "frequency": "annually",
+    "dueDay": 15,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
+  },
+  {
+    "id": "struct-862158eb-3",
+    "academicSession": "2026-27",
+    "grade": "Class 10",
+    "feeHead": "Examination Fee",
+    "amountINR": 1200,
+    "frequency": "semi-annually",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
+  },
+  {
+    "id": "struct-862158eb-4",
+    "academicSession": "2026-27",
+    "grade": "Class 10",
+    "feeHead": "Transport Fee",
+    "amountINR": 4500,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": false,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
+  },
+  {
+    "id": "struct-862158eb-5",
+    "academicSession": "2026-27",
+    "grade": "Class 9",
+    "feeHead": "Tuition Fee",
+    "amountINR": 11500,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
+  },
+  {
+    "id": "struct-862158eb-6",
+    "academicSession": "2026-27",
+    "grade": "Class 1",
+    "feeHead": "Tuition Fee",
+    "amountINR": 8500,
+    "frequency": "quarterly",
+    "dueDay": 10,
+    "isMandatory": true,
+    "status": "active",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:36.780Z"
   }
 ]

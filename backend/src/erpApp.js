@@ -17199,9 +17199,33 @@ app.post("/api/erp/principal/verify-otp", async (req, res) => {
 });
 
 // GET /api/erp/staff-responsibilities/all - Institutional Charges & Responsibilities Directory
-app.get("/api/erp/staff-responsibilities/all", (req, res) => {
+app.get("/api/erp/staff-responsibilities/all", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { session, category, search } = req.query;
+
+  // Ensure staff for this tenant are loaded into ERP_STAFF
+  if (supabase && orgId && !ERP_STAFF.some(st => st.organization_id === orgId)) {
+    try {
+      const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
+      if (dbStaff && dbStaff.length > 0) {
+        dbStaff.forEach(s => {
+          if (!ERP_STAFF.some(existing => existing.id === s.id)) {
+            const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+            ERP_STAFF.push({
+              ...s,
+              name: fullName,
+              firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+              lastName: s.last_name || "",
+              empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
+              organization_id: s.organization_id || orgId,
+              role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+              status: s.is_active ? "active" : "inactive"
+            });
+          }
+        });
+      }
+    } catch (_) {}
+  }
 
   let assignments = ERP_STAFF_RESPONSIBILITIES.filter(r => r.organization_id === orgId);
   if (session && session !== "all") {
@@ -17210,15 +17234,15 @@ app.get("/api/erp/staff-responsibilities/all", (req, res) => {
 
   // Enrich with live staff details
   const enriched = assignments.map(r => {
-    const staff = ERP_STAFF.find(s => s.id === r.staff_id || s.empId === r.staff_id);
+    let staff = ERP_STAFF.find(s => s.id === r.staff_id || s.empId === r.staff_id || s.employee_code === r.staff_id);
     return {
       ...r,
       staff_name: staff ? staff.name : (r.staff_name || "Unassigned"),
-      empId: staff ? staff.empId : "—",
-      designation: staff ? staff.designation : "Faculty",
-      department: staff ? staff.department : "Academics",
-      phone: staff ? staff.phone : "—",
-      email: staff ? staff.email : "—",
+      empId: staff ? (staff.empId || staff.employee_code || "—") : (r.empId || "—"),
+      designation: staff ? staff.designation : (r.designation || "Faculty"),
+      department: staff ? staff.department : (r.department || "Academics"),
+      phone: staff ? (staff.phone || "—") : (r.phone || "—"),
+      email: staff ? (staff.email || "—") : (r.email || "—"),
       photoUrl: staff ? staff.photoUrl : null
     };
   });
@@ -19753,7 +19777,13 @@ app.get("/api/erp/responsibilities", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, active, search } = req.query;
   const types = ResponsibilityService.getResponsibilityTypes(orgId, { category, active, search });
-  res.json({ success: true, count: types.length, responsibilities: types });
+  res.json({
+    success: true,
+    count: types.length,
+    total: types.length,
+    responsibilities: types,
+    responsibilityTypes: types
+  });
 });
 
 // 2. POST /api/erp/responsibilities - School Admin creates / customizes template
@@ -19764,7 +19794,7 @@ app.post("/api/erp/responsibilities", (req, res) => {
     return res.status(400).json({ success: false, message: "Code and Name are required" });
   }
   const created = ResponsibilityService.createResponsibilityType(orgId, req.body);
-  res.status(201).json({ success: true, responsibility: created });
+  res.status(201).json({ success: true, responsibility: created, responsibilityType: created });
 });
 
 // NOTE: Staff responsibility CRUD routes are registered in the canonical
@@ -20572,12 +20602,78 @@ app.delete(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (re
   res.json({ success: true, message: "Class deleted successfully" });
 });
 
+// Persistent File Storage for Section Class Teacher Assignments
+const SECTION_CLASS_TEACHERS_FILE = path.join(process.cwd(), "data", "section_class_teachers.json");
+function loadSectionClassTeachersFromFile() {
+  try {
+    if (fs.existsSync(SECTION_CLASS_TEACHERS_FILE)) {
+      return JSON.parse(fs.readFileSync(SECTION_CLASS_TEACHERS_FILE, "utf-8")) || {};
+    }
+  } catch (_) {}
+  return {};
+}
+function saveSectionClassTeachersToFile(mapping) {
+  try {
+    const parentDir = path.dirname(SECTION_CLASS_TEACHERS_FILE);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+    fs.writeFileSync(SECTION_CLASS_TEACHERS_FILE, JSON.stringify(mapping, null, 2), "utf-8");
+  } catch (_) {}
+}
+
+// Helper to determine NEP 2020 Curricular Stage
+function computeNepStage(gradeName = '') {
+  const g = String(gradeName || '').toLowerCase().trim();
+  // Check Senior Secondary first (11, 12)
+  if (g.includes('11') || g.includes('12') || g.includes('xi') || g.includes('xii') || g.includes('senior')) {
+    return 'Senior Secondary';
+  }
+  // Secondary (9, 10)
+  if (g.includes('class 9') || g.includes('grade 9') || g.includes('class 10') || g.includes('grade 10') || g === '9' || g === '10' || g.includes('ix') || g.includes(' x ')) {
+    return 'Secondary';
+  }
+  // Middle (6, 7, 8)
+  if (g.includes('class 6') || g.includes('grade 6') || g.includes('class 7') || g.includes('grade 7') || g.includes('class 8') || g.includes('grade 8') || g === '6' || g === '7' || g === '8' || g.includes('vi') || g.includes('vii') || g.includes('viii')) {
+    return 'Middle';
+  }
+  // Preparatory (3, 4, 5)
+  if (g.includes('class 3') || g.includes('grade 3') || g.includes('class 4') || g.includes('grade 4') || g.includes('class 5') || g.includes('grade 5') || g === '3' || g === '4' || g === '5' || g.includes('iii') || g.includes('iv') || g.includes(' v ')) {
+    return 'Preparatory';
+  }
+  // Foundational (Nursery, LKG, UKG, KG, 1, 2)
+  return 'Foundational';
+}
+
 // 4d. Academic Sections Endpoints (PostgreSQL Backed)
 app.get("/api/erp/academics/sections", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   if (!orgId) return res.status(403).json({ success: false, message: "Organization required" });
   const { grade } = req.query;
 
+  // Ensure staff for this tenant are loaded into ERP_STAFF
+  if (supabase && orgId && !ERP_STAFF.some(st => st.organization_id === orgId)) {
+    try {
+      const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
+      if (dbStaff && dbStaff.length > 0) {
+        dbStaff.forEach(s => {
+          if (!ERP_STAFF.some(existing => existing.id === s.id)) {
+            const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+            ERP_STAFF.push({
+              ...s,
+              name: fullName,
+              firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+              lastName: s.last_name || "",
+              empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
+              organization_id: s.organization_id || orgId,
+              role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+              status: s.is_active ? "active" : "inactive"
+            });
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  const persistedTeachers = loadSectionClassTeachersFromFile();
   let sections = [];
   if (supabase && orgId) {
     try {
@@ -20595,7 +20691,7 @@ app.get("/api/erp/academics/sections", async (req, res) => {
           name: s.name,
           roomNumber: s.room_no || "R101",
           capacity: s.capacity || 40,
-          classTeacherId: s.class_teacher_member_id || null,
+          classTeacherId: persistedTeachers[s.id] || s.class_teacher_member_id || null,
           status: "active",
           organization_id: s.organization_id
         }));
@@ -20617,6 +20713,11 @@ app.get("/api/erp/academics/sections", async (req, res) => {
   const tenantMappings = ERP_SECTION_SUBJECTS.filter(m => m.organization_id === orgId);
 
   const enrichedSections = sections.map(sec => {
+    const assignedTeacherId = persistedTeachers[sec.id] || sec.classTeacherId || null;
+    let teacher = null;
+    if (assignedTeacherId) {
+      teacher = ERP_STAFF.find(st => (st.organization_id === orgId) && (st.id === assignedTeacherId || st.employee_code === assignedTeacherId || st.empId === assignedTeacherId));
+    }
     const studentCount = tenantStudents.filter(s => 
       s.grade && sec.grade && s.grade.toLowerCase() === sec.grade.toLowerCase() && 
       s.section && sec.section && s.section.toLowerCase() === sec.section.toLowerCase() && 
@@ -20628,7 +20729,16 @@ app.get("/api/erp/academics/sections", async (req, res) => {
     );
     return {
       ...sec,
+      classTeacherId: assignedTeacherId,
+      classTeacherName: teacher ? (teacher.name || `${teacher.firstName || teacher.first_name || ""} ${teacher.lastName || teacher.last_name || ""}`.trim()) : (sec.classTeacherName || null),
+      classTeacherEmpId: teacher ? (teacher.empId || teacher.employee_code || null) : null,
+      classTeacherPhone: teacher ? (teacher.phone || null) : null,
+      classTeacherEmail: teacher ? (teacher.email || null) : null,
+      classTeacherDesignation: teacher ? (teacher.designation || null) : null,
+      classTeacherDepartment: teacher ? (teacher.department || null) : null,
+      stage: computeNepStage(sec.grade),
       studentCount,
+      enrolledStudents: studentCount,
       subjectsCount: subjects.length,
       subjects
     };
@@ -20781,18 +20891,52 @@ app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
     return res.status(404).json({ success: false, message: "Section not found" });
   }
 
+  const persistedTeachers = loadSectionClassTeachersFromFile();
+
   if (!teacherId) {
+    delete persistedTeachers[id];
+    saveSectionClassTeachersToFile(persistedTeachers);
+
     sec.classTeacherId = null;
     sec.classTeacherName = null;
     if (supabase && orgId) {
       try { await supabase.from("sections").update({ class_teacher_member_id: null }).eq("organization_id", orgId).eq("id", id); } catch (_) {}
     }
+
+    // Remove any CLASS_TEACHER responsibility for this section
+    const rIdx = ERP_STAFF_RESPONSIBILITIES.findIndex(r => (r.organization_id === orgId) && r.responsibility_code === "CLASS_TEACHER" && r.scope_id === id);
+    if (rIdx !== -1) {
+      ERP_STAFF_RESPONSIBILITIES.splice(rIdx, 1);
+      if (typeof saveStaffResponsibilitiesToFile === "function") saveStaffResponsibilitiesToFile();
+    }
+
     await recordAuditLog("erp.class_teacher_unassigned", req.user?.email || "admin", "academic_section", sec.id, req);
     return res.json({ success: true, message: `Class teacher removed from ${sec.grade} ${sec.section}`, section: sec });
   }
 
-  const staff = ERP_STAFF.find(st => (st.organization_id === orgId) && st.id === teacherId);
-  const teacherName = staff ? (staff.name || `${staff.firstName || ""} ${staff.lastName || ""}`.trim()) : "Teacher";
+  let staff = ERP_STAFF.find(st => (st.organization_id === orgId) && (st.id === teacherId || st.employee_code === teacherId));
+  if (!staff && supabase && orgId) {
+    try {
+      const { data: dbStf } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${teacherId},employee_code.eq.${teacherId}`).maybeSingle();
+      if (dbStf) {
+        const fullName = [dbStf.first_name, dbStf.last_name].filter(Boolean).join(" ") || dbStf.employee_code || "Faculty";
+        staff = {
+          ...dbStf,
+          name: fullName,
+          firstName: dbStf.first_name || fullName.split(" ")[0] || "Faculty",
+          lastName: dbStf.last_name || "",
+          empId: dbStf.employee_code || "FAC-01",
+          organization_id: orgId
+        };
+        ERP_STAFF.push(staff);
+      }
+    } catch (_) {}
+  }
+  const teacherName = staff ? (staff.name || `${staff.firstName || staff.first_name || ""} ${staff.lastName || staff.last_name || ""}`.trim()) : "Teacher";
+
+  persistedTeachers[id] = teacherId;
+  saveSectionClassTeachersToFile(persistedTeachers);
+
   sec.classTeacherId = teacherId;
   sec.classTeacherName = teacherName;
 
@@ -20800,8 +20944,50 @@ app.post("/api/erp/academics/sections/:id/class-teacher", async (req, res) => {
     try { await supabase.from("sections").update({ class_teacher_member_id: teacherId }).eq("organization_id", orgId).eq("id", id); } catch (_) {}
   }
 
+  // Synchronize with ERP_STAFF_RESPONSIBILITIES
+  const existingRIdx = ERP_STAFF_RESPONSIBILITIES.findIndex(r => (r.organization_id === orgId) && r.responsibility_code === "CLASS_TEACHER" && r.scope_id === id);
+  if (existingRIdx !== -1) {
+    ERP_STAFF_RESPONSIBILITIES.splice(existingRIdx, 1);
+  }
+  ERP_STAFF_RESPONSIBILITIES.unshift({
+    id: `sresp-ct-${id.slice(-6)}`,
+    organization_id: orgId,
+    school_id: "sch-main",
+    campus_id: "main-campus",
+    staff_id: teacherId,
+    staff_name: teacherName,
+    responsibility_type_id: "a0000001-0000-0000-0000-000000000001",
+    responsibility_code: "CLASS_TEACHER",
+    responsibility_name: "Class Teacher",
+    scope_type: "SECTION",
+    scope_id: id,
+    scope_name: `${sec.grade} - Section ${sec.section}`,
+    academic_session_id: "2026-27",
+    is_primary: true,
+    start_date: new Date().toISOString().split("T")[0],
+    end_date: null,
+    status: "active",
+    notes: `Assigned as primary Class Teacher for ${sec.grade} ${sec.section}`,
+    created_by: req.user?.email || "admin",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  });
+  if (typeof saveStaffResponsibilitiesToFile === "function") saveStaffResponsibilitiesToFile();
+
   await recordAuditLog("erp.class_teacher_assigned", req.user?.email || "admin", "academic_section", `${sec.id}-${teacherId}`, req);
-  res.json({ success: true, message: `${teacherName} assigned as Class Teacher for ${sec.grade} ${sec.section}`, section: sec });
+  res.json({
+    success: true,
+    message: `${teacherName} assigned as Class Teacher for ${sec.grade} ${sec.section}`,
+    section: {
+      ...sec,
+      classTeacherId: teacherId,
+      classTeacherName: teacherName,
+      classTeacherEmpId: staff?.empId || staff?.employee_code || null,
+      classTeacherPhone: staff?.phone || null,
+      classTeacherEmail: staff?.email || null,
+      classTeacherDesignation: staff?.designation || null
+    }
+  });
 });
 
 // 4e. Subjects Endpoints (PostgreSQL Backed)
@@ -43315,6 +43501,36 @@ let ERP_STAFF_RESPONSIBILITIES = [
   }
 ];
 
+// Persistent File Storage for Staff Responsibilities across Server Restarts
+const STAFF_RESPONSIBILITIES_PERSISTENCE_FILE = path.join(process.cwd(), "data", "staff_responsibilities.json");
+function loadStaffResponsibilitiesFromFile() {
+  try {
+    if (fs.existsSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE)) {
+      const raw = fs.readFileSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list) && list.length > 0) {
+        list.forEach(item => {
+          if (!ERP_STAFF_RESPONSIBILITIES.some(r => r.id === item.id)) {
+            ERP_STAFF_RESPONSIBILITIES.push(item);
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[Staff Responsibilities] File load notice:", err.message);
+  }
+}
+function saveStaffResponsibilitiesToFile() {
+  try {
+    const parentDir = path.dirname(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE);
+    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
+    fs.writeFileSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE, JSON.stringify(ERP_STAFF_RESPONSIBILITIES, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[Staff Responsibilities] File save notice:", err.message);
+  }
+}
+loadStaffResponsibilitiesFromFile();
+
 // Ensure Ajay Kumar exists in ERP_STAFF and assignments exist in ERP_TEACHER_ASSIGNMENTS
 function ensureAjayKumarSeed() {
   const orgId = "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
@@ -43814,18 +44030,33 @@ app.patch("/api/erp/responsibilities/:id/permissions", async (req, res) => {
 });
 
 // 5. GET /api/erp/staff/:staffId/responsibilities - Staff Responsibilities
-app.get("/api/erp/staff/:staffId/responsibilities", (req, res) => {
+app.get("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { staffId } = req.params;
   const { session } = req.query;
 
-  const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
+  let staff = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
+  if (!staff && supabase && orgId) {
+    try {
+      const { data: dbStf } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${staffId},employee_code.eq.${staffId}`).maybeSingle();
+      if (dbStf) {
+        staff = {
+          id: dbStf.id,
+          name: `${dbStf.first_name || ""} ${dbStf.last_name || ""}`.trim() || "Staff",
+          empId: dbStf.employee_code || "FAC-01",
+          designation: dbStf.designation || "Faculty",
+          department: dbStf.department || "Academics",
+          organization_id: orgId
+        };
+      }
+    } catch (_) {}
+  }
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found." });
   }
 
   let responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => 
-    (r.organization_id === orgId) && r.staff_id === staffId
+    (r.organization_id === orgId) && (r.staff_id === staffId || r.staff_id === staff.id)
   );
 
   if (session && session !== "all") {
@@ -43850,7 +44081,22 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   }
 
   const { staffId } = req.params;
-  const staff = ERP_STAFF.find(s => (s.organization_id === orgId) && s.id === staffId);
+  let staff = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
+  if (!staff && supabase && orgId) {
+    try {
+      const { data: dbStf } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${staffId},employee_code.eq.${staffId}`).maybeSingle();
+      if (dbStf) {
+        staff = {
+          id: dbStf.id,
+          name: `${dbStf.first_name || ""} ${dbStf.last_name || ""}`.trim() || "Staff",
+          empId: dbStf.employee_code || "FAC-01",
+          designation: dbStf.designation || "Faculty",
+          department: dbStf.department || "Academics",
+          organization_id: orgId
+        };
+      }
+    } catch (_) {}
+  }
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found in tenant organization." });
   }
@@ -43874,17 +44120,29 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
 
   let respType = null;
   if (responsibility_type_id) {
-    respType = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.id === responsibility_type_id);
+    respType = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.id === responsibility_type_id);
+    if (!respType) {
+      const allTypes = ResponsibilityService.getResponsibilityTypes(orgId);
+      respType = allTypes.find(t => t.id === responsibility_type_id);
+    }
   }
-  if (!respType && responsibility_code) {
-    const cleanCode = responsibility_code.trim().toUpperCase();
-    respType = ERP_RESPONSIBILITY_TYPES.find(t => (t.organization_id === orgId) && t.code === cleanCode);
+  if (!respType && (responsibility_code || req.body.code)) {
+    const cleanCode = (responsibility_code || req.body.code).trim().toUpperCase();
+    respType = ERP_RESPONSIBILITY_TYPES.find(t => (!t.organization_id || t.organization_id === orgId) && t.code === cleanCode);
+    if (!respType) {
+      const allTypes = ResponsibilityService.getResponsibilityTypes(orgId);
+      respType = allTypes.find(t => t.code === cleanCode);
+    }
+  }
+  if (!respType && responsibility_type_id) {
+    const allTypes = ResponsibilityService.getResponsibilityTypes(orgId);
+    respType = allTypes.find(t => (t.name || "").toLowerCase() === String(responsibility_type_id).toLowerCase() || (t.code || "").toLowerCase() === String(responsibility_type_id).toLowerCase());
   }
   if (!respType) {
     return res.status(400).json({ success: false, message: "Invalid responsibility type." });
   }
   const cleanCode = respType.code;
-  if (!respType.is_active) {
+  if (respType.is_active === false) {
     return res.status(400).json({ success: false, message: `Responsibility type '${respType.name}' is currently deactivated.` });
   }
 
@@ -43896,7 +44154,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   // Conflict detection: Same staff, same responsibility, same scope, same session
   const existingActive = ERP_STAFF_RESPONSIBILITIES.find(r =>
     (r.organization_id === orgId) &&
-    r.staff_id === staffId &&
+    r.staff_id === staff.id &&
     r.responsibility_code === cleanCode &&
     r.scope_id.toLowerCase() === scope_id.trim().toLowerCase() &&
     r.academic_session_id === academic_session_id &&
@@ -43913,7 +44171,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   // If set to primary, clear existing primary for this staff in this session
   if (is_primary) {
     ERP_STAFF_RESPONSIBILITIES.forEach(r => {
-      if (r.staff_id === staffId && r.academic_session_id === academic_session_id && r.is_primary) {
+      if (r.staff_id === staff.id && r.academic_session_id === academic_session_id && r.is_primary) {
         r.is_primary = false;
       }
     });
@@ -43944,6 +44202,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   };
 
   ERP_STAFF_RESPONSIBILITIES.unshift(newAssignment);
+  if (typeof saveStaffResponsibilitiesToFile === "function") saveStaffResponsibilitiesToFile();
 
   await recordAuditLog(
     "RESPONSIBILITY_ASSIGNED",
@@ -43993,6 +44252,7 @@ app.patch("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
   }
 
   assignment.updated_at = new Date().toISOString();
+  if (typeof saveStaffResponsibilitiesToFile === "function") saveStaffResponsibilitiesToFile();
 
   await recordAuditLog("RESPONSIBILITY_UPDATED", req.user?.email || "admin", "staff_responsibility", assignment.id, req);
 
@@ -44020,6 +44280,7 @@ app.delete("/api/erp/staff/:staffId/responsibilities/:id", async (req, res) => {
   }
 
   const removed = ERP_STAFF_RESPONSIBILITIES.splice(idx, 1)[0];
+  if (typeof saveStaffResponsibilitiesToFile === "function") saveStaffResponsibilitiesToFile();
   await recordAuditLog("RESPONSIBILITY_REMOVED", req.user?.email || "admin", "staff_responsibility", removed.id, req);
 
   res.json({
@@ -44818,13 +45079,18 @@ app.get("/api/erp/teacher/exams", (req, res) => {
 // GET /api/erp/teacher/workload - Dynamic Teacher Workload Summary
 app.get("/api/erp/teacher/workload", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
+  const isDemoSchool = (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) ||
+    ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") ||
+    ERP_STAFF.find(s => s.organization_id === orgId) ||
+    (isDemoSchool ? ERP_STAFF[0] : null);
+
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
 
   let assignments = AuthorizationService.getTeachingAssignments(staff.id, orgId);
-  if (assignments.length === 0) {
+  if (assignments.length === 0 && isDemoSchool) {
     assignments = [
       { id: `asg-${staff.id}-10A`, staffId: staff.id, staffName: staff.name, academicSession: "2026-27", grade: "Class 10", section: "A", subject: "Mathematics", periodsPerWeek: 6, organization_id: orgId },
       { id: `asg-${staff.id}-11Sci`, staffId: staff.id, staffName: staff.name, academicSession: "2026-27", grade: "Class 11", section: "Science", subject: "Mathematics & Statistics", periodsPerWeek: 6, organization_id: orgId },
@@ -44835,7 +45101,7 @@ app.get("/api/erp/teacher/workload", (req, res) => {
   }
 
   let responsibilities = AuthorizationService.getActiveResponsibilities(staff.id, orgId);
-  if (responsibilities.length === 0) {
+  if (responsibilities.length === 0 && isDemoSchool) {
     responsibilities = [
       { id: `sresp-${staff.id}-ct`, organization_id: orgId, staff_id: staff.id, staff_name: staff.name, responsibility_code: "CLASS_TEACHER", responsibility_name: "Class Teacher", scope_type: "SECTION", scope_id: "Class 10-A", scope_name: "Grade 10 - Section A", academic_session_id: "2026-27", is_primary: true, status: "active", workloadHours: 3, notes: "Primary Class Teacher - Daily roll-call, diary verification, parent guidance" },
       { id: `sresp-${staff.id}-hod`, organization_id: orgId, staff_id: staff.id, staff_name: staff.name, responsibility_code: "HOD", responsibility_name: "Head of Department (Mathematics)", scope_type: "DEPARTMENT", scope_id: "Mathematics", scope_name: "Department of Mathematics & STEM", academic_session_id: "2026-27", is_primary: false, status: "active", workloadHours: 2, notes: "Curriculum pacing, laboratory verification, and pedagogical peer reviews" },
@@ -44851,6 +45117,21 @@ app.get("/api/erp/teacher/workload", (req, res) => {
   const utilizationPercentage = Number(((totalWeeklyLoad / maxWeeklyCapacity) * 100).toFixed(1));
   const workloadStatus = utilizationPercentage > 100 ? "OVERLOAD" : utilizationPercentage >= 80 ? "OPTIMAL" : "LIGHT";
 
+  const dynamicBreakdown = [
+    ...assignments.map(a => ({
+      duty: `Core Teaching: ${a.grade || ""} ${a.section || ""} (${a.subject || "Subject"})`,
+      type: "Teaching",
+      periods: Number(a.periodsPerWeek) || 5,
+      weightPercent: totalWeeklyLoad > 0 ? Number((((Number(a.periodsPerWeek) || 5) / totalWeeklyLoad) * 100).toFixed(1)) : 0
+    })),
+    ...responsibilities.map(r => ({
+      duty: `${r.responsibility_name || "Institutional Duty"}: ${r.scope_name || r.scope_id || ""}`,
+      type: r.responsibility_code === "CLASS_TEACHER" ? "Administrative / pastoral" : "Institutional Incharge",
+      hours: Number(r.workloadHours) || 2,
+      weightPercent: totalWeeklyLoad > 0 ? Number((((Number(r.workloadHours) || 2) / totalWeeklyLoad) * 100).toFixed(1)) : 0
+    }))
+  ];
+
   const workloadCalculation = {
     teachingPeriodsWeekly: teachingPeriods,
     responsibilityHoursWeekly: responsibilityHours,
@@ -44861,14 +45142,8 @@ app.get("/api/erp/teacher/workload", (req, res) => {
     cbseNormStatus: "COMPLIANT (CBSE Affiliation Byelaws Chapter 5)",
     dailyPeriodsTarget: Math.round(teachingPeriods / 5),
     freePeriodsWeekly: maxWeeklyCapacity - totalWeeklyLoad,
-    breakdown: [
-      { duty: "Core Teaching: Class 10-A (Mathematics)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Core Teaching: Class 11 Science (Mathematics)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Core Teaching: Class 12 Science (Calculus & Vectors)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Practical Lab: Class 9-A (Mathematics Lab)", type: "Teaching", periods: 2, weightPercent: 7.7 },
-      { duty: "Class Teacher Duties: Class 10-A", type: "Administrative / pastoral", hours: 3, weightPercent: 11.5 },
-      { duty: "HOD Responsibilities: Mathematics Dept", type: "Academic Leadership", hours: 2, weightPercent: 7.7 },
-      { duty: "CBSE Examination Committee Duty", type: "Institutional Assessment", hours: 1, weightPercent: 3.8 }
+    breakdown: dynamicBreakdown.length > 0 ? dynamicBreakdown : [
+      { duty: "General Institutional Duties", type: "Teaching & Administration", periods: 0, weightPercent: 0 }
     ]
   };
 
@@ -44920,13 +45195,18 @@ app.get("/api/erp/teacher/workload", (req, res) => {
 // Alias route: /api/erp/teacher/workload-summary
 app.get("/api/erp/teacher/workload-summary", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const staff = AuthorizationService.resolveCallerStaff(req, orgId) || ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") || ERP_STAFF.find(s => s.role === "teacher") || ERP_STAFF[0];
+  const isDemoSchool = (orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+  const staff = AuthorizationService.resolveCallerStaff(req, orgId) ||
+    ERP_STAFF.find(s => (s.organization_id === orgId && (s.role === "teacher" || s.designation?.includes("Teacher") || s.staffType === "Teacher")) || s.employee_code === "DKS-FAC-03") ||
+    ERP_STAFF.find(s => s.organization_id === orgId) ||
+    (isDemoSchool ? ERP_STAFF[0] : null);
+
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff record not found." });
   }
 
   let assignments = AuthorizationService.getTeachingAssignments(staff.id, orgId);
-  if (assignments.length === 0) {
+  if (assignments.length === 0 && isDemoSchool) {
     assignments = [
       { id: `asg-${staff.id}-10A`, staffId: staff.id, staffName: staff.name, academicSession: "2026-27", grade: "Class 10", section: "A", subject: "Mathematics", periodsPerWeek: 6, organization_id: orgId },
       { id: `asg-${staff.id}-11Sci`, staffId: staff.id, staffName: staff.name, academicSession: "2026-27", grade: "Class 11", section: "Science", subject: "Mathematics & Statistics", periodsPerWeek: 6, organization_id: orgId },
@@ -44937,7 +45217,7 @@ app.get("/api/erp/teacher/workload-summary", (req, res) => {
   }
 
   let responsibilities = AuthorizationService.getActiveResponsibilities(staff.id, orgId);
-  if (responsibilities.length === 0) {
+  if (responsibilities.length === 0 && isDemoSchool) {
     responsibilities = [
       { id: `sresp-${staff.id}-ct`, organization_id: orgId, staff_id: staff.id, staff_name: staff.name, responsibility_code: "CLASS_TEACHER", responsibility_name: "Class Teacher", scope_type: "SECTION", scope_id: "Class 10-A", scope_name: "Grade 10 - Section A", academic_session_id: "2026-27", is_primary: true, status: "active", workloadHours: 3, notes: "Primary Class Teacher - Daily roll-call, diary verification, parent guidance" },
       { id: `sresp-${staff.id}-hod`, organization_id: orgId, staff_id: staff.id, staff_name: staff.name, responsibility_code: "HOD", responsibility_name: "Head of Department (Mathematics)", scope_type: "DEPARTMENT", scope_id: "Mathematics", scope_name: "Department of Mathematics & STEM", academic_session_id: "2026-27", is_primary: false, status: "active", workloadHours: 2, notes: "Curriculum pacing, laboratory verification, and pedagogical peer reviews" },
@@ -44953,6 +45233,21 @@ app.get("/api/erp/teacher/workload-summary", (req, res) => {
   const utilizationPercentage = Number(((totalWeeklyLoad / maxWeeklyCapacity) * 100).toFixed(1));
   const workloadStatus = utilizationPercentage > 100 ? "OVERLOAD" : utilizationPercentage >= 80 ? "OPTIMAL" : "LIGHT";
 
+  const dynamicBreakdown = [
+    ...assignments.map(a => ({
+      duty: `Core Teaching: ${a.grade || ""} ${a.section || ""} (${a.subject || "Subject"})`,
+      type: "Teaching",
+      periods: Number(a.periodsPerWeek) || 5,
+      weightPercent: totalWeeklyLoad > 0 ? Number((((Number(a.periodsPerWeek) || 5) / totalWeeklyLoad) * 100).toFixed(1)) : 0
+    })),
+    ...responsibilities.map(r => ({
+      duty: `${r.responsibility_name || "Institutional Duty"}: ${r.scope_name || r.scope_id || ""}`,
+      type: r.responsibility_code === "CLASS_TEACHER" ? "Administrative / pastoral" : "Institutional Incharge",
+      hours: Number(r.workloadHours) || 2,
+      weightPercent: totalWeeklyLoad > 0 ? Number((((Number(r.workloadHours) || 2) / totalWeeklyLoad) * 100).toFixed(1)) : 0
+    }))
+  ];
+
   const workloadCalculation = {
     teachingPeriodsWeekly: teachingPeriods,
     responsibilityHoursWeekly: responsibilityHours,
@@ -44963,14 +45258,8 @@ app.get("/api/erp/teacher/workload-summary", (req, res) => {
     cbseNormStatus: "COMPLIANT (CBSE Affiliation Byelaws Chapter 5)",
     dailyPeriodsTarget: Math.round(teachingPeriods / 5),
     freePeriodsWeekly: maxWeeklyCapacity - totalWeeklyLoad,
-    breakdown: [
-      { duty: "Core Teaching: Class 10-A (Mathematics)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Core Teaching: Class 11 Science (Mathematics)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Core Teaching: Class 12 Science (Calculus & Vectors)", type: "Teaching", periods: 6, weightPercent: 23.1 },
-      { duty: "Practical Lab: Class 9-A (Mathematics Lab)", type: "Teaching", periods: 2, weightPercent: 7.7 },
-      { duty: "Class Teacher Duties: Class 10-A", type: "Administrative / pastoral", hours: 3, weightPercent: 11.5 },
-      { duty: "HOD Responsibilities: Mathematics Dept", type: "Academic Leadership", hours: 2, weightPercent: 7.7 },
-      { duty: "CBSE Examination Committee Duty", type: "Institutional Assessment", hours: 1, weightPercent: 3.8 }
+    breakdown: dynamicBreakdown.length > 0 ? dynamicBreakdown : [
+      { duty: "General Institutional Duties", type: "Teaching & Administration", periods: 0, weightPercent: 0 }
     ]
   };
 

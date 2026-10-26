@@ -1967,6 +1967,7 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
           contactPhone: '+91 98765 11001',
           address: school.campus
         }}
+        organizationId={organizationId}
         activeSession={activeSession}
         onShowToast={onShowToast}
       />
@@ -1988,6 +1989,7 @@ export const LiveDashboardHub: React.FC<LiveDashboardHubProps> = ({
           contactPhone: '+91 98765 11001',
           address: school.campus
         }}
+        organizationId={organizationId}
         activeSession={activeSession}
         onShowToast={onShowToast}
       />

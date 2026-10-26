@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Printer,
@@ -16,9 +16,25 @@ import {
   Sparkles,
   FileText,
   Clock,
-  Layers
+  Layers,
+  RefreshCw,
+  UserPlus,
+  UserCheck,
+  Plus,
+  AlertCircle
 } from 'lucide-react';
 import { SchoolBrandProfile } from './SchoolBrandingModal';
+import {
+  fetchInstitutionalDuties,
+  fetchResponsibilityTypes,
+  assignStaffResponsibility,
+  fetchErpStaff
+} from '../services/api';
+import {
+  ErpStaffRecord,
+  ResponsibilityTypeRecord,
+  ResponsibilityScopeType
+} from '../types';
 
 export interface PortfolioResponsibilityEntry {
   id: string;
@@ -266,18 +282,172 @@ export const MASTER_TEACHER_PORTFOLIOS: PortfolioResponsibilityEntry[] = [
   }
 ];
 
+function resolveCategory(duty: any): 'Academics & Exams' | 'Discipline & Safety' | 'STEM & Innovation' | 'Sports & Culture' | 'Operations & Administration' {
+  const cat = (duty.category || '').toLowerCase();
+  const code = (duty.responsibility_code || '').toUpperCase();
+  const name = (duty.responsibility_name || '').toLowerCase();
+
+  if (
+    cat === 'examinations' ||
+    cat === 'academics' ||
+    code.includes('EXAM') ||
+    code.includes('CLASS_TEACHER') ||
+    code.includes('HOD') ||
+    code.includes('CBSE') ||
+    code.includes('TIMETABLE') ||
+    name.includes('exam') ||
+    name.includes('academic') ||
+    name.includes('curriculum')
+  ) {
+    return 'Academics & Exams';
+  }
+  if (
+    cat === 'student_welfare' ||
+    code.includes('DISCIPLINE') ||
+    code.includes('SAFETY') ||
+    code.includes('POCSO') ||
+    code.includes('HEALTH') ||
+    name.includes('discipline') ||
+    name.includes('safety') ||
+    name.includes('counsel')
+  ) {
+    return 'Discipline & Safety';
+  }
+  if (
+    cat === 'special_programs' ||
+    code.includes('ATL') ||
+    code.includes('ROBOTICS') ||
+    code.includes('STEM') ||
+    code.includes('ECO') ||
+    code.includes('NEEV') ||
+    name.includes('stem') ||
+    name.includes('robotics') ||
+    name.includes('eco') ||
+    name.includes('tinkering')
+  ) {
+    return 'STEM & Innovation';
+  }
+  if (
+    cat === 'co_curricular' ||
+    code.includes('SPORTS') ||
+    code.includes('CULTURE') ||
+    code.includes('HOUSE') ||
+    name.includes('sport') ||
+    name.includes('culture') ||
+    name.includes('annual day')
+  ) {
+    return 'Sports & Culture';
+  }
+  return 'Operations & Administration';
+}
+
+function resolveDutiesList(duty: any): string[] {
+  if (duty.notes && duty.notes.trim()) {
+    const splitNotes = duty.notes
+      .split(/\n|;|\./)
+      .map((s: string) => s.trim())
+      .filter((s: string) => s.length > 3);
+    if (splitNotes.length > 0) return splitNotes;
+  }
+  const code = (duty.responsibility_code || '').toUpperCase();
+  if (code.includes('EXAM')) {
+    return [
+      'Formulate Summative Assessment & Term Examination schedules',
+      'Confidential question paper moderation & secure printing',
+      'Report card & digital marksheet generation on Dakshora ERP',
+      'Tabulation register archiving and student rank list verification'
+    ];
+  }
+  if (code.includes('CLASS_TEACHER')) {
+    return [
+      'Daily morning student attendance & leave regularization',
+      'Pastoral student care, behavior monitoring & mentoring',
+      'Parent communication & quarterly PTM coordination',
+      'Academic progress oversight and gradebook signoff'
+    ];
+  }
+  if (code.includes('CBSE')) {
+    return [
+      'CBSE Board registration & List of Candidates (LOC) verification',
+      'Affiliation bye-laws compliance & annual OASIS data updates',
+      'Liaison with CBSE regional office & exam center superintendents'
+    ];
+  }
+  if (code.includes('DISCIPLINE')) {
+    return [
+      'Enforcement of zero-tolerance anti-bullying and anti-ragging protocols',
+      'CCTV campus surveillance coordination with administrative security',
+      'POCSO statutory guidelines compliance and grievance redressing'
+    ];
+  }
+  if (code.includes('SPORTS')) {
+    return [
+      'Coordination of inter-house sports competitions and annual athletic meet',
+      'Daily morning physical fitness drills and zero-period training',
+      'Sports equipment inventory, maintenance and first-aid protocols'
+    ];
+  }
+  if (code.includes('HOD')) {
+    return [
+      'Pedagogical alignment with NEP 2020 and CBSE learning objectives',
+      'Weekly teacher lesson plan & curriculum pacing audit',
+      'Quarterly academic progress reviews and remedial class planning'
+    ];
+  }
+  if (code.includes('ATL') || code.includes('ROBOTICS')) {
+    return [
+      'NITI Aayog ATAL Innovation Mission portal compliance & reporting',
+      'Hands-on student mentoring in Arduino, Raspberry Pi, AI and 3D Printing',
+      'Organizing tinkering challenges, hackathons and project exhibitions'
+    ];
+  }
+  if (code.includes('LIBRARY')) {
+    return [
+      'Library cataloging, book issuance and digital OPAC maintenance',
+      'Procurement of latest curriculum reference books and journals',
+      'Reading circle activities and annual book fair coordination'
+    ];
+  }
+  if (code.includes('ICT')) {
+    return [
+      'Computer lab hardware, network and software asset management',
+      'Smart classroom interactive display operations & IT maintenance',
+      'Digital safety protocols & cyber security awareness programs'
+    ];
+  }
+  return [
+    `Statutory institutional charge execution for Session ${duty.academic_session_id || '2026–27'}`,
+    'Delegated administrative powers under Principal direction',
+    'Periodic committee review meetings and compliance reporting'
+  ];
+}
+
+function resolveMeetingSchedule(duty: any): string {
+  const code = (duty.responsibility_code || '').toUpperCase();
+  if (code.includes('EXAM')) return 'Fortnightly (Every 2nd & 4th Tuesday, 3:30 PM)';
+  if (code.includes('CLASS_TEACHER')) return 'Daily Morning Dispatch (7:45 AM)';
+  if (code.includes('DISCIPLINE')) return 'Monthly (1st Monday of Month, 4:00 PM)';
+  if (code.includes('SPORTS')) return 'Weekly (Mondays, 8:15 AM)';
+  if (code.includes('HOD')) return 'Weekly (Every Friday, 2:30 PM)';
+  if (code.includes('ATL')) return 'Weekly (Wednesdays, 3:00 PM)';
+  if (duty.scope_name) return `Scope: ${duty.scope_name}`;
+  return 'Regular Institutional Cadence';
+}
+
 interface TeacherPortfoliosModalProps {
   isOpen: boolean;
   onClose: () => void;
   schoolBrand: SchoolBrandProfile;
+  organizationId?: string;
   activeSession?: string;
-  onShowToast?: (type: 'success' | 'info', title: string, msg?: string) => void;
+  onShowToast?: (type: 'success' | 'info' | 'error' | 'warning', title: string, msg?: string) => void;
 }
 
 export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
   isOpen,
   onClose,
   schoolBrand,
+  organizationId: propOrgId,
   activeSession = '2026–27',
   onShowToast
 }) => {
@@ -285,9 +455,149 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [portfolios, setPortfolios] = useState<PortfolioResponsibilityEntry[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [facultyList, setFacultyList] = useState<ErpStaffRecord[]>([]);
+  const [responsibilityTypes, setResponsibilityTypes] = useState<ResponsibilityTypeRecord[]>([]);
+
+  // Assign In-Charge Modal State
+  const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+  const [assignStaffId, setAssignStaffId] = useState<string>('');
+  const [assignRespTypeId, setAssignRespTypeId] = useState<string>('');
+  const [assignScopeType, setAssignScopeType] = useState<ResponsibilityScopeType>('SCHOOL');
+  const [assignScopeName, setAssignScopeName] = useState<string>('Institutional Charge');
+  const [assignNotes, setAssignNotes] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const effectiveOrgId =
+    propOrgId ||
+    (() => {
+      try {
+        return (
+          localStorage.getItem('dakshora_active_org_id') ||
+          localStorage.getItem('dakshora_onboarding_org_id') ||
+          JSON.parse(localStorage.getItem('dakshora_superadmin_user') || '{}')?.organizationId ||
+          ''
+        );
+      } catch {
+        return '';
+      }
+    })();
+
+  const isDemoSchool = effectiveOrgId === 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [dutiesRes, typesRes, staffRes] = await Promise.all([
+        fetchInstitutionalDuties({ session: activeSession || '2026-27' }),
+        fetchResponsibilityTypes({ active: 'true' }),
+        fetchErpStaff({ limit: 200 })
+      ]);
+
+      const staff = staffRes?.data?.staff || [];
+      setFacultyList(staff);
+
+      const types = (typesRes?.data as any)?.responsibilityTypes || (typesRes?.data as any)?.responsibilities || [];
+      setResponsibilityTypes(types);
+
+      const realDuties = dutiesRes?.data?.responsibilities || [];
+
+      if (realDuties.length > 0) {
+        const mapped: PortfolioResponsibilityEntry[] = realDuties.map((d: any) => {
+          const category = resolveCategory(d);
+          const keyResponsibilities = resolveDutiesList(d);
+          const meetingSchedule = resolveMeetingSchedule(d);
+          const tenure = d.academic_session_id
+            ? `Session ${d.academic_session_id} Statutory Charge`
+            : `Session ${activeSession} Statutory Charge`;
+
+          return {
+            id: d.id,
+            portfolioName: d.responsibility_name || 'Institutional Charge',
+            category,
+            inchargeName: d.staff_name || 'Faculty Member',
+            empId: d.empId || d.employee_code || '—',
+            designation: d.designation || 'Staff In-Charge',
+            department: d.department || (d.scope_name ? `Scope: ${d.scope_name}` : 'Academics'),
+            phone: d.phone || '—',
+            email: d.email || '—',
+            keyResponsibilities,
+            meetingSchedule,
+            tenure
+          };
+        });
+        setPortfolios(mapped);
+      } else if (isDemoSchool) {
+        setPortfolios(MASTER_TEACHER_PORTFOLIOS);
+      } else {
+        setPortfolios([]);
+      }
+    } catch (err: any) {
+      console.warn('[TeacherPortfoliosModal] Error loading real duties:', err?.message);
+      if (isDemoSchool) {
+        setPortfolios(MASTER_TEACHER_PORTFOLIOS);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [activeSession, effectiveOrgId, isDemoSchool]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadData();
+    }
+  }, [isOpen, loadData]);
+
   if (!isOpen) return null;
 
-  const filteredPortfolios = MASTER_TEACHER_PORTFOLIOS.filter((p) => {
+  const handleOpenAssign = () => {
+    if (facultyList.length > 0 && !assignStaffId) {
+      setAssignStaffId(facultyList[0].id);
+    }
+    if (responsibilityTypes.length > 0 && !assignRespTypeId) {
+      setAssignRespTypeId(responsibilityTypes[0].id);
+      setAssignScopeType((responsibilityTypes[0].default_scope_type as ResponsibilityScopeType) || 'SCHOOL');
+    }
+    setShowAssignModal(true);
+  };
+
+  const handleSaveAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignStaffId || !assignRespTypeId) {
+      if (onShowToast) onShowToast('warning', 'Selection Required', 'Please select a faculty member and portfolio role.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const res = await assignStaffResponsibility(assignStaffId, {
+        responsibility_type_id: assignRespTypeId,
+        scope_type: assignScopeType,
+        scope_name: assignScopeName || 'Institutional Charge',
+        academic_session_id: activeSession || '2026-27',
+        is_primary: false,
+        notes: assignNotes || undefined
+      });
+
+      if (res?.data && res.data.success) {
+        if (onShowToast) {
+          onShowToast('success', 'Charge Appointed', res.data.message || 'Staff institutional charge successfully registered.');
+        }
+        setShowAssignModal(false);
+        setAssignNotes('');
+        await loadData();
+      } else {
+        if (onShowToast) onShowToast('error', 'Appointment Failed', res?.data?.message || 'Could not assign portfolio.');
+      }
+    } catch (err: any) {
+      if (onShowToast) onShowToast('error', 'Appointment Error', err?.message || 'Failed to register charge.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const filteredPortfolios = portfolios.filter((p) => {
     const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
     const matchesSearch =
       p.portfolioName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -304,6 +614,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
   };
 
   const handleCopyPhone = (id: string, phone: string) => {
+    if (!phone || phone === '—') return;
     navigator.clipboard.writeText(phone);
     setCopiedId(id);
     if (onShowToast) onShowToast('info', 'Phone Copied', phone);
@@ -324,7 +635,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
       'Meeting Schedule',
       'Tenure'
     ];
-    const rows = MASTER_TEACHER_PORTFOLIOS.map((p) => [
+    const rows = filteredPortfolios.map((p) => [
       `"${p.portfolioName}"`,
       `"${p.category}"`,
       `"${p.inchargeName}"`,
@@ -364,8 +675,11 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
                   Teachers Charges & Institutional Responsibilities
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0">
-                  Office Orders 2026–27
+                  Office Orders {activeSession}
                 </span>
+                {loading && (
+                  <RefreshCw className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
+                )}
               </div>
               <p className="text-xs text-slate-400 font-mono mt-0.5 truncate">
                 {schoolBrand.schoolName} • Statutory Committees & Portfolio Allocation Matrix
@@ -375,6 +689,26 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleOpenAssign}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-95"
+              title="Appoint a teacher to an institutional portfolio or committee"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Appoint Charge</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => loadData()}
+              disabled={loading}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer shadow-xs"
+              title="Refresh Roster from Database"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-purple-400' : ''}`} />
+            </button>
+
             <button
               type="button"
               onClick={handlePrint}
@@ -388,7 +722,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
             <button
               type="button"
               onClick={handleExportCSV}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-95"
               title="Download Portfolio CSV"
             >
               <Download className="w-3.5 h-3.5 text-purple-200" />
@@ -416,7 +750,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
               </div>
               <div>
                 <div className="text-[10px] font-mono text-slate-400">Total Portfolios</div>
-                <div className="text-sm font-bold text-white font-mono">{MASTER_TEACHER_PORTFOLIOS.length} Charges</div>
+                <div className="text-sm font-bold text-white font-mono">{portfolios.length} Charges</div>
               </div>
             </div>
 
@@ -425,8 +759,10 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
                 <CheckCircle2 className="w-4 h-4" />
               </div>
               <div>
-                <div className="text-[10px] font-mono text-slate-400">Statutory Status</div>
-                <div className="text-sm font-bold text-emerald-400 font-mono">100% In-Charge Assigned</div>
+                <div className="text-[10px] font-mono text-slate-400">Institutional Status</div>
+                <div className="text-sm font-bold text-emerald-400 font-mono">
+                  {portfolios.length > 0 ? 'Active Directory' : 'Pending Allocation'}
+                </div>
               </div>
             </div>
 
@@ -435,8 +771,8 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
                 <Clock className="w-4 h-4" />
               </div>
               <div>
-                <div className="text-[10px] font-mono text-slate-400">Review Cadence</div>
-                <div className="text-sm font-bold text-cyan-300 font-mono">Weekly & Monthly</div>
+                <div className="text-[10px] font-mono text-slate-400">Cadence</div>
+                <div className="text-sm font-bold text-cyan-300 font-mono">Weekly & Termly</div>
               </div>
             </div>
 
@@ -446,7 +782,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
               </div>
               <div>
                 <div className="text-[10px] font-mono text-slate-400">Authority Level</div>
-                <div className="text-sm font-bold text-amber-300 font-mono">Delegated Principal Powers</div>
+                <div className="text-sm font-bold text-amber-300 font-mono">Delegated Powers</div>
               </div>
             </div>
           </div>
@@ -540,25 +876,29 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    <a
-                      href={`tel:${item.phone.replace(/[^0-9+]/g, '')}`}
-                      className="p-1.5 rounded-lg bg-slate-800 text-cyan-400 hover:text-white transition-colors"
-                      title="Direct Line"
-                    >
-                      <Phone className="w-3 h-3" />
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyPhone(item.id, item.phone)}
-                      className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                      title="Copy Phone"
-                    >
-                      {copiedId === item.id ? (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3 h-3" />
-                      )}
-                    </button>
+                    {item.phone && item.phone !== '—' && (
+                      <a
+                        href={`tel:${item.phone.replace(/[^0-9+]/g, '')}`}
+                        className="p-1.5 rounded-lg bg-slate-800 text-cyan-400 hover:text-white transition-colors"
+                        title="Direct Line"
+                      >
+                        <Phone className="w-3 h-3" />
+                      </a>
+                    )}
+                    {item.phone && item.phone !== '—' && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPhone(item.id, item.phone)}
+                        className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                        title="Copy Phone"
+                      >
+                        {copiedId === item.id ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -589,9 +929,23 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
               </div>
             ))}
 
-            {filteredPortfolios.length === 0 && (
-              <div className="col-span-2 p-8 text-center text-slate-500 font-mono">
-                No committee or portfolio in-charge found matching "{searchQuery}".
+            {filteredPortfolios.length === 0 && !loading && (
+              <div className="col-span-2 p-12 text-center border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 space-y-3">
+                <Award className="w-10 h-10 text-slate-600 mx-auto" />
+                <h4 className="text-sm font-bold text-slate-300">No Committee or In-Charge Found</h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  {searchQuery
+                    ? `No matching records found for "${searchQuery}". Try adjusting your search query.`
+                    : 'No institutional charges or committees have been appointed yet for this session.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenAssign}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-all shadow-md shadow-purple-600/30 cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Appoint First In-Charge</span>
+                </button>
               </div>
             )}
           </div>
@@ -613,7 +967,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
         {/* Modal Footer */}
         <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="text-xs font-mono text-slate-400">
-            Active Portfolios: <strong className="text-white">{filteredPortfolios.length}</strong> of {MASTER_TEACHER_PORTFOLIOS.length}
+            Active Portfolios: <strong className="text-white">{filteredPortfolios.length}</strong> of {portfolios.length}
           </div>
 
           <div className="flex items-center gap-2">
@@ -635,6 +989,150 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* APPOINT IN-CHARGE SUB-MODAL */}
+      {showAssignModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 text-slate-100 ring-1 ring-purple-500/20">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                  <UserPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">Appoint Institutional Charge</h3>
+                  <p className="text-xs text-slate-400 font-mono">Assign statutory committee or administrative portfolio</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAssignModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAssignment} className="space-y-4">
+              {/* Select Faculty Member */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono font-bold text-slate-300">
+                  Select Faculty Member <span className="text-rose-400">*</span>
+                </label>
+                <select
+                  value={assignStaffId}
+                  onChange={(e) => setAssignStaffId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500"
+                  required
+                >
+                  <option value="">-- Choose Teacher / Staff Member --</option>
+                  {facultyList.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} ({f.empId || (f as any).employee_code || 'Staff'}) — {f.designation || 'Teacher'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Select Responsibility Type */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono font-bold text-slate-300">
+                  Select Portfolio / Role <span className="text-rose-400">*</span>
+                </label>
+                <select
+                  value={assignRespTypeId}
+                  onChange={(e) => {
+                    setAssignRespTypeId(e.target.value);
+                    const selected = responsibilityTypes.find((t) => t.id === e.target.value);
+                    if (selected?.default_scope_type) {
+                      setAssignScopeType(selected.default_scope_type as ResponsibilityScopeType);
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500"
+                  required
+                >
+                  <option value="">-- Choose Responsibility / Committee --</option>
+                  {responsibilityTypes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.code}) — {t.category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Scope Name */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-mono font-bold text-slate-300">Scope Type</label>
+                  <select
+                    value={assignScopeType}
+                    onChange={(e) => setAssignScopeType(e.target.value as ResponsibilityScopeType)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="SCHOOL">School Wide (Institutional)</option>
+                    <option value="WING">Wing Level</option>
+                    <option value="DEPARTMENT">Department Level</option>
+                    <option value="SECTION">Class / Section</option>
+                    <option value="HOUSE">House Level</option>
+                    <option value="PROGRAM">Special Program / Cell</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-mono font-bold text-slate-300">Scope Name / Detail</label>
+                  <input
+                    type="text"
+                    value={assignScopeName}
+                    onChange={(e) => setAssignScopeName(e.target.value)}
+                    placeholder="e.g. Main Campus / Senior Wing"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Notes / Terms of Reference */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono font-bold text-slate-300">Notes / Circular Reference</label>
+                <textarea
+                  rows={2}
+                  value={assignNotes}
+                  onChange={(e) => setAssignNotes(e.target.value)}
+                  placeholder="e.g. Appointed per School Academic Council Circular #14 for Session 2026-27"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 resize-none"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAssignModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold transition-all shadow-md shadow-purple-600/30 cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Appoint In-Charge</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

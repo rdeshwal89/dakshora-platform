@@ -1,5 +1,27 @@
 [
   {
+    "id": "pay-1792983048013",
+    "receiptNo": "REC/2026-27/0001",
+    "demandId": "2872ff87-4168-4d22-82fa-e4ab473c771b",
+    "invoiceNo": "INV-2872ff87",
+    "studentId": "823d5016-467d-4467-b075-117fde691cab",
+    "studentName": "Aarav Sharma",
+    "admissionNo": "DPS-3816",
+    "grade": "Class 9",
+    "section": "A",
+    "feeHead": "Tuition Fee",
+    "amountPaid": 5000,
+    "paymentDate": "2026-10-26",
+    "paymentMode": "upi",
+    "referenceNumber": "UPI-TEST-889900",
+    "collectedBy": "Front Desk Cashier",
+    "remarks": "First Quarter Partial Fee",
+    "status": "completed",
+    "organization_id": "862158eb-abb7-48e9-bff5-d71cb219e3d2",
+    "created_at": "2026-10-26T02:50:48.013Z",
+    "db_id": "8f96ba86-be9d-41ff-ae6e-5b6650da0e4a"
+  },
+  {
     "id": "fef331db-dbf6-4b91-aee9-47c694c19064",
     "organization_id": "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     "student_fee_id": "50e2f40c-55c6-40ba-9c2f-d7c9a4371f1b",

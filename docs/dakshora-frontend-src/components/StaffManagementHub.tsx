@@ -402,6 +402,9 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
     } else if (tab === 'responsibilities_master') {
       loadResponsibilityTypes();
       loadInstitutionalDuties();
+      if (staffList.length === 0) {
+        loadStaff();
+      }
     }
     if (onCloseInitialAdd && tab !== 'add') {
       onCloseInitialAdd();
@@ -447,10 +450,11 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
   const loadResponsibilityTypes = async () => {
     try {
       const res = await fetchResponsibilityTypes({ active: 'true' });
-      if (res.data && res.data.responsibilityTypes) {
-        setResponsibilityTypes(res.data.responsibilityTypes);
-        if (res.data.responsibilityTypes.length > 0 && !assignRespForm.responsibility_type_id) {
-          const first = res.data.responsibilityTypes[0];
+      const types = (res.data as any)?.responsibilityTypes || (res.data as any)?.responsibilities || [];
+      if (types.length > 0) {
+        setResponsibilityTypes(types);
+        if (!assignRespForm.responsibility_type_id) {
+          const first = types[0];
           setAssignRespForm(prev => ({
             ...prev,
             responsibility_type_id: first.id,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Printer,
@@ -14,9 +14,15 @@ import {
   Check,
   ShieldCheck,
   Layers,
-  Sparkles
+  Sparkles,
+  RefreshCw,
+  UserCheck,
+  Edit2,
+  UserPlus
 } from 'lucide-react';
 import { SchoolBrandProfile } from './SchoolBrandingModal';
+import { fetchAcademicSections, assignClassTeacher, fetchErpStaff } from '../services/api';
+import { ErpStaffRecord } from '../types';
 
 export interface ClassTeacherEntry {
   id: string;
@@ -387,14 +393,16 @@ interface ClassTeachersModalProps {
   isOpen: boolean;
   onClose: () => void;
   schoolBrand: SchoolBrandProfile;
+  organizationId?: string;
   activeSession?: string;
-  onShowToast?: (type: 'success' | 'info', title: string, msg?: string) => void;
+  onShowToast?: (type: 'success' | 'info' | 'error' | 'warning', title: string, msg?: string) => void;
 }
 
 export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
   isOpen,
   onClose,
   schoolBrand,
+  organizationId: propOrgId,
   activeSession = '2026–27',
   onShowToast
 }) => {
@@ -402,9 +410,134 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [classTeachers, setClassTeachers] = useState<ClassTeacherEntry[]>(MASTER_CLASS_TEACHERS);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [facultyList, setFacultyList] = useState<ErpStaffRecord[]>([]);
+
+  // Assign Class Teacher Modal State
+  const [assignModalSection, setAssignModalSection] = useState<ClassTeacherEntry | null>(null);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [isAssigning, setIsAssigning] = useState<boolean>(false);
+
+  const effectiveOrgId = propOrgId || (() => {
+    try {
+      return localStorage.getItem('dakshora_active_org_id') ||
+             localStorage.getItem('dakshora_onboarding_org_id') ||
+             JSON.parse(localStorage.getItem('dakshora_superadmin_user') || '{}')?.organizationId ||
+             '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [secRes, staffRes] = await Promise.all([
+        fetchAcademicSections(undefined, effectiveOrgId),
+        fetchErpStaff({ limit: 200 })
+      ]);
+
+      const staff = staffRes?.data?.staff || [];
+      setFacultyList(staff);
+
+      const dbSections = secRes?.data?.sections || [];
+      if (dbSections.length > 0) {
+        const mapped: ClassTeacherEntry[] = dbSections.map((s: any) => {
+          const stg = s.stage || (
+            s.grade.toLowerCase().includes('11') || s.grade.toLowerCase().includes('12') ? 'Senior Secondary' :
+            s.grade.toLowerCase().includes('9') || s.grade.toLowerCase().includes('10') ? 'Secondary' :
+            s.grade.toLowerCase().includes('6') || s.grade.toLowerCase().includes('7') || s.grade.toLowerCase().includes('8') ? 'Middle' :
+            s.grade.toLowerCase().includes('3') || s.grade.toLowerCase().includes('4') || s.grade.toLowerCase().includes('5') ? 'Preparatory' : 'Foundational'
+          );
+          const stageAge = stg === 'Foundational' ? 'Ages 3–8' : stg === 'Preparatory' ? 'Ages 8–11' : stg === 'Middle' ? 'Ages 11–14' : stg === 'Secondary' ? 'Ages 14–16' : 'Ages 16–18';
+
+          return {
+            id: s.id,
+            stage: stg,
+            stageAge,
+            grade: s.grade,
+            section: s.section || s.name || 'A',
+            roomNumber: s.roomNumber || 'Room 101',
+            capacity: s.capacity || 40,
+            enrolledStudents: s.enrolledStudents || s.studentCount || 0,
+            classTeacherName: s.classTeacherName || '',
+            empId: s.classTeacherEmpId || '',
+            designation: s.classTeacherDesignation || (s.classTeacherName ? 'Class Teacher' : 'Unassigned'),
+            phone: s.classTeacherPhone || '',
+            email: s.classTeacherEmail || '',
+            specialization: s.classTeacherDepartment || 'Academics'
+          };
+        });
+        setClassTeachers(mapped);
+      } else {
+        setClassTeachers(MASTER_CLASS_TEACHERS);
+      }
+    } catch (err: any) {
+      console.warn('[ClassTeachersModal] Error loading real sections:', err?.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [effectiveOrgId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      loadData();
+    }
+  }, [isOpen, loadData]);
+
   if (!isOpen) return null;
 
-  const filteredTeachers = MASTER_CLASS_TEACHERS.filter((item) => {
+  const handleOpenAssignModal = (entry: ClassTeacherEntry) => {
+    setAssignModalSection(entry);
+    const currentStaff = facultyList.find(f => f.name === entry.classTeacherName || f.empId === entry.empId);
+    setSelectedTeacherId(currentStaff ? currentStaff.id : '');
+  };
+
+  const handleSaveClassTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignModalSection) return;
+
+    setIsAssigning(true);
+    try {
+      const res = await assignClassTeacher(assignModalSection.id, selectedTeacherId || null);
+      if (res?.data && res.data.success) {
+        const assignedStaff = facultyList.find(f => f.id === selectedTeacherId);
+        const updatedTeacherName = assignedStaff ? assignedStaff.name : '';
+        const updatedEmpId = assignedStaff ? (assignedStaff.empId || (assignedStaff as any).employee_code || '') : '';
+        const updatedPhone = assignedStaff ? (assignedStaff.phone || '') : '';
+        const updatedEmail = assignedStaff ? (assignedStaff.email || '') : '';
+        const updatedDesignation = assignedStaff ? (assignedStaff.designation || 'Class Teacher') : 'Unassigned';
+
+        setClassTeachers(prev => prev.map(item => {
+          if (item.id === assignModalSection.id) {
+            return {
+              ...item,
+              classTeacherName: updatedTeacherName,
+              empId: updatedEmpId,
+              phone: updatedPhone,
+              email: updatedEmail,
+              designation: updatedDesignation
+            };
+          }
+          return item;
+        }));
+
+        if (onShowToast) {
+          onShowToast('success', 'Class Teacher Assigned', res.data.message || 'Section updated successfully.');
+        }
+        setAssignModalSection(null);
+      } else {
+        if (onShowToast) onShowToast('error', 'Assignment Failed', res?.data?.message || 'Could not assign class teacher.');
+      }
+    } catch (err: any) {
+      if (onShowToast) onShowToast('error', 'Assignment Error', err?.message || 'Failed to update class teacher.');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  const filteredTeachers = classTeachers.filter((item) => {
     const matchesStage = selectedStage === 'All' || item.stage === selectedStage;
     const matchesSearch =
       item.grade.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -416,13 +549,16 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
     return matchesStage && matchesSearch;
   });
 
-  const totalStudents = MASTER_CLASS_TEACHERS.reduce((acc, curr) => acc + curr.enrolledStudents, 0);
+  const totalStudents = classTeachers.reduce((acc, curr) => acc + (Number(curr.enrolledStudents) || 0), 0);
+  const assignedCount = classTeachers.filter(t => !!t.classTeacherName).length;
+  const assignmentPercentage = classTeachers.length > 0 ? Math.round((assignedCount / classTeachers.length) * 100) : 0;
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleCopyPhone = (id: string, phone: string) => {
+    if (!phone) return;
     navigator.clipboard.writeText(phone);
     setCopiedId(id);
     if (onShowToast) onShowToast('info', 'Phone Copied', phone);
@@ -443,16 +579,16 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
       'Capacity',
       'Enrolled Students'
     ];
-    const rows = MASTER_CLASS_TEACHERS.map((t) => [
+    const rows = classTeachers.map((t) => [
       `"${t.grade}"`,
       `"${t.section}"`,
       `"${t.stage}"`,
       `"${t.roomNumber}"`,
-      `"${t.classTeacherName}"`,
-      `"${t.empId}"`,
-      `"${t.designation}"`,
-      `"${t.phone}"`,
-      `"${t.email}"`,
+      `"${t.classTeacherName || 'Unassigned'}"`,
+      `"${t.empId || '—'}"`,
+      `"${t.designation || 'Faculty'}"`,
+      `"${t.phone || '—'}"`,
+      `"${t.email || '—'}"`,
       t.capacity,
       t.enrolledStudents
     ]);
@@ -496,6 +632,15 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={loadData}
+              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer shadow-xs active:scale-95"
+              title="Refresh Roster from Database"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+
+            <button
+              type="button"
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-95"
               title="Print official PDF roster"
@@ -527,7 +672,7 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
 
         {/* Quick KPI Strip & Search Filters */}
         <div className="p-4 sm:p-5 bg-slate-900/90 border-b border-slate-800 space-y-3 shrink-0">
-          {/* 3 Metric Pills */}
+          {/* Metric Pills */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             <div className="p-2.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold shrink-0">
@@ -535,7 +680,7 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
               </div>
               <div>
                 <div className="text-[10px] font-mono text-slate-400">Total Sections</div>
-                <div className="text-sm font-bold text-white font-mono">{MASTER_CLASS_TEACHERS.length} Classes</div>
+                <div className="text-sm font-bold text-white font-mono">{classTeachers.length} Sections</div>
               </div>
             </div>
 
@@ -545,7 +690,7 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
               </div>
               <div>
                 <div className="text-[10px] font-mono text-slate-400">Assignment Status</div>
-                <div className="text-sm font-bold text-emerald-400 font-mono">100% Allocated</div>
+                <div className="text-sm font-bold text-emerald-400 font-mono">{assignmentPercentage}% ({assignedCount}/{classTeachers.length})</div>
               </div>
             </div>
 
@@ -628,14 +773,15 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
                     <th className="p-3">Designation</th>
                     <th className="p-3">Phone</th>
                     <th className="p-3 text-right">Students</th>
+                    <th className="p-3 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80">
                   {filteredTeachers.map((row) => (
                     <tr key={row.id} className="hover:bg-slate-900/80 transition-colors group">
                       <td className="p-3 font-bold text-white flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block"></span>
-                        <span>{row.grade}</span>
+                        <span className={`w-2 h-2 rounded-full inline-block ${row.classTeacherName ? 'bg-cyan-400' : 'bg-amber-400'}`}></span>
+                        <span>{row.grade} {row.section ? `- ${row.section}` : ''}</span>
                       </td>
                       <td className="p-3">
                         <span
@@ -656,50 +802,86 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
                       </td>
                       <td className="p-3 text-slate-300 font-semibold">{row.roomNumber}</td>
                       <td className="p-3">
-                        <div className="font-bold text-white group-hover:text-cyan-300 transition-colors">
-                          {row.classTeacherName}
-                        </div>
-                        <div className="text-[10px] text-slate-500 truncate max-w-[180px]">{row.specialization}</div>
+                        {row.classTeacherName ? (
+                          <>
+                            <div className="font-bold text-white group-hover:text-cyan-300 transition-colors">
+                              {row.classTeacherName}
+                            </div>
+                            <div className="text-[10px] text-slate-500 truncate max-w-[180px]">{row.specialization}</div>
+                          </>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                            Unassigned
+                          </span>
+                        )}
                       </td>
                       <td className="p-3">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[11px] font-bold border border-slate-700">
-                          {row.empId}
-                        </span>
+                        {row.empId ? (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[11px] font-bold border border-slate-700">
+                            {row.empId}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
-                      <td className="p-3 text-slate-300">{row.designation}</td>
+                      <td className="p-3 text-slate-300">{row.designation || '—'}</td>
                       <td className="p-3">
-                        <div className="flex items-center gap-1.5">
-                          <a
-                            href={`tel:${row.phone.replace(/[^0-9+]/g, '')}`}
-                            className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1"
-                          >
-                            <Phone className="w-3 h-3" />
-                            <span>{row.phone}</span>
-                          </a>
-                          <button
-                            type="button"
-                            onClick={() => handleCopyPhone(row.id, row.phone)}
-                            className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
-                            title="Copy Phone Number"
-                          >
-                            {copiedId === row.id ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
+                        {row.phone ? (
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={`tel:${row.phone.replace(/[^0-9+]/g, '')}`}
+                              className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1"
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>{row.phone}</span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyPhone(row.id, row.phone)}
+                              className="p-1 text-slate-500 hover:text-white transition-colors cursor-pointer"
+                              title="Copy Phone Number"
+                            >
+                              {copiedId === row.id ? (
+                                <Check className="w-3 h-3 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-bold text-emerald-400 font-mono">
                         {row.enrolledStudents} / {row.capacity}
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAssignModal(row)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/40 text-[11px] font-bold transition-all cursor-pointer shadow-xs active:scale-95"
+                          title={row.classTeacherName ? "Change Class Teacher" : "Assign Class Teacher"}
+                        >
+                          {row.classTeacherName ? (
+                            <>
+                              <Edit2 className="w-3 h-3 text-cyan-400" />
+                              <span>Change</span>
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="w-3 h-3 text-amber-400" />
+                              <span>Assign</span>
+                            </>
+                          )}
+                        </button>
                       </td>
                     </tr>
                   ))}
 
                   {filteredTeachers.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500">
-                        No class teachers found matching "{searchQuery}".
+                      <td colSpan={9} className="p-8 text-center text-slate-500">
+                        {loading ? 'Loading real class sections from database...' : `No class sections found matching "${searchQuery}".`}
                       </td>
                     </tr>
                   )}
@@ -725,7 +907,7 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
         {/* Modal Footer */}
         <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="text-xs font-mono text-slate-400">
-            Showing <strong className="text-white">{filteredTeachers.length}</strong> of {MASTER_CLASS_TEACHERS.length} classes
+            Showing <strong className="text-white">{filteredTeachers.length}</strong> of {classTeachers.length} sections • <strong className="text-emerald-400">{assignedCount} Assigned</strong>
           </div>
 
           <div className="flex items-center gap-2">
@@ -747,6 +929,84 @@ export const ClassTeachersModal: React.FC<ClassTeachersModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 👨‍🏫 SUB-MODAL: Assign Class Teacher Dialog */}
+      {assignModalSection && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl max-w-md w-full shadow-2xl p-6 text-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-white text-sm">
+                  Assign Class Teacher
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssignModalSection(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+              <div className="text-slate-400">Target Academic Section:</div>
+              <div className="font-bold text-white text-sm">
+                {assignModalSection.grade} - Section {assignModalSection.section}
+              </div>
+              <div className="text-[11px] text-cyan-400">
+                {assignModalSection.stage} Stage • Room: {assignModalSection.roomNumber}
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveClassTeacher} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300">
+                  Select Faculty Member *
+                </label>
+                <select
+                  value={selectedTeacherId}
+                  onChange={(e) => setSelectedTeacherId(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">-- Remove / No Class Teacher Assigned --</option>
+                  {facultyList.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} ({f.empId || (f as any).employee_code || 'FAC'}) • {f.designation} ({f.department || 'Academics'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedTeacherId && (
+                <div className="p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-indigo-200">
+                  <UserCheck className="w-3.5 h-3.5 inline mr-1 text-emerald-400" />
+                  Will synchronize this teacher's daily class attendance, report card verification, and student pastoral authority.
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setAssignModalSection(null)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isAssigning}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  {isAssigning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>Save Assignment</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
