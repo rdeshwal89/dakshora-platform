@@ -1,6 +1,6 @@
 // DAKSHORA 2.0 Progressive Web App Service Worker
-// Version: 2.5.0-streamlined-pulse
-const CACHE_NAME = 'dakshora-cache-v2.5.0-pulse';
+// Version: 2.6.0-live-pulse
+const CACHE_NAME = 'dakshora-cache-v2.6.0-live';
 const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',
@@ -60,7 +60,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets (CSS, JS, SVG, fonts, images) -> Stale-while-revalidate with network update
+  // Static assets (CSS, JS, SVG, fonts, images) -> Network-First with instant offline cache fallback
+  // This eliminates the need for manual hard-reloads (Ctrl+Shift+R) while preserving full offline capability
   if (
     url.pathname.startsWith('/assets/') ||
     url.pathname.endsWith('.js') ||
@@ -70,17 +71,17 @@ self.addEventListener('fetch', (event) => {
     url.pathname.endsWith('.woff2')
   ) {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
-        const fetchPromise = fetch(request).then((networkResponse) => {
+      fetch(request)
+        .then((networkResponse) => {
           if (networkResponse && networkResponse.status === 200) {
             const responseClone = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
           }
           return networkResponse;
-        }).catch(() => cachedResponse);
-
-        return cachedResponse || fetchPromise;
-      })
+        })
+        .catch(() => {
+          return caches.match(request);
+        })
     );
     return;
   }

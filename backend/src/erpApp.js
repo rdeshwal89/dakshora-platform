@@ -6593,7 +6593,12 @@ const handleLeadCapture = async (req, res) => {
       }
     }
     if (!orgId) {
-      orgId = resolveTenantOrgId(req) || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+      orgId = resolveTenantOrgId(req);
+      // If still no org resolved from an authenticated request, reject rather than
+      // silently cross-pollinating data into the wrong tenant.
+      if (!orgId) {
+        return res.status(400).json({ success: false, message: "School identifier is required. Include organizationId, x-school-slug header, or schoolSlug in the request." });
+      }
     }
 
     const leadRecord = {
@@ -12279,14 +12284,14 @@ let ERP_MESSAGE_TEMPLATES = [
     name: "Admission Application Received",
     category: "admission",
     channel: "all",
-    subject: "DPS Heritage: Admission Application Received ({{application_number}})",
-    body: "Dear {{parent_name}}, thank you for applying to DPS Heritage School. We have received your admission application for {{student_name}} (App No: {{application_number}}) for {{class_name}}. Our admissions desk will review the documentation shortly.",
-    variables: ["parent_name", "student_name", "application_number", "class_name"],
+    subject: "{{school_name}}: Admission Application Received ({{application_number}})",
+    body: "Dear {{parent_name}}, thank you for applying to {{school_name}}. We have received your admission application for {{student_name}} (App No: {{application_number}}) for {{class_name}}. Our admissions desk will review the documentation shortly.",
+    variables: ["parent_name", "student_name", "application_number", "class_name", "school_name"],
     dlt_template_id: "1207161829304918231",
     dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "System",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12296,14 +12301,14 @@ let ERP_MESSAGE_TEMPLATES = [
     name: "Admission Status Updated",
     category: "admission",
     channel: "all",
-    subject: "DPS Heritage: Status Update for Application {{application_number}}",
+    subject: "{{school_name}}: Status Update for Application {{application_number}}",
     body: "Dear {{parent_name}}, the admission status for your ward {{student_name}} (Application No: {{application_number}}) has been updated to: {{application_status}}. Please log in to your admission portal to view complete details.",
     variables: ["parent_name", "student_name", "application_number", "application_status"],
     dlt_template_id: "1207161829304918235",
     dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "System",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12320,7 +12325,7 @@ let ERP_MESSAGE_TEMPLATES = [
     dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Accounts Wing",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12337,7 +12342,7 @@ let ERP_MESSAGE_TEMPLATES = [
     dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Accounts Wing",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12354,7 +12359,7 @@ let ERP_MESSAGE_TEMPLATES = [
     dlt_sender_id: "DKSHRA",
     status: "active",
     createdBy: "Attendance Wing",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12369,7 +12374,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["parent_name", "student_name", "exam_name", "result_percentage", "result_status"],
     status: "active",
     createdBy: "Examination Cell",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12384,7 +12389,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["subject_name", "class_name", "homework_title", "due_date", "teacher_name"],
     status: "active",
     createdBy: "Academic Head",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12399,7 +12404,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["route_name", "vehicle_number", "stop_name", "pickup_time", "driver_phone"],
     status: "active",
     createdBy: "Transport Wing",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12414,7 +12419,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["student_name", "book_title", "borrow_date", "due_date"],
     status: "active",
     createdBy: "Library Department",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12429,7 +12434,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["staff_name", "leave_type", "start_date", "end_date", "approver_name"],
     status: "active",
     createdBy: "HR & Principal",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12444,7 +12449,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["staff_name", "month_year", "net_payout"],
     status: "active",
     createdBy: "HR Wing",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   },
@@ -12459,7 +12464,7 @@ let ERP_MESSAGE_TEMPLATES = [
     variables: ["notice_title", "notice_body", "sender_name", "school_name"],
     status: "active",
     createdBy: "Office of Principal",
-    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    organization_id: null, // system template — shared across all tenants
     createdAt: "2026-04-01T09:00:00Z",
     updatedAt: "2026-04-01T09:00:00Z"
   }
@@ -13376,7 +13381,19 @@ function dispatchCommunicationCampaign({
 
 // Automated ERP Event Communication Trigger
 function triggerErpCommunicationEvent(eventType, payload = {}, orgId) {
-  const settings = ERP_COMMUNICATION_SETTINGS[orgId] || ERP_COMMUNICATION_SETTINGS["b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"];
+  // Get org-specific settings or create a default enabled-settings object (never cross-tenant fallback)
+  const settings = ERP_COMMUNICATION_SETTINGS[orgId] || {
+    organization_id: orgId,
+    autoAdmissionNotifications: true,
+    autoFeeDueReminders: true,
+    autoFeePaymentReceipts: true,
+    autoLowAttendanceAlerts: true,
+    autoExamResultAlerts: true,
+    autoTransportUpdates: true,
+    autoLibraryDueAlerts: true,
+    autoHrPayrollAlerts: true,
+    preferredChannels: { in_app: true, sms: false, email: false, whatsapp: false }
+  };
   if (!settings) return null;
 
   // Check if this automated notification type is toggled ON
@@ -13405,7 +13422,7 @@ function triggerErpCommunicationEvent(eventType, payload = {}, orgId) {
   else if (eventType === 'hr.leave_approved') { templateCode = 'LEAVE_APPROVED'; notifType = 'hr'; }
   else if (eventType === 'hr.payroll_processed') { templateCode = 'PAYSLIP_AVAILABLE'; notifType = 'hr'; }
 
-  const template = ERP_MESSAGE_TEMPLATES.find(t => t.code === templateCode) || ERP_MESSAGE_TEMPLATES[0];
+  const template = ERP_MESSAGE_TEMPLATES.find(t => t.code === templateCode && (t.organization_id === orgId || t.organization_id === null)) || ERP_MESSAGE_TEMPLATES.find(t => t.code === templateCode) || ERP_MESSAGE_TEMPLATES[0];
   const renderedSubject = renderTemplateString(template.subject, payload);
   const renderedBody = renderTemplateString(template.body, payload);
 
@@ -19133,8 +19150,8 @@ app.get("/api/erp/dashboard", async (req, res) => {
   }
 
   const isDemoOrg = orgId === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
-  const resolvedSchoolName = schoolRecord?.name || org?.name || (isDemoOrg ? "Delhi Public Heritage School" : "New Ideal Public School");
-  const resolvedAffiliation = schoolRecord?.affiliation_no || schoolRecord?.affiliation_number || (isDemoOrg ? "CBSE-AFF-2026-DEL-8821" : "CBSE-AFF-2130894");
+  const resolvedSchoolName = schoolRecord?.name || org?.name || (isDemoOrg ? "Delhi Public Heritage School" : "School");
+  const resolvedAffiliation = schoolRecord?.affiliation_no || schoolRecord?.affiliation_number || (isDemoOrg ? "CBSE-AFF-2026-DEL-8821" : "");
   const resolvedLogo = schoolRecord?.logo_url || org?.logo_url || "/logo.svg";
 
   const schoolContext = {
@@ -19146,8 +19163,8 @@ app.get("/api/erp/dashboard", async (req, res) => {
     campus: schoolRecord?.campus || "Main Campus",
     affiliationNo: resolvedAffiliation,
     schoolCode: schoolRecord?.school_code || (isDemoOrg ? "DPS-VK-894" : `SCH-${orgId?.slice(0, 6)?.toUpperCase() || "01"}`),
-    city: schoolRecord?.city || org?.city || (isDemoOrg ? "Jaipur" : "Mathura"),
-    state: schoolRecord?.state || org?.state || (isDemoOrg ? "Rajasthan" : "Uttar Pradesh"),
+    city: schoolRecord?.city || org?.city || (isDemoOrg ? "Jaipur" : ""),
+    state: schoolRecord?.state || org?.state || (isDemoOrg ? "Rajasthan" : ""),
     academicSession: selectedSession,
     currentDate: selectedDate
   };
@@ -19185,10 +19202,10 @@ app.get("/api/erp/dashboard", async (req, res) => {
         { count: subCount },
         { count: sesCount }
       ] = await Promise.all([
-        supabase.from("students").select("*, student_enrollments(*, classes(name), sections(name))").eq("organization_id", orgId),
-        supabase.from("staff").select("*").eq("organization_id", orgId),
-        supabase.from("student_attendance").select("*").eq("organization_id", orgId),
-        supabase.from("staff_attendance").select("*").eq("organization_id", orgId),
+        supabase.from("students").select("id, first_name, middle_name, last_name, gender, admission_no, roll_no, grade, section, admission_status, organization_id, student_enrollments(roll_no, classes(name), sections(name))").eq("organization_id", orgId),
+        supabase.from("staff").select("id, employee_code, first_name, last_name, designation, department, employment_type, is_active, organization_id").eq("organization_id", orgId),
+        supabase.from("student_attendance").select("id, student_id, attendance_date, status, remarks, organization_id").eq("organization_id", orgId).eq("attendance_date", selectedDate),
+        supabase.from("staff_attendance").select("id, staff_id, attendance_date, status, organization_id").eq("organization_id", orgId).eq("attendance_date", selectedDate),
         supabase.from("fee_payments").select("amount").eq("organization_id", orgId),
         supabase.from("student_fees").select("amount_due, amount_paid").eq("organization_id", orgId).neq("status", "paid"),
         supabase.from("exams").select("*").eq("organization_id", orgId).order("start_date", { ascending: true }).limit(5),
@@ -27505,7 +27522,8 @@ app.delete("/api/erp/communication/messages/:id", (req, res) => {
 app.get("/api/erp/communication/templates", (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { category, channel, search } = req.query;
-  let templates = ERP_MESSAGE_TEMPLATES.filter(t => t.organization_id === orgId);
+  // Include org-specific templates AND shared system templates (organization_id === null)
+  let templates = ERP_MESSAGE_TEMPLATES.filter(t => t.organization_id === orgId || t.organization_id === null);
 
   if (category && category !== 'all') templates = templates.filter(t => t.category === category);
   if (channel && channel !== 'all') templates = templates.filter(t => t.channel === channel || t.channel === 'all');
@@ -27813,7 +27831,19 @@ app.delete("/api/erp/communication/notifications/:id", async (req, res) => {
 // 8i. Settings & Preferences Endpoints
 app.get("/api/erp/communication/settings", (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const settings = ERP_COMMUNICATION_SETTINGS[orgId] || ERP_COMMUNICATION_SETTINGS["b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"];
+  // Return org-specific settings or sensible defaults — never cross-tenant fallback
+  const settings = ERP_COMMUNICATION_SETTINGS[orgId] || {
+    organization_id: orgId,
+    autoAdmissionNotifications: true,
+    autoFeeDueReminders: true,
+    autoFeePaymentReceipts: true,
+    autoLowAttendanceAlerts: true,
+    autoExamResultAlerts: true,
+    autoTransportUpdates: true,
+    autoLibraryDueAlerts: true,
+    autoHrPayrollAlerts: true,
+    preferredChannels: { in_app: true, sms: false, email: false, whatsapp: false }
+  };
   res.json({ success: true, settings });
 });
 
@@ -40351,7 +40381,7 @@ function evaluateOnboardingChecklist(orgId) {
   const staff = ERP_STAFF.filter(st => st.organization_id === orgId);
   const students = ERP_STUDENTS.filter(std => std.organization_id === orgId);
   const feeStructures = ERP_FEE_STRUCTURES.filter(f => f.organization_id === orgId);
-  const commSettings = ERP_COMMUNICATION_SETTINGS[orgId] || ERP_COMMUNICATION_SETTINGS["b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"] || {};
+  const commSettings = ERP_COMMUNICATION_SETTINGS[orgId] || {};
   const aiSettings = ERP_AI_SETTINGS || {};
 
   const orgValid = (!!org && !!org.name && !!org.slug) || completedSteps.includes(1);
