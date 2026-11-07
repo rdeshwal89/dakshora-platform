@@ -73,6 +73,66 @@ interface AcademicsManagementHubProps {
   onShowToast?: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
 }
 
+export type AcademicBoardType = 'cbse' | 'rbse' | 'upmsp' | 'hbse' | 'state';
+
+export interface AcademicBoardMeta {
+  id: AcademicBoardType;
+  name: string;
+  tag: string;
+  fullName: string;
+  curriculumDesc: string;
+  portalCodeLabel: string;
+  defaultCode: string;
+}
+
+export const ACADEMIC_BOARDS: Record<AcademicBoardType, AcademicBoardMeta> = {
+  rbse: {
+    id: 'rbse',
+    name: 'RBSE राजस्थान',
+    tag: 'शाला दर्पण',
+    fullName: 'Board of Secondary Education, Rajasthan (माध्यमिक शिक्षा बोर्ड, अजमेर)',
+    curriculumDesc: 'State curriculum compliant with NCERT guidelines and Rajasthan Shala Darpan (शाला दर्पण) institutional standards.',
+    portalCodeLabel: 'Shala Darpan School ID',
+    defaultCode: '219010'
+  },
+  cbse: {
+    id: 'cbse',
+    name: 'CBSE नई दिल्ली',
+    tag: 'Affiliated',
+    fullName: 'Central Board of Secondary Education, New Delhi',
+    curriculumDesc: 'National NEP-2020 curriculum framework, standard CBSE grade scales, and AISSE/AISSCE board conventions.',
+    portalCodeLabel: 'CBSE Affiliation No.',
+    defaultCode: '1730001'
+  },
+  upmsp: {
+    id: 'upmsp',
+    name: 'UP Board प्रयागराज',
+    tag: 'कॉलेज कोड',
+    fullName: 'UP Board of High School & Intermediate Education, Prayagraj',
+    curriculumDesc: 'Uttar Pradesh Madhyamik Shiksha Parishad with 70+30 sessional examination pattern and UPMSP College Code verification.',
+    portalCodeLabel: 'UPMSP College Code',
+    defaultCode: 'UP-7810'
+  },
+  hbse: {
+    id: 'hbse',
+    name: 'HBSE हरियाणा',
+    tag: 'अवसर MIS',
+    fullName: 'Board of School Education Haryana, Bhiwani (HBSE)',
+    curriculumDesc: 'Haryana Board curriculum integrated with AVSAR Portal MIS standards and semester/annual criteria.',
+    portalCodeLabel: 'HBSE School Code',
+    defaultCode: 'HB-4520'
+  },
+  state: {
+    id: 'state',
+    name: 'State Board',
+    tag: 'राज्य बोर्ड',
+    fullName: 'State Department of Secondary Education',
+    curriculumDesc: 'Universal State Department of Education curriculum framework with multi-lingual medium support.',
+    portalCodeLabel: 'State Recognition No.',
+    defaultCode: 'SB-0982'
+  }
+};
+
 type TabType = 'overview' | 'classes_sections' | 'subjects' | 'allocations' | 'homework' | 'sessions';
 type DossierTabType = 'overview' | 'students' | 'subjects' | 'homework' | 'attendance' | 'exams';
 
@@ -87,6 +147,10 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+
+  // Academic Board & Medium State
+  const [selectedAcademicBoard, setSelectedAcademicBoard] = useState<AcademicBoardType>('cbse');
+  const [selectedAcademicMedium, setSelectedAcademicMedium] = useState<'hindi' | 'bilingual' | 'english'>('bilingual');
 
   // Core Academics Data
   const [overview, setOverview] = useState<AcademicsOverviewSummary | null>(null);
@@ -610,6 +674,73 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
         </div>
       </div>
 
+      {/* ========================================================================= */}
+      {/* 🏛️ STATE BOARD & CURRICULUM SELECTION TOOLBAR */}
+      {/* ========================================================================= */}
+      <div className="glass-panel p-4 rounded-3xl border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-bold text-amber-400 uppercase tracking-wider font-mono flex items-center gap-1.5 mr-1">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            बोर्ड चयन (Select Board):
+          </span>
+          {[
+            { id: 'rbse', name: 'RBSE राजस्थान', tag: 'शाला दर्पण', code: '219010', authority: 'माध्यमिक शिक्षा बोर्ड, अजमेर' },
+            { id: 'cbse', name: 'CBSE नई दिल्ली', tag: 'Affiliated', code: '1730001', authority: 'Central Board of Secondary Education' },
+            { id: 'upmsp', name: 'UP Board प्रयागराज', tag: 'कॉलेज कोड', code: 'UP-7810', authority: 'UP Madhyamik Shiksha Parishad' },
+            { id: 'hbse', name: 'HBSE हरियाणा', tag: 'अवसर MIS', code: 'HB-4520', authority: 'Board of School Education Haryana' },
+            { id: 'state', name: 'State Board', tag: 'राज्य बोर्ड', code: 'SB-0982', authority: 'State Directorate of Education' },
+          ].map(b => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setSelectedAcademicBoard(b.id as AcademicBoardType)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                selectedAcademicBoard === b.id
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800'
+              }`}
+            >
+              <span>{b.name}</span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                selectedAcademicBoard === b.id ? 'bg-slate-950/20 text-slate-950' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {b.tag}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Medium and Portal Code Pill */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-xl">
+            {[
+              { id: 'hindi', label: 'हिंदी' },
+              { id: 'bilingual', label: 'द्विभाषी' },
+              { id: 'english', label: 'English' },
+            ].map(m => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setSelectedAcademicMedium(m.id as 'hindi' | 'bilingual' | 'english')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  selectedAcademicMedium === m.id
+                    ? 'bg-cyan-500 text-slate-950 font-black shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300">
+            <Shield className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-slate-400">{ACADEMIC_BOARDS[selectedAcademicBoard]?.portalCodeLabel}:</span>
+            <span className="text-white font-bold">{ACADEMIC_BOARDS[selectedAcademicBoard]?.defaultCode}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Tabs Navigation */}
       <div className="flex items-center gap-2 border-b border-slate-800/80 pb-3 overflow-x-auto">
         <button
@@ -705,6 +836,39 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          {/* Active Board Curriculum Banner */}
+          <div className="p-4 rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-cyan-950/20 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                <Award className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">
+                    {ACADEMIC_BOARDS[selectedAcademicBoard]?.fullName}
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                    {ACADEMIC_BOARDS[selectedAcademicBoard]?.tag}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  {ACADEMIC_BOARDS[selectedAcademicBoard]?.curriculumDesc}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs font-mono">
+              <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-right">
+                <div className="text-[10px] text-slate-400 uppercase">Affiliated Classes</div>
+                <div className="text-sm font-bold text-cyan-400">{classes.length} Grades Active</div>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-right">
+                <div className="text-[10px] text-slate-400 uppercase">Subjects Catalogue</div>
+                <div className="text-sm font-bold text-emerald-400">{subjects.length} Standard</div>
+              </div>
+            </div>
+          </div>
+
           {/* 6 Real Database KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/90 space-y-1">
@@ -736,7 +900,7 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
 
             <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/90 space-y-1">
               <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between">
-                <span>CBSE Subjects</span>
+                <span>{selectedAcademicBoard.toUpperCase()} Subjects</span>
                 <BookMarked className="w-3.5 h-3.5 text-amber-400" />
               </div>
               <div className="text-xl font-bold text-white font-mono">{overview?.totalSubjects ?? subjects.length}</div>

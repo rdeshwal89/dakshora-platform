@@ -864,82 +864,42 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Medium Selector (Language Pill) */}
+            <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/80 p-1 rounded-xl">
+              {[
+                { id: 'hindi', label: 'हिंदी' },
+                { id: 'bilingual', label: 'द्विभाषी' },
+                { id: 'english', label: 'English' },
+              ].map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setSelectedFeeMedium(m.id as MediumType)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    selectedFeeMedium === m.id
+                      ? 'bg-emerald-500 text-slate-950 font-black shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => setShowBatchModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 shadow-sm transition-all"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700 shadow-sm transition-all cursor-pointer"
             >
               <Layers className="w-4 h-4 text-emerald-400" />
-              <span>Generate Batch Demands</span>
+              <span>{selectedFeeMedium === 'hindi' ? 'बैच मांग जारी करें' : 'Generate Batch Demands'}</span>
             </button>
             <button
               onClick={() => setShowAddStructureModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Configure Fee Head</span>
+              <span>{selectedFeeMedium === 'hindi' ? 'शुल्क मद कॉन्फिगर करें' : 'Configure Fee Head'}</span>
             </button>
-          </div>
-        </div>
-
-        {/* STATE BOARD & BILINGUAL SELECTION TOOLBAR */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-bold text-amber-400 uppercase tracking-wider font-mono flex items-center gap-1 mr-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              बोर्ड चयन (Select Board):
-            </span>
-            {[
-              { id: 'rbse', name: 'RBSE राजस्थान', tag: 'शाला दर्पण' },
-              { id: 'upmsp', name: 'UP Board प्रयागराज', tag: 'कॉलेज कोड' },
-              { id: 'hbse', name: 'HBSE हरियाणा', tag: 'अवसर MIS' },
-              { id: 'cbse', name: 'CBSE नई दिल्ली', tag: 'Affiliation' },
-              { id: 'state', name: 'State Board', tag: 'राज्य बोर्ड' },
-            ].map(b => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => {
-                  const nb = b.id as BoardType;
-                  setSelectedFeeBoard(nb);
-                  setCustomReceiptSchoolCode(FEE_BOARD_CONFIGS[nb].schoolCodeDefault);
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                  selectedFeeBoard === b.id
-                    ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30 scale-[1.02]'
-                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700'
-                }`}
-              >
-                <span>{b.name}</span>
-                <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${
-                  selectedFeeBoard === b.id ? 'bg-slate-950/20 text-slate-900' : 'bg-slate-800 text-slate-400'
-                }`}>
-                  {b.tag}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Medium Toggle */}
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 p-1 rounded-xl">
-            <span className="text-[11px] font-bold text-slate-400 px-2 font-mono">माध्यम:</span>
-            {[
-              { id: 'hindi', label: 'हिंदी माध्यम' },
-              { id: 'bilingual', label: 'द्विभाषी (Bilingual)' },
-              { id: 'english', label: 'English' },
-            ].map(m => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setSelectedFeeMedium(m.id as MediumType)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  selectedFeeMedium === m.id
-                    ? 'bg-emerald-500 text-slate-950 font-black shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
           </div>
         </div>
 
@@ -1060,229 +1020,432 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* Main KPI Row */}
+          {/* Main Financial KPI Grid (5 Cards) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {/* Total Invoiced */}
-            <div className="p-5 rounded-3xl bg-slate-900/60 border border-slate-800 relative overflow-hidden">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-mono mb-2">
-                <span>Total Demand / Invoiced</span>
-                <DollarSign className="w-4 h-4 text-cyan-400" />
+            {/* 1. Net Fee Invoiced / Demand */}
+            <div className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/40 transition-all relative overflow-hidden group shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Receipt className="w-3.5 h-3.5 text-cyan-400" />
+                  {selectedFeeMedium === 'hindi' ? 'कुल मांग' : 'Net Demand'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                  {overview?.totalDemandsCount || 0} Bills
+                </span>
               </div>
-              <div className="text-2xl font-black text-white">
-                ₹{overview ? overview.totalInvoiced.toLocaleString() : '...'}
+              <div className="text-2xl font-black text-white tracking-tight">
+                ₹{overview ? overview.totalInvoiced.toLocaleString() : '0'}
               </div>
-              <p className="text-[11px] text-slate-400 font-mono mt-1">
-                Across {overview?.totalDemandsCount || 0} active demand notices
+              <p className="text-[11px] text-slate-400 font-mono mt-1 flex items-center gap-1">
+                <span className="text-cyan-400">●</span> {selectedFeeMedium === 'hindi' ? 'सत्र की कुल जारी फीस' : 'Total invoiced demand for session'}
               </p>
             </div>
 
-            {/* Total Collected */}
-            <div className="p-5 rounded-3xl bg-emerald-950/20 border border-emerald-500/30 relative overflow-hidden">
-              <div className="flex items-center justify-between text-emerald-300 text-xs font-mono mb-2">
-                <span>Total Collected</span>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            {/* 2. Total Collected / Realized */}
+            <div className="p-5 rounded-3xl bg-emerald-950/20 border border-emerald-500/30 hover:border-emerald-500/50 transition-all relative overflow-hidden group shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  {selectedFeeMedium === 'hindi' ? 'कुल वसूली' : 'Total Collected'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-900/60 text-emerald-200 border border-emerald-500/40">
+                  {overview?.collectionRatePercentage}% Realized
+                </span>
               </div>
-              <div className="text-2xl font-black text-emerald-400">
-                ₹{overview ? overview.totalCollected.toLocaleString() : '...'}
+              <div className="text-2xl font-black text-emerald-400 tracking-tight">
+                ₹{overview ? overview.totalCollected.toLocaleString() : '0'}
               </div>
-              <div className="flex items-center gap-1 text-[11px] text-emerald-300/80 font-mono mt-1">
-                <span>Collection rate:</span>
-                <span className="font-bold text-emerald-300">{overview?.collectionRatePercentage}%</span>
+              <div className="flex items-center gap-2 mt-1.5">
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-emerald-500/20">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, overview?.collectionRatePercentage || 0)}%` }}
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Total Outstanding */}
-            <div className="p-5 rounded-3xl bg-amber-950/20 border border-amber-500/30 relative overflow-hidden">
-              <div className="flex items-center justify-between text-amber-300 text-xs font-mono mb-2">
-                <span>Outstanding Dues</span>
-                <Clock className="w-4 h-4 text-amber-400" />
+            {/* 3. Outstanding / Pending Dues */}
+            <div className="p-5 rounded-3xl bg-amber-950/20 border border-amber-500/30 hover:border-amber-500/50 transition-all relative overflow-hidden group shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  {selectedFeeMedium === 'hindi' ? 'बकाया राशि' : 'Outstanding Dues'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-950 text-amber-300 border border-amber-500/30">
+                  {(overview?.pendingCount || 0) + (overview?.partiallyPaidCount || 0)} Due
+                </span>
               </div>
-              <div className="text-2xl font-black text-amber-400">
-                ₹{overview ? overview.totalOutstanding.toLocaleString() : '...'}
+              <div className="text-2xl font-black text-amber-400 tracking-tight">
+                ₹{overview ? overview.totalOutstanding.toLocaleString() : '0'}
               </div>
               <p className="text-[11px] text-amber-300/80 font-mono mt-1">
-                {overview?.pendingCount || 0} pending + {overview?.partiallyPaidCount || 0} partial
+                {overview?.pendingCount || 0} unpaid + {overview?.partiallyPaidCount || 0} partial
               </p>
             </div>
 
-            {/* Overdue */}
-            <div className="p-5 rounded-3xl bg-rose-950/20 border border-rose-500/30 relative overflow-hidden">
-              <div className="flex items-center justify-between text-rose-300 text-xs font-mono mb-2">
-                <span>Overdue Demands</span>
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
+            {/* 4. Overdue / Defaulter Balance */}
+            <div className="p-5 rounded-3xl bg-rose-950/20 border border-rose-500/30 hover:border-rose-500/50 transition-all relative overflow-hidden group shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-rose-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                  {selectedFeeMedium === 'hindi' ? 'अतिदेय राशि' : 'Overdue Demands'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-950 text-rose-300 border border-rose-500/40">
+                  {overview?.overdueCount || 0} Defaulters
+                </span>
               </div>
-              <div className="text-2xl font-black text-rose-400">
-                ₹{overview ? overview.totalOverdue.toLocaleString() : '...'}
+              <div className="text-2xl font-black text-rose-400 tracking-tight">
+                ₹{overview ? overview.totalOverdue.toLocaleString() : '0'}
               </div>
               <p className="text-[11px] text-rose-300/80 font-mono mt-1">
-                {overview?.overdueCount || 0} past due date
+                {selectedFeeMedium === 'hindi' ? 'अंतिम तिथि समाप्त' : 'Past grace period deadline'}
               </p>
             </div>
 
-            {/* Today's Collection */}
-            <div className="p-5 rounded-3xl bg-purple-950/20 border border-purple-500/30 relative overflow-hidden">
-              <div className="flex items-center justify-between text-purple-300 text-xs font-mono mb-2">
-                <span>Collected Today</span>
-                <Sparkles className="w-4 h-4 text-purple-400" />
+            {/* 5. Today's Counter Collection */}
+            <div className="p-5 rounded-3xl bg-purple-950/20 border border-purple-500/30 hover:border-purple-500/50 transition-all relative overflow-hidden group shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-mono font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Banknote className="w-3.5 h-3.5 text-purple-400" />
+                  {selectedFeeMedium === 'hindi' ? 'आज की वसूली' : 'Today Collected'}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-mono text-purple-300 bg-purple-950 px-2 py-0.5 rounded-full border border-purple-500/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Live Cash-in
+                </span>
               </div>
-              <div className="text-2xl font-black text-purple-300">
-                ₹{overview ? overview.todayCollected.toLocaleString() : '...'}
+              <div className="text-2xl font-black text-purple-300 tracking-tight">
+                ₹{overview ? overview.todayCollected.toLocaleString() : '0'}
               </div>
               <p className="text-[11px] text-purple-300/80 font-mono mt-1">
-                Live terminal cash-in
+                {selectedFeeMedium === 'hindi' ? 'कैशियर काउंटर दैनिक योग' : 'Front desk cash & digital'}
               </p>
             </div>
           </div>
 
-          {/* Collection Rate Bar & Mode Breakdown */}
+          {/* ⚡ INSTANT FINANCIAL OPERATIONS COMMAND BAR */}
+          <div className="glass-panel p-4 rounded-3xl border border-slate-800 bg-slate-900/60 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-bold text-white tracking-wider uppercase text-[11px]">
+                {selectedFeeMedium === 'hindi' ? 'त्वरित वित्तीय कार्य (Quick Operations):' : 'Quick Operations:'}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setActiveTab('collection')}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-emerald-600/20 transition cursor-pointer"
+              >
+                <Banknote className="w-4 h-4" />
+                <span>{selectedFeeMedium === 'hindi' ? 'शुल्क संग्रह काउंटर' : 'Collect Fee (Cashier Desk)'}</span>
+              </button>
+
+              <button
+                onClick={() => setShowBatchModal(true)}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+              >
+                <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{selectedFeeMedium === 'hindi' ? 'मांग बिल जारी करें' : 'Generate Demands'}</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('ledger')}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+              >
+                <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                <span>{selectedFeeMedium === 'hindi' ? 'बकायादार छात्र सूची' : 'Student Dues Ledger'}</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('structures')}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-teal-400" />
+                <span>{selectedFeeMedium === 'hindi' ? 'शुल्क मद संरचना' : 'Fee Structures'}</span>
+              </button>
+
+              <button
+                onClick={handleExportCollectionCSV}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-purple-400" />
+                <span>{selectedFeeMedium === 'hindi' ? 'दैनिक रजिस्टर CSV' : 'Export Register'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Analytical Deck: 2 Columns */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Progress & Overview Insights */}
-            <div className="lg:col-span-2 glass-panel p-6 rounded-3xl border border-slate-800 space-y-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-400" />
-                    <span>Term Fee Recovery & Health</span>
-                  </h3>
-                  <p className="text-xs text-slate-400 font-mono">
-                    Real-time ratio of collected funds vs outstanding parent obligations
-                  </p>
+            {/* Column 1 (2 cols): Recovery Progress & Class-wise Health */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Term Recovery Progress */}
+              <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-5 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-400" />
+                      <span>{selectedFeeMedium === 'hindi' ? 'सत्र शुल्क वसूली व स्वास्थ्य स्थिति' : 'Term Fee Recovery & Health'}</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                      {selectedFeeMedium === 'hindi' ? 'वसूल की गई राशि बनाम कुल छात्र देनदारी का लाइव अनुपात' : 'Real-time ratio of collected funds vs outstanding parent obligations'}
+                    </p>
+                  </div>
+                  <span className="text-base font-black text-emerald-400 font-mono bg-emerald-950/60 px-3 py-1 rounded-xl border border-emerald-500/30">
+                    {overview?.collectionRatePercentage}% Realized
+                  </span>
                 </div>
-                <span className="text-sm font-black text-emerald-400 font-mono">
-                  {overview?.collectionRatePercentage}% Realized
-                </span>
+
+                {/* Progress bar */}
+                <div className="w-full h-4 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, overview?.collectionRatePercentage || 0)}%` }}
+                  />
+                </div>
+
+                {/* Status Breakdown Pills */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
+                    <div className="text-xl font-black text-emerald-400">{overview?.paidCount || 0}</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      {selectedFeeMedium === 'hindi' ? 'पूर्ण भुगतान' : 'Paid in Full'}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
+                    <div className="text-xl font-black text-teal-400">{overview?.partiallyPaidCount || 0}</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      {selectedFeeMedium === 'hindi' ? 'आंशिक भुगतान' : 'Partially Paid'}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
+                    <div className="text-xl font-black text-amber-400">{overview?.pendingCount || 0}</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      {selectedFeeMedium === 'hindi' ? 'लंबित मांग' : 'Pending Dues'}
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
+                    <div className="text-xl font-black text-rose-400">{overview?.overdueCount || 0}</div>
+                    <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                      {selectedFeeMedium === 'hindi' ? 'अतिदेय डिफ़ॉल्टर' : 'Overdue Notices'}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Progress bar */}
-              <div className="w-full h-4 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex">
-                <div
-                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, overview?.collectionRatePercentage || 0)}%` }}
-                />
-              </div>
+              {/* Class-Wise Collection Performance */}
+              <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-cyan-400" />
+                      <span>{selectedFeeMedium === 'hindi' ? 'कक्षावार शुल्क वसूली विश्लेषण' : 'Class-Wise Fee Realization Performance'}</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                      {selectedFeeMedium === 'hindi' ? 'प्रत्येक कक्षा का मांग, संग्रह और वसूली प्रतिशत' : 'Class-level collection efficiency across active academic cohorts'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setReportSubTab('class_summary');
+                      setActiveTab('reports');
+                    }}
+                    className="text-xs font-bold text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-mono cursor-pointer"
+                  >
+                    <span>{selectedFeeMedium === 'hindi' ? 'विस्तृत रिपोर्ट' : 'View Full Class Report'}</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
 
-              {/* Status Breakdown Pills */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
-                  <div className="text-lg font-black text-emerald-400">{overview?.paidCount || 0}</div>
-                  <div className="text-[11px] text-slate-400 font-mono">Paid in Full</div>
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/80">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 bg-slate-900/60">
+                        <th className="p-3">Class</th>
+                        <th className="p-3">Demands</th>
+                        <th className="p-3">Total Invoiced</th>
+                        <th className="p-3">Total Collected</th>
+                        <th className="p-3">Outstanding</th>
+                        <th className="p-3">Realization %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {classSummary && classSummary.length > 0 ? (
+                        classSummary.slice(0, 6).map((cs) => (
+                          <tr key={cs.grade} className="hover:bg-slate-900/40 transition">
+                            <td className="p-3 font-bold text-white">{cs.grade}</td>
+                            <td className="p-3 text-slate-300">{cs.totalDemands}</td>
+                            <td className="p-3 text-slate-300">₹{cs.totalInvoiced.toLocaleString()}</td>
+                            <td className="p-3 font-bold text-emerald-400">₹{cs.totalCollected.toLocaleString()}</td>
+                            <td className="p-3 font-bold text-amber-400">₹{cs.totalOutstanding.toLocaleString()}</td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                                  <div
+                                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full"
+                                    style={{ width: `${Math.min(100, cs.collectionRatePercentage)}%` }}
+                                  />
+                                </div>
+                                <span className="font-bold text-emerald-400">{cs.collectionRatePercentage}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="p-4 text-center text-slate-500">
+                            Class summary syncing with database demands...
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
-                  <div className="text-lg font-black text-teal-400">{overview?.partiallyPaidCount || 0}</div>
-                  <div className="text-[11px] text-slate-400 font-mono">Partially Paid</div>
-                </div>
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
-                  <div className="text-lg font-black text-amber-400">{overview?.pendingCount || 0}</div>
-                  <div className="text-[11px] text-slate-400 font-mono">Pending</div>
-                </div>
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 text-center">
-                  <div className="text-lg font-black text-rose-400">{overview?.overdueCount || 0}</div>
-                  <div className="text-[11px] text-slate-400 font-mono">Overdue</div>
-                </div>
-              </div>
-
-              {/* Quick Actions */}
-              <div className="pt-2 flex items-center gap-3">
-                <button
-                  onClick={() => setActiveTab('collection')}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/20"
-                >
-                  <Banknote className="w-4 h-4" />
-                  <span>Open Collection Terminal</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('ledger')}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 border border-slate-700"
-                >
-                  <Search className="w-4 h-4 text-cyan-400" />
-                  <span>Lookup Defaulter Students</span>
-                </button>
               </div>
             </div>
 
-            {/* Collection by Payment Mode */}
-            <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-cyan-400" />
-                <span>Collections by Mode</span>
-              </h3>
-              <p className="text-xs text-slate-400 font-mono">
-                Audit breakdown across accepted transaction channels
-              </p>
-
-              <div className="space-y-3 pt-2">
-                {/* UPI */}
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-lg bg-cyan-950/60 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xs font-bold">
-                      UPI
-                    </span>
-                    <span className="text-xs font-semibold text-slate-200">UPI / QR Payment</span>
+            {/* Column 2 (1 col): Payment Mode Distribution & Cashier Desk Status */}
+            <div className="space-y-6">
+              {/* Payment Mode Channel Distribution */}
+              <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-cyan-400" />
+                      <span>{selectedFeeMedium === 'hindi' ? 'भुगतान माध्यम ऑडिट' : 'Collections by Channel'}</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 font-mono">
+                      {selectedFeeMedium === 'hindi' ? 'स्वीकृत माध्यमों में एकत्रित राशि' : 'Audit breakdown across payment channels'}
+                    </p>
                   </div>
-                  <span className="font-mono font-bold text-white text-sm">
-                    ₹{(overview?.modeBreakdown?.upi || 0).toLocaleString()}
+                </div>
+
+                <div className="space-y-3 pt-1">
+                  {/* UPI */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-xl bg-cyan-950/80 border border-cyan-500/30 flex items-center justify-center text-cyan-400 text-xs font-bold">
+                        UPI
+                      </span>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">UPI / QR Payment</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Instant Gateway & Scan</div>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-white text-sm">
+                      ₹{(overview?.modeBreakdown?.upi || 0).toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Cash */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-xl bg-emerald-950/80 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-xs font-bold">
+                        ₹
+                      </span>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">Front Desk Cash</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Physical Cashier Counter</div>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-white text-sm">
+                      ₹{(overview?.modeBreakdown?.cash || 0).toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Bank Transfer / NEFT */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-xl bg-purple-950/80 border border-purple-500/30 flex items-center justify-center text-purple-400 text-xs font-bold">
+                        NEFT
+                      </span>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">Bank Transfer / IMPS</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Direct Account Settlement</div>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-white text-sm">
+                      ₹{(overview?.modeBreakdown?.bank_transfer || 0).toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Cheque */}
+                  <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-xl bg-amber-950/80 border border-amber-500/30 flex items-center justify-center text-amber-400 text-xs font-bold">
+                        CHQ
+                      </span>
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">Cheque / DD Deposit</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Bank Clearance Tracking</div>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-white text-sm">
+                      ₹{(overview?.modeBreakdown?.cheque || 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cashier Desk Status & Security Protocol */}
+              <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 shadow-lg bg-gradient-to-b from-slate-900/80 to-slate-950">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>{selectedFeeMedium === 'hindi' ? 'कैशियर डेस्क प्रोटोकॉल' : 'Cashier Security Protocol'}</span>
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                    Active
                   </span>
                 </div>
 
-                {/* Cash */}
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-lg bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-xs font-bold">
-                      ₹
-                    </span>
-                    <span className="text-xs font-semibold text-slate-200">Front Desk Cash</span>
+                <div className="space-y-2 text-xs font-mono text-slate-300">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <span className="text-slate-400">Sequential Receipt Mutex:</span>
+                    <span className="text-emerald-400 font-bold">Collision-Safe (Postgres Locked)</span>
                   </div>
-                  <span className="font-mono font-bold text-white text-sm">
-                    ₹{(overview?.modeBreakdown?.cash || 0).toLocaleString()}
-                  </span>
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <span className="text-slate-400">Audit Logging:</span>
+                    <span className="text-cyan-400 font-bold">Double-Entry Verified</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <span className="text-slate-400">Reversal Authority:</span>
+                    <span className="text-amber-400 font-bold">Principal OTP Gated</span>
+                  </div>
                 </div>
 
-                {/* Bank Transfer / NEFT */}
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-lg bg-purple-950/60 border border-purple-500/30 flex items-center justify-center text-purple-400 text-xs font-bold">
-                      NEFT
-                    </span>
-                    <span className="text-xs font-semibold text-slate-200">Bank Transfer / IMPS</span>
-                  </div>
-                  <span className="font-mono font-bold text-white text-sm">
-                    ₹{(overview?.modeBreakdown?.bank_transfer || 0).toLocaleString()}
-                  </span>
-                </div>
-
-                {/* Cheque */}
-                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-7 h-7 rounded-lg bg-amber-950/60 border border-amber-500/30 flex items-center justify-center text-amber-400 text-xs font-bold">
-                      CHQ
-                    </span>
-                    <span className="text-xs font-semibold text-slate-200">Cheque Deposits</span>
-                  </div>
-                  <span className="font-mono font-bold text-white text-sm">
-                    ₹{(overview?.modeBreakdown?.cheque || 0).toLocaleString()}
-                  </span>
-                </div>
+                <button
+                  onClick={() => setActiveTab('collection')}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition cursor-pointer"
+                >
+                  <Banknote className="w-4 h-4" />
+                  <span>{selectedFeeMedium === 'hindi' ? 'कैशियर टर्मिनल खोलें' : 'Launch Cashier Terminal'}</span>
+                </button>
               </div>
             </div>
           </div>
 
           {/* Recent Collections Table */}
-          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4">
+          <div className="glass-panel p-6 rounded-3xl border border-slate-800 space-y-4 shadow-lg">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
                   <Receipt className="w-4 h-4 text-emerald-400" />
-                  <span>Recent Fee Collections</span>
+                  <span>{selectedFeeMedium === 'hindi' ? 'हालिया शुल्क रसीदें' : 'Recent Fee Collections'}</span>
                 </h3>
                 <p className="text-xs text-slate-400 font-mono">
-                  Latest transactions recorded across all school cashier counters
+                  {selectedFeeMedium === 'hindi' ? 'स्कूल के कैशियर काउंटरों पर दर्ज किए गए नवीनतम भुगतान' : 'Latest transactions recorded across all school cashier counters'}
                 </p>
               </div>
               <button
-                onClick={() => setActiveTab('reports')}
-                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-mono"
+                onClick={() => {
+                  setReportSubTab('collection');
+                  setActiveTab('reports');
+                }}
+                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-mono cursor-pointer"
               >
-                <span>View Full Register</span>
+                <span>{selectedFeeMedium === 'hindi' ? 'पूरा रजिस्टर देखें' : 'View Full Register'}</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -1322,7 +1485,7 @@ export const FeesManagementHub: React.FC<FeesManagementHubProps> = ({
                         <td className="p-3.5 text-right">
                           <button
                             onClick={() => handleOpenReceipt(p.receiptNo)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 ml-auto border border-slate-700"
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 ml-auto border border-slate-700 cursor-pointer"
                           >
                             <Printer className="w-3.5 h-3.5 text-cyan-400" />
                             <span>Print Receipt</span>
