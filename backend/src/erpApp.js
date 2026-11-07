@@ -4241,9 +4241,12 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
       created_at: new Date().toISOString()
     };
     IN_MEMORY_WEBSITES.unshift(newSite);
+    // Instant CMS Tree & White-Label Mobile App Synthesis
+    try { getOrCreateCmsTree(newSite); } catch (_) {}
 
     // 10. Multi-channel Notification Dispatch (SMS, WhatsApp, Email)
-    const smsWelcomeText = `Congratulations ${cleanPrincipalName}! ${rawSchoolName} (Institute Code: ${cleanInstituteCode}) is provisioned on DAKSHORA 2.0. Activate your account: ${activationUrl} | Support: +918796347851`;
+    const apkDownloadUrl = `https://dakshora.co.in/api/public/mobile-app/${newOrgId}/download`;
+    const smsWelcomeText = `Congratulations ${cleanPrincipalName}! ${rawSchoolName} (Institute Code: ${cleanInstituteCode}) is provisioned on DAKSHORA 2.0. Activate: ${activationUrl} | App: ${apkDownloadUrl}`;
     let smsDispatch = null;
     try {
       smsDispatch = await dispatchLiveGatewayMessage({
@@ -4258,7 +4261,7 @@ app.post(["/api/admin/onboard-school", "/api/organizations/onboard", "/api/super
 
     let waDispatch = null;
     try {
-      const waText = `🏫 *Congratulations ${cleanPrincipalName}!*\n\n*${rawSchoolName}* has been successfully registered on *DAKSHORA 2.0 School ERP*.\n\n🏛️ *Institute Code:* \`${cleanInstituteCode}\`\n📋 *Tenant Code:* \`${tenantCode}\`\n🏛️ *Board:* ${matchedBoard.code} (${medium} Medium)\n🌐 *Website URL:* https://${siteDomain}\n\n🔐 *Activate Your Account & Set Password:*\n👉 ${activationUrl}\n\n_Security Notice: Do not share this link. It will expire in 7 days._\n\n- DAKSHORA 2.0 Operations Team`;
+      const waText = `🏫 *Congratulations ${cleanPrincipalName}!*\n\n*${rawSchoolName}* has been successfully registered on *DAKSHORA 2.0 School ERP*.\n\n🏛️ *Institute Code:* \`${cleanInstituteCode}\`\n📋 *Tenant Code:* \`${tenantCode}\`\n🏛️ *Board:* ${matchedBoard.code} (${medium} Medium)\n🌐 *Website URL:* https://${siteDomain}\n📱 *School Mobile App (.APK):* ${apkDownloadUrl}\n\n🔐 *Activate Your Account & Set Password:*\n👉 ${activationUrl}\n\n_Security Notice: Do not share this link. It will expire in 7 days._\n\n- DAKSHORA 2.0 Operations Team`;
       waDispatch = await dispatchLiveGatewayMessage({
         channel: "whatsapp",
         recipientContact: cleanPhone,
@@ -4286,6 +4289,7 @@ Institution Details:
 • Category: ${schoolType}
 • Official Web Portal: https://${siteDomain}
 • ERP Login URL: https://dakshora.co.in/portal
+• White-Label Mobile App (.APK): ${apkDownloadUrl}
 
 Account Activation & Security Setup:
 --------------------------------------------------------
@@ -4298,6 +4302,7 @@ Initial Recommended Actions:
 1. Complete password setup and verify Two-Factor Authentication (TOTP).
 2. Review your school website and configure custom domain DNS if needed.
 3. Access the 16-Step Assisted Setup Wizard in the Superadmin / Admin dashboard.
+4. Download and distribute the school's white-label APK to staff and parents.
 
 If you have questions, our priority desk is available at support@dakshora.co.in or WhatsApp +91 87963 47851.
 
@@ -4345,9 +4350,17 @@ https://dakshora.co.in`;
       },
       website: {
         id: newSite.id,
+        slug: orgSlug,
         domain: siteDomain,
         template: templateId,
         previewUrl: `https://${siteDomain}`
+      },
+      mobileApp: {
+        appName: `${rawSchoolName} Parent & Student App`,
+        packageId: `in.edu.${orgSlug.replace(/[^a-z0-9]/g, "")}.parentapp`,
+        apkDownloadUrl: `/api/public/mobile-app/${newOrgId}/download`,
+        schoolApkUrl: `/api/public/schools/${orgSlug}/mobile-app/apk`,
+        status: "ready"
       },
       onboarding: {
         currentStep: 1,
@@ -6302,13 +6315,37 @@ function resolvePhysicalApkPath(filename, slug) {
 }
 
 // GET /assets/mobile/:filename, /api/public/schools/:slug/mobile-app/apk, /api/public/mobile-app/:id/download
+// The :id param can be a website UUID or an organization UUID — resolve org slug from DB for branded download
 app.get([
   "/assets/mobile/:filename",
   "/api/public/schools/:slug/mobile-app/apk",
   "/api/public/mobile-app/:id/download"
-], (req, res) => {
-  const requestedFilename = req.params.filename || (req.params.slug ? `${req.params.slug}-parentapp-v2.0.0.apk` : "newidealpublicschool-parentapp-v2.0.0.apk");
-  const apkPath = resolvePhysicalApkPath(req.params.filename, req.params.slug);
+], async (req, res) => {
+  let slug = req.params.slug || req.params.filename?.replace(/-parentapp.*\.apk$/, "");
+
+  // If called with an org/website UUID (:id), resolve slug from DB
+  if (!slug && req.params.id && req.params.id !== "undefined") {
+    const idParam = req.params.id;
+    if (supabase) {
+      try {
+        // Try as organization_id
+        const { data: orgRow } = await supabase.from("organizations").select("slug").eq("id", idParam).maybeSingle();
+        if (orgRow?.slug) slug = orgRow.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!slug) {
+          // Try as website_id
+          const { data: siteRow } = await supabase.from("websites").select("slug, organization_id").eq("id", idParam).maybeSingle();
+          if (siteRow?.slug) slug = siteRow.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
+        }
+      } catch (_) {}
+    }
+    if (!slug) {
+      const memOrg = IN_MEMORY_ORGANIZATIONS.find(o => o.id === idParam);
+      if (memOrg?.slug) slug = memOrg.slug.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+  }
+
+  const requestedFilename = req.params.filename || (slug ? `${slug}-parentapp-v2.0.0.apk` : "dakshora-erp-v2.0.0.apk");
+  const apkPath = resolvePhysicalApkPath(req.params.filename, slug);
   if (!apkPath) {
     return res.status(404).json({
       success: false,
@@ -6455,6 +6492,20 @@ app.post("/api/admin/white-label/build", requireAuth, requireSuperAdmin, async (
   const finalAppName = (customAppName || org.name.split(" ").slice(0, 2).join(" ") || org.name).slice(0, 25).trim();
   const hostDomain = (website?.domain || "dakshora.co.in").replace(/^https?:\/\//, "");
 
+  // Detect if a pre-built white-label APK already exists for this school slug
+  const KNOWN_APK_SLUGS = {
+    "dssno1bharatpur": "dssno1bharatpur-parentapp-v2.0.0.apk",
+    "dakshoraacademy": "dakshora-academy-parentapp-v2.0.0.apk",
+    "newidealpublicschool": "newidealpublicschool-parentapp-v2.0.0.apk",
+    "nirmalhappyschool": "nirmalhappyschool-parentapp-v2.0.0.apk"
+  };
+  const existingApkFile = KNOWN_APK_SLUGS[cleanPackageSlug] || KNOWN_APK_SLUGS[cleanPackageSlug.replace(/\s+/g, "")] || null;
+  const artifactBaseUrl = "https://dakshora.co.in/assets/mobile";
+  // Use existing APK if available, otherwise generate a school-specific download URL
+  const resolvedArtifactUrl = existingApkFile
+    ? `${artifactBaseUrl}/${existingApkFile}`
+    : `${artifactBaseUrl}/${cleanPackageSlug}-parentapp-v${versionName}.apk`;
+
   const buildId = crypto.randomUUID ? crypto.randomUUID() : `bld-${Date.now()}`;
   const sha256Fingerprint = crypto.createHash("sha256").update(`release_key_${finalPackageId}_${organizationId}`).digest("hex").toUpperCase().match(/.{2}/g).join(":");
 
@@ -6471,15 +6522,22 @@ app.post("/api/admin/white-label/build", requireAuth, requireSuperAdmin, async (
     primaryColor,
     hostDomain,
     sha256Fingerprint,
-    downloadUrl: `https://${hostDomain}/portal`,
-    artifactUrl: `https://${hostDomain}/assets/mobile/${cleanPackageSlug}-${buildType.toLowerCase() === "aab" ? "bundle" : "app"}-v${versionName}.${buildType.toLowerCase() === "aab" ? "aab" : "apk"}`,
-    playStoreReady: true,
+    downloadUrl: `https://dakshora.co.in/portal?school=${cleanPackageSlug}`,
+    artifactUrl: resolvedArtifactUrl,
+    apkDownloadEndpoint: `/api/public/mobile-app/${organizationId}/download`,
+    preBuiltApk: !!existingApkFile,
+    playStoreReady: !!existingApkFile, // Only mark true if we have a real APK file
+    note: existingApkFile
+      ? `Pre-built white-label APK available. School-specific package delivered from server.`
+      : `APK URL provisioned. Contact Dakshora team to build & sign a custom APK for this school's package ID: ${finalPackageId}`,
     logs: [
       `[1/5] Validating school metadata & TWA manifest for ${org.name}...`,
       `[2/5] Package ID: ${finalPackageId} verified with reverse-domain policy.`,
       `[3/5] Asset links generated with SHA-256 fingerprint: ${sha256Fingerprint}.`,
-      `[4/5] Compiling release ${buildType.toUpperCase()} with Bubblewrap & Android Gradle...`,
-      `[5/5] Build artifact signed and ready for deployment.`
+      existingApkFile
+        ? `[4/5] Pre-built white-label APK found: ${existingApkFile} ✅`
+        : `[4/5] Custom build required: Contact support with Package ID ${finalPackageId} for Gradle signing pipeline.`,
+      `[5/5] Build record created. Download URL: ${resolvedArtifactUrl}`
     ],
     createdAt: new Date().toISOString(),
     completedAt: new Date().toISOString()
@@ -40606,12 +40664,39 @@ app.get("/api/erp/onboarding/status", async (req, res) => {
   const checklist = evaluateOnboardingChecklist(orgId);
   const progressPercentage = Math.round((onboarding.completed_steps.length / 16) * 100);
 
+  // Enrich onboarding status with website and mobile app info
+  let websiteInfo = null;
+  let mobileAppInfo = null;
+  if (supabase) {
+    try {
+      const { data: wsite } = await supabase.from("websites").select("id, slug, status, name").eq("organization_id", orgId).maybeSingle();
+      if (wsite) {
+        websiteInfo = {
+          id: wsite.id,
+          name: wsite.name,
+          url: `https://${wsite.slug}.school.dakshora.app`,
+          cmsUrl: `/api/websites/${wsite.id}/cms`,
+          status: wsite.status
+        };
+        const cleanSlug = (wsite.slug || "").replace(/[^a-z0-9]/g, "");
+        mobileAppInfo = {
+          apkDownloadUrl: `/api/public/mobile-app/${orgId}/download`,
+          schoolApkUrl: `/api/public/schools/${cleanSlug}/mobile-app/apk`,
+          packageId: `in.edu.${cleanSlug}.parentapp`,
+          version: "2.0.0"
+        };
+      }
+    } catch (_) {}
+  }
+
   res.json({
     success: true,
     onboarding,
     checklist,
     progressPercentage,
     totalSteps: 16,
+    website: websiteInfo,
+    mobileApp: mobileAppInfo,
     stepTitles: [
       "Organization",
       "School Profile",
@@ -40765,6 +40850,39 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
           affiliationNo,
           principalName
         });
+
+        // FIX: Persist school profile to Supabase `schools` table for ALL real orgs (not just demo)
+        if (supabase) {
+          try {
+            const profileUpdate = {};
+            if (schoolName) profileUpdate.name = schoolName.trim();
+            if (schoolCode) profileUpdate.school_code = schoolCode.trim().toUpperCase();
+            if (board) profileUpdate.board = board;
+            if (affiliationNo) profileUpdate.affiliation_no = affiliationNo;
+            if (address) profileUpdate.address = address;
+            if (city) profileUpdate.city = city;
+            if (state) profileUpdate.state = state;
+            if (pin) profileUpdate.pincode = pin;
+            if (phone) profileUpdate.phone = phone.replace(/\D/g, "").slice(-10);
+            if (email) profileUpdate.email = email.toLowerCase();
+            if (principalName) profileUpdate.principal_name = principalName;
+
+            // Check if school row exists
+            const { data: existingSch } = await supabase.from("schools").select("id").eq("organization_id", orgId).maybeSingle();
+            if (existingSch) {
+              await supabase.from("schools").update({ ...profileUpdate, updated_at: new Date().toISOString() }).eq("organization_id", orgId);
+            } else {
+              await supabase.from("schools").insert([{ organization_id: orgId, ...profileUpdate, status: "active" }]);
+            }
+            // Also update organizations.name if changed
+            if (schoolName) {
+              await supabase.from("organizations").update({ name: schoolName.trim() }).eq("id", orgId);
+            }
+            console.log(`[Onboarding Step 2] School profile saved to Supabase for org ${orgId} ✅`);
+          } catch (step2Err) {
+            console.warn("[Onboarding Step 2] DB update warning:", step2Err.message);
+          }
+        }
         break;
       }
 
@@ -42516,17 +42634,30 @@ app.get("/api/admin/schools", async (req, res) => {
         schools = dbSchools.map(s => {
           const org = s.organizations || {};
           const isDemo = s.organization_id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+          const orgSlug = org.slug || s.slug || (s.name || "school").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const code = s.school_code || (isDemo ? "10001" : "10002");
+          const orgStudents = ERP_STUDENTS.filter(st => st.organization_id === s.organization_id);
+          const orgStaff = ERP_STAFF.filter(st => st.organization_id === s.organization_id);
+          const orgCampuses = ERP_CAMPUSES.filter(c => c.organization_id === s.organization_id);
+
           return {
             id: s.id,
             name: s.name,
-            schoolCode: s.school_code || (isDemo ? "10001" : "10001"),
-            instituteCode: s.school_code || (isDemo ? "10001" : "10001"),
+            slug: orgSlug,
+            schoolCode: code,
+            instituteCode: code,
             organizationId: s.organization_id,
             organizationName: org.name || s.name,
             board: s.board || "CBSE",
             city: s.city || "",
-            campusesCount: 1,
+            campusesCount: orgCampuses.length || 1,
             currentSession: "2026-27",
+            studentCount: orgStudents.length || (isDemo ? 120 : 0),
+            staffCount: orgStaff.length || (isDemo ? 20 : 0),
+            websiteUrl: s.website || `https://${orgSlug}.school.dakshora.app`,
+            apkDownloadUrl: `/api/public/mobile-app/${s.organization_id}/download`,
+            packageId: `in.edu.${orgSlug.replace(/[^a-z0-9]/g, "")}.parentapp`,
+            subscriptionPlan: org.plan || "growth",
             status: s.status || org.status || "active",
             createdAt: s.created_at
           };
@@ -42544,9 +42675,11 @@ app.get("/api/admin/schools", async (req, res) => {
 
       const isDemo = org.id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
       const code = isDemo ? (ERP_SETTINGS.schoolCode || "10001") : (org.institute_code || org.school_code || org.tenant_code || "10001");
+      const cleanSlug = (org.slug || "school").toLowerCase().replace(/[^a-z0-9]/g, "");
       return {
         id: `sch-${org.slug}`,
         name: isDemo ? (ERP_SETTINGS.schoolName || "Dakshora Academy New Delhi") : org.name,
+        slug: org.slug || cleanSlug,
         schoolCode: code,
         instituteCode: code,
         organizationId: org.id,
@@ -42555,6 +42688,9 @@ app.get("/api/admin/schools", async (req, res) => {
         currentSession: ERP_SETTINGS.activeSession || "2026-27",
         studentCount: students.length,
         staffCount: staff.length,
+        websiteUrl: `https://${org.slug || 'school'}.school.dakshora.app`,
+        apkDownloadUrl: `/api/public/mobile-app/${org.id}/download`,
+        packageId: `in.edu.${cleanSlug}.parentapp`,
         subscriptionPlan: sub.plan_id,
         status: org.status || "active",
         createdAt: org.created_at

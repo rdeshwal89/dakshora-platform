@@ -59,6 +59,7 @@ export interface OrganizationRecord {
 export interface WebsiteRecord {
   id: string;
   name: string;
+  slug?: string;
   domain?: string;
   custom_domain?: string;
   customDomain?: string;

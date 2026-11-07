@@ -48,7 +48,9 @@ import {
   Building,
   Phone,
   Hash,
-  Dice5
+  Dice5,
+  Smartphone,
+  Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -815,6 +817,8 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
     activationUrl?: string;
     board: string;
     city: string;
+    apkDownloadUrl?: string;
+    packageId?: string;
   } | null>(null);
   const [copiedKit, setCopiedKit] = useState(false);
 
@@ -969,17 +973,23 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
       if (res.data?.success) {
         confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
         setShowNewSchoolModal(false);
+        const cleanSlug = (onboardForm.slug || (res.data.website as any)?.slug || onboardForm.schoolName.toLowerCase().replace(/[^a-z0-9]/g, '')).trim();
+        const apkUrl = res.data.mobileApp?.apkDownloadUrl || `/api/public/mobile-app/${res.data.tenantId}/download`;
+        const pkgId = res.data.mobileApp?.packageId || `in.edu.${cleanSlug}.parentapp`;
+
         setOnboardResultModal({
           schoolName: onboardForm.schoolName.trim(),
           instituteCode: res.data.instituteCode || onboardForm.instituteCode.trim(),
           tenantId: res.data.tenantId,
-          subdomainUrl: res.data.website?.previewUrl || res.data.website?.domain || `https://${onboardForm.slug || 'school'}.school.dakshora.app`,
+          subdomainUrl: res.data.website?.previewUrl || res.data.website?.domain || `https://${cleanSlug || 'school'}.school.dakshora.app`,
           loginUrl: res.data.credentials?.loginUrl || 'https://dakshora.co.in/portal',
           email: onboardForm.email.trim(),
           initialPassword: onboardForm.password || res.data.credentials?.initialPassword || 'School@2026!',
           activationUrl: res.data.credentials?.activationUrl,
           board: onboardForm.board,
-          city: onboardForm.city
+          city: onboardForm.city,
+          apkDownloadUrl: apkUrl,
+          packageId: pkgId
         });
 
         onShowToast(
@@ -1003,11 +1013,15 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
 
   const handleCopyHandoverKit = () => {
     if (!onboardResultModal) return;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://dakshora.co.in';
+    const apkFullUrl = `${origin}${onboardResultModal.apkDownloadUrl || `/api/public/mobile-app/${onboardResultModal.tenantId}/download`}`;
     const kitText = `*DAKSHORA 2.0 — INSTITUTIONAL ONBOARDING HANDOVER KIT* 🏫
 --------------------------------------------------------
 🏛️ *School Name:* ${onboardResultModal.schoolName}
 🔢 *5-Digit Institute Code:* ${onboardResultModal.instituteCode}
 🌐 *Official Web Portal:* ${onboardResultModal.subdomainUrl}
+📱 *School White-Label App (.APK):* ${apkFullUrl}
+📦 *Package ID:* ${onboardResultModal.packageId || 'in.edu.school.parentapp'}
 📋 *Board & City:* ${onboardResultModal.board} • ${onboardResultModal.city}
 🔑 *Principal Admin Login:* ${onboardResultModal.email}
 🔒 *Initial Master Password:* ${onboardResultModal.initialPassword || 'Provided in email'}
@@ -1544,6 +1558,25 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
                                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                                     <span>Setup Wizard</span>
                                   </button>
+                                  <a
+                                    href={(sch as any).websiteUrl || `https://${(sch as any).slug || sch.schoolCode}.school.dakshora.app`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                                    title="Visit School Official Website (CMS)"
+                                  >
+                                    <Globe className="w-3.5 h-3.5 text-teal-600" />
+                                    <span>Website</span>
+                                  </a>
+                                  <a
+                                    href={(sch as any).apkDownloadUrl || `/api/public/mobile-app/${sch.organizationId}/download`}
+                                    download
+                                    className="px-2.5 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                                    title="Download Branded White-Label Mobile App (.apk)"
+                                  >
+                                    <Smartphone className="w-3.5 h-3.5 text-cyan-600" />
+                                    <span>App APK</span>
+                                  </a>
                                   <button
                                     onClick={() => handleLaunchSchool(sch)}
                                     className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] shadow-xs flex items-center gap-1 transition-all cursor-pointer"
@@ -1853,12 +1886,31 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                     <span>Wizard</span>
                   </button>
+                  <a
+                    href={(sch as any).websiteUrl || `https://${(sch as any).slug || sch.schoolCode}.school.dakshora.app`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                    title="Visit School Official Website (CMS)"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Website</span>
+                  </a>
+                  <a
+                    href={(sch as any).apkDownloadUrl || `/api/public/mobile-app/${sch.organizationId}/download`}
+                    download
+                    className="px-2.5 py-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                    title="Download Branded White-Label Mobile App (.apk)"
+                  >
+                    <Smartphone className="w-3.5 h-3.5 text-cyan-600" />
+                    <span>APK</span>
+                  </a>
                   <button
                     onClick={() => handleLaunchSchool(sch)}
                     className="flex-1 px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
                   >
                     <GraduationCap className="w-3.5 h-3.5" />
-                    <span>Launch School ERP</span>
+                    <span>Launch ERP</span>
                   </button>
                   <button
                     onClick={() => {
@@ -3361,6 +3413,68 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Official Portal URL:</span>
                 <span className="text-indigo-400 underline">{onboardResultModal.subdomainUrl}</span>
+              </div>
+            </div>
+
+            {/* Dynamic Web Portal & White-Label Mobile App Delivery Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Card 1: Official CMS Website */}
+              <div className="p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex flex-col justify-between gap-2.5">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Globe className="w-3.5 h-3.5" />
+                      <span>Official Website (CMS)</span>
+                    </span>
+                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                      Published ✓
+                    </span>
+                  </div>
+                  <p className="text-white font-bold text-xs truncate mt-1">
+                    {onboardResultModal.subdomainUrl}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    11-Layer Glassmorphism CMS with ERP SSO Login Pre-Provisioned
+                  </p>
+                </div>
+                <a
+                  href={onboardResultModal.subdomainUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Visit School Website 🌐</span>
+                </a>
+              </div>
+
+              {/* Card 2: White-Label Mobile App */}
+              <div className="p-3.5 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex flex-col justify-between gap-2.5">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>White-Label Mobile App</span>
+                    </span>
+                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+                      APK Ready 📱
+                    </span>
+                  </div>
+                  <p className="text-cyan-300 font-bold text-xs truncate mt-1 font-mono">
+                    {onboardResultModal.packageId || `in.edu.school.parentapp`}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Parent, Teacher & Principal Role-Based Android Package
+                  </p>
+                </div>
+                <a
+                  href={onboardResultModal.apkDownloadUrl || `/api/public/mobile-app/${onboardResultModal.tenantId}/download`}
+                  download
+                  className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:brightness-110 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download School APK (.apk)</span>
+                </a>
               </div>
             </div>
 
