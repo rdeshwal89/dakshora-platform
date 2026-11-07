@@ -62,6 +62,25 @@ app.use(cors({
   ],
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"]
 }));
+
+// P2-C FIX: Add security headers inline (Helmet equivalent) to prevent clickjacking,
+// MIME sniffing, and information disclosure without requiring an extra package.
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (req.secure || req.headers["x-forwarded-proto"] === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  }
+  // Content-Security-Policy: allow same-origin and Supabase/Razorpay for API calls
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; connect-src 'self' https://*.supabase.co https://api.razorpay.com https://*.razorpay.com https://sms.plivo.com; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; frame-ancestors 'none';"
+  );
+  next();
+});
 app.use(express.json());
 
 import { supabase as serviceSupabase } from "./lib/supabase.js";
@@ -371,7 +390,10 @@ function verifyDakshoraToken(token, secret = (process.env.SUPABASE_SERVICE_ROLE_
 
     const isSuperAdmin = payload.role === "superadmin" || payload.app_metadata?.role === "superadmin" || payload.isSuperAdmin === true;
     const role = isSuperAdmin ? "superadmin" : (payload.role || payload.app_metadata?.role || "school-admin");
-    const organizationId = payload.organizationId || payload.app_metadata?.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e";
+    // P1-C FIX: Do NOT fall back to demo org for unresolvable org claims.
+    // A JWT with no org claim should resolve to null, forcing auth failure downstream.
+    // SuperAdmin JWTs intentionally have no org claim (they access all orgs explicitly).
+    const organizationId = payload.organizationId || payload.app_metadata?.organization_id || (isSuperAdmin ? "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e" : null);
 
     return {
       id: payload.sub || payload.id || "dakshora-user",
@@ -21383,6 +21405,51 @@ app.post("/api/erp/academics/homework", async (req, res) => {
   };
 
   ERP_HOMEWORK.unshift(newHw);
+
+  // P1-A FIX: Persist homework to Supabase so it survives server restarts
+  if (supabase) {
+    try {
+      // Resolve section_id and subject_id from name-based lookups
+      let sectionDbId = null;
+      let subjectDbId = null;
+      const { data: secData } = await supabase
+        .from("sections")
+        .select("id")
+        .eq("organization_id", orgId)
+        .ilike("grade", newHw.grade)
+        .ilike("name", newHw.section)
+        .maybeSingle();
+      if (secData?.id) sectionDbId = secData.id;
+
+      const { data: subData } = await supabase
+        .from("subjects")
+        .select("id")
+        .eq("organization_id", orgId)
+        .ilike("name", newHw.subject)
+        .maybeSingle();
+      if (subData?.id) subjectDbId = subData.id;
+
+      const { data: dbHw, error: hwErr } = await supabase.from("homework").insert([{
+        organization_id: orgId,
+        section_id: sectionDbId,
+        subject_id: subjectDbId,
+        title: newHw.title,
+        description: newHw.description || "",
+        assigned_on: newHw.assignedDate,
+        due_date: newHw.dueDate,
+        attachment_url: null
+      }]).select().maybeSingle();
+
+      if (dbHw) {
+        newHw.db_id = dbHw.id;
+      } else if (hwErr) {
+        console.warn("[Homework DB] Write warning:", hwErr.message);
+      }
+    } catch (hwPersistErr) {
+      console.warn("[Homework DB] Persistence error (non-fatal):", hwPersistErr.message);
+    }
+  }
+
   await recordAuditLog("erp.homework_assigned", req.user?.email || "faculty", "homework", newHw.id, req);
 
   res.json({ success: true, message: "Homework assigned successfully", homework: newHw });
@@ -23546,27 +23613,62 @@ async function resolveOrCreateStudentFee(orgId, demandData) {
   return newFee;
 }
 
-// Generate sequential FY receipt numbering: REC/2026-27/0001 (immutable & strictly sequential)
+// P1-B FIX: Generate sequential FY receipt numbering with collision-safe approach.
+// Uses MAX(receipt_no) with LIKE filter + org-scoped mutex to prevent duplicates
+// under concurrent cashier sessions. Falls back to COUNT if no prior receipts exist.
+const RECEIPT_MUTEX = new Map(); // per-org async mutex for sequential numbering
 async function generateNextReceiptNo(orgId) {
-  const today = new Date();
-  const curYear = today.getFullYear();
-  const curMonth = today.getMonth() + 1;
-  const fy = curMonth >= 4 ? `${curYear}-${String(curYear + 1).slice(-2)}` : `${curYear - 1}-${String(curYear).slice(-2)}`;
-  let count = 0;
-  if (supabase) {
-    try {
-      const { count: dbCount } = await supabase
-        .from("fee_payments")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", orgId);
-      if (typeof dbCount === "number") count = dbCount;
-    } catch (_) {}
+  // Per-org locking: ensure two concurrent calls for the same org don't race
+  if (!RECEIPT_MUTEX.has(orgId)) {
+    RECEIPT_MUTEX.set(orgId, Promise.resolve());
   }
-  if (!count && typeof ERP_FEE_PAYMENTS !== "undefined") {
-    count = ERP_FEE_PAYMENTS.filter(p => p.organization_id === orgId).length;
-  }
-  const seq = String(count + 1).padStart(4, "0");
-  return `REC/${fy}/${seq}`;
+  // Chain this call to the end of any in-flight call for the same org
+  const result = RECEIPT_MUTEX.get(orgId).then(async () => {
+    const today = new Date();
+    const curYear = today.getFullYear();
+    const curMonth = today.getMonth() + 1;
+    const fy = curMonth >= 4 ? `${curYear}-${String(curYear + 1).slice(-2)}` : `${curYear - 1}-${String(curYear).slice(-2)}`;
+    const prefix = `REC/${fy}/`;
+    let nextSeq = 1;
+
+    if (supabase) {
+      try {
+        // Query highest existing receipt number for this org+FY to avoid gaps/duplicates
+        const { data: maxRow } = await supabase
+          .from("fee_payments")
+          .select("receipt_no")
+          .eq("organization_id", orgId)
+          .like("receipt_no", `${prefix}%`)
+          .order("receipt_no", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (maxRow?.receipt_no) {
+          const lastSeqStr = maxRow.receipt_no.replace(prefix, "");
+          const lastSeq = parseInt(lastSeqStr, 10);
+          if (!isNaN(lastSeq)) nextSeq = lastSeq + 1;
+        } else {
+          // No prior payments — start from 1 (or count in-memory as seed)
+          if (typeof ERP_FEE_PAYMENTS !== "undefined") {
+            const memCount = ERP_FEE_PAYMENTS.filter(p => p.organization_id === orgId && (p.receiptNo || "").startsWith(prefix)).length;
+            if (memCount > 0) nextSeq = memCount + 1;
+          }
+        }
+      } catch (rcErr) {
+        // On error, fall back to count-based (best effort)
+        try {
+          const { count: dbCount } = await supabase.from("fee_payments").select("id", { count: "exact", head: true }).eq("organization_id", orgId);
+          if (typeof dbCount === "number") nextSeq = dbCount + 1;
+        } catch (_) {}
+      }
+    } else if (typeof ERP_FEE_PAYMENTS !== "undefined") {
+      nextSeq = ERP_FEE_PAYMENTS.filter(p => p.organization_id === orgId).length + 1;
+    }
+
+    return `${prefix}${String(nextSeq).padStart(4, "0")}`;
+  });
+  RECEIPT_MUTEX.set(orgId, result.catch(() => {})); // keep the chain alive even on error
+  return result;
 }
 
 async function recordDbFeePayment(orgId, paymentData) {
