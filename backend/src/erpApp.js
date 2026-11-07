@@ -41769,6 +41769,41 @@ app.post("/api/erp/onboarding/import/students", async (req, res) => {
   // Commit valid records
   validRecords.forEach(rec => ERP_STUDENTS.push(rec));
 
+  // Persist bulk students to Supabase PostgreSQL students table
+  if (supabase && validRecords.length > 0) {
+    try {
+      const dbRows = validRecords.map(rec => {
+        const parts = (rec.name || "").trim().split(/\s+/);
+        const firstName = parts[0] || "Student";
+        const lastName = parts.slice(1).join(" ") || "";
+        const dbGender = (rec.gender || "").toLowerCase().includes("female")
+          ? "female"
+          : (rec.gender || "").toLowerCase().includes("male")
+          ? "male"
+          : "other";
+        return {
+          organization_id: orgId,
+          admission_no: rec.rollNo || rec.admissionNo || `ADM-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          first_name: firstName,
+          last_name: lastName,
+          gender: dbGender,
+          date_of_birth: rec.dob || "2012-01-01",
+          phone: rec.parentPhone || null,
+          email: rec.parentEmail || null,
+          admission_status: "admitted"
+        };
+      });
+
+      for (let i = 0; i < dbRows.length; i += 50) {
+        const chunk = dbRows.slice(i, i + 50);
+        await supabase.from("students").upsert(chunk, { onConflict: "organization_id, admission_no" });
+      }
+      console.log(`[Onboarding Bulk Student Import] Persisted ${dbRows.length} students to Supabase PostgreSQL for org ${orgId} ✅`);
+    } catch (dbImportErr) {
+      console.warn("[Onboarding Bulk Student Import] DB write warning:", dbImportErr.message);
+    }
+  }
+
   await recordAuditLog(
     "erp.students_imported",
     req.user?.email || "admin",
@@ -41854,6 +41889,37 @@ app.post("/api/erp/onboarding/import/staff", async (req, res) => {
   }
 
   validRecords.forEach(rec => ERP_STAFF.push(rec));
+
+  // Persist bulk staff to Supabase PostgreSQL staff table
+  if (supabase && validRecords.length > 0) {
+    try {
+      const dbRows = validRecords.map(rec => {
+        const parts = (rec.name || "").trim().split(/\s+/);
+        const firstName = parts[0] || "Staff";
+        const lastName = parts.slice(1).join(" ") || "";
+        return {
+          organization_id: orgId,
+          employee_code: rec.empId || `EMP-${Date.now().toString().slice(-4)}`,
+          first_name: firstName,
+          last_name: lastName,
+          email: rec.email || `${(rec.empId || 'emp').toLowerCase()}@school.edu.in`,
+          phone: rec.phone || "+91 98000 00000",
+          designation: rec.designation || "Faculty",
+          department: rec.department || "Academic Faculty",
+          employment_type: rec.staffType || "full_time",
+          is_active: true
+        };
+      });
+
+      for (let i = 0; i < dbRows.length; i += 50) {
+        const chunk = dbRows.slice(i, i + 50);
+        await supabase.from("staff").upsert(chunk, { onConflict: "organization_id, employee_code" });
+      }
+      console.log(`[Onboarding Bulk Staff Import] Persisted ${dbRows.length} staff members to Supabase PostgreSQL for org ${orgId} ✅`);
+    } catch (dbStaffErr) {
+      console.warn("[Onboarding Bulk Staff Import] DB write warning:", dbStaffErr.message);
+    }
+  }
 
   await recordAuditLog(
     "erp.staff_imported",
