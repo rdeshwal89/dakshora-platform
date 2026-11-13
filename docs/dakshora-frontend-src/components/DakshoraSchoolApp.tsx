@@ -265,12 +265,12 @@ const ROLE_STATS: Record<AppRole, { label: string; value: string; icon: React.Co
 // DEFAULT ORG BRAND (fallback if API fails)
 // ─────────────────────────────────────────────────────────────
 const DEFAULT_BRAND: OrgBrand = {
-  schoolName: 'New Ideal Public School',
-  logoUrl: '/assets/schools/new-ideal-logo.svg',
+  schoolName: 'Dakshora Smart School',
+  logoUrl: '',
   board: 'CBSE',
-  city: 'Mathura, Uttar Pradesh',
+  city: 'Campus Ring Road, India',
   principalName: 'Principal',
-  affiliationNo: 'CBSE-AFF-2130894',
+  affiliationNo: 'CBSE-AFF-2026',
   motto: 'Excellence in Education',
   themeColor: 'indigo',
 };
@@ -310,9 +310,10 @@ export const DakshoraSchoolApp: React.FC<DakshoraSchoolAppProps> = ({
         });
         if (res.data?.settings) {
           const s = res.data.settings;
+          const dynamicLogo = `/api/public/schools/${s.slug || orgId}/logo.svg`;
           setBrand({
             schoolName: s.schoolName || DEFAULT_BRAND.schoolName,
-            logoUrl: s.logoUrl || s.logo_url || '',
+            logoUrl: s.logoUrl || s.logo_url || dynamicLogo,
             board: s.board || DEFAULT_BRAND.board,
             city: s.city || s.address?.split(',').slice(-2).join(',').trim() || DEFAULT_BRAND.city,
             principalName: s.principalName || DEFAULT_BRAND.principalName,
@@ -410,7 +411,8 @@ export const DakshoraSchoolApp: React.FC<DakshoraSchoolAppProps> = ({
   // ──────────────────────────────────────────────────────────
   const BrandLogo = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => {
     const sizeClass = size === 'lg' ? 'w-16 h-16' : size === 'md' ? 'w-10 h-10' : 'w-7 h-7';
-    const logoSrc = brand.logoUrl || '/assets/schools/new-ideal-logo.svg';
+    const fallbackDynamicLogo = `/api/public/schools/${orgId}/logo.svg`;
+    const logoSrc = brand.logoUrl || fallbackDynamicLogo;
     return (
       <div className={`${sizeClass} rounded-2xl overflow-hidden bg-white p-1 flex items-center justify-center shadow-lg flex-shrink-0 border border-slate-700`}>
         <img
@@ -419,8 +421,8 @@ export const DakshoraSchoolApp: React.FC<DakshoraSchoolAppProps> = ({
           className="w-full h-full object-contain"
           onError={(e) => {
             const img = e.currentTarget as HTMLImageElement;
-            if (!img.src.includes('new-ideal-logo.svg')) {
-              img.src = '/assets/schools/new-ideal-logo.svg';
+            if (!img.src.includes('logo.svg')) {
+              img.src = fallbackDynamicLogo;
             }
           }}
         />
