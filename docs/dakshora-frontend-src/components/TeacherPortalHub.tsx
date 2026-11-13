@@ -912,12 +912,279 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
   const [journalEntry, setJournalEntry] = useState({
     date: new Date().toISOString().split('T')[0],
     grade: profile.assignedClass || 'Class 10-A',
-    subject: 'Mathematics',
-    chapter: 'Chapter 8: Introduction to Trigonometry',
-    topicsCovered: 'Concepts of Trigonometric Ratios (sin, cos, tan), Pythagorean trigonometric identities, and proof exercises.',
-    homeworkAssigned: 'Solve NCERT Exercise 8.1 questions 1 to 8 in Mathematics class notebook.',
-    learningOutcome: '95% students successfully proved trigonometric identities and solved standard angle problems.'
+    subject: profile.department || 'Mathematics',
+    chapter: '',
+    topicsCovered: '',
+    homeworkAssigned: '',
+    learningOutcome: ''
   });
+  const [journalEntries, setJournalEntries] = useState<any[]>([]);
+  const [loadingJournal, setLoadingJournal] = useState(false);
+  const [savingJournal, setSavingJournal] = useState(false);
+
+  // Fetch journal entries from backend
+  const fetchJournalEntries = React.useCallback(async () => {
+    setLoadingJournal(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const staffId = currentUser?.staffId || currentUser?.empId || '';
+      const res = await fetch(`/api/erp/teaching-journal?staffId=${encodeURIComponent(staffId)}`, { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.journalEntries)) {
+        setJournalEntries(data.journalEntries);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load journal entries:', err.message);
+    } finally {
+      setLoadingJournal(false);
+    }
+  }, [currentUser]);
+
+  // Save journal entry to backend
+  const handleSaveJournal = async () => {
+    if (!journalEntry.chapter.trim() && !journalEntry.topicsCovered.trim()) {
+      onShowToast('warning', 'Incomplete Entry', 'Please fill chapter/topic before saving.');
+      return;
+    }
+    setSavingJournal(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch('/api/erp/teaching-journal', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          staff_id: currentUser?.staffId || currentUser?.empId || profile.empId,
+          staff_name: profile.name,
+          date: journalEntry.date,
+          grade: journalEntry.grade,
+          section: 'A',
+          subject: journalEntry.subject,
+          topic: journalEntry.chapter,
+          what_taught: journalEntry.topicsCovered,
+          homework: journalEntry.homeworkAssigned,
+          learning_objectives: journalEntry.learningOutcome
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast('success', 'Journal Saved ✅', 'Teaching log recorded in database successfully');
+        setJournalEntry(prev => ({ ...prev, chapter: '', topicsCovered: '', homeworkAssigned: '', learningOutcome: '' }));
+        fetchJournalEntries();
+      } else {
+        onShowToast('error', 'Save Failed', data.message || 'Could not save journal entry');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Network Error', err.message || 'Failed to connect to backend');
+    } finally {
+      setSavingJournal(false);
+    }
+  };
+
+  // ── Timetable State (Real Backend) ──
+  const [timetableSlots, setTimetableSlots] = useState<any[]>([]);
+  const [loadingTimetable, setLoadingTimetable] = useState(false);
+  const [timetableMeta, setTimetableMeta] = useState<any>(null);
+
+  const fetchTeacherTimetable = React.useCallback(async () => {
+    setLoadingTimetable(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const staffId = currentUser?.staffId || currentUser?.empId || currentUser?.id || 'stf-02';
+      const res = await fetch(`/api/erp/timetable/teachers/${encodeURIComponent(staffId)}`, { headers });
+      const data = await res.json();
+      if (data.success !== false && data.routine) {
+        setTimetableSlots(data.routine);
+        setTimetableMeta(data);
+      } else if (data.success !== false && data.slots) {
+        setTimetableSlots(data.slots);
+        setTimetableMeta(data);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load timetable:', err.message);
+    } finally {
+      setLoadingTimetable(false);
+    }
+  }, [currentUser]);
+
+  // ── Homework State (Real Backend) ──
+  const [homeworkList, setHomeworkList] = useState<any[]>([]);
+  const [loadingHomework, setLoadingHomework] = useState(false);
+  const [showNewHomework, setShowNewHomework] = useState(false);
+  const [newHomework, setNewHomework] = useState({
+    title: '', description: '', subject: profile.department || 'Mathematics',
+    grade: profile.assignedClass?.replace(/\s*-\s*\w+$/, '') || 'Class 10',
+    section: profile.assignedClass?.match(/-\s*(\w+)$/)?.[1] || 'A',
+    dueDate: ''
+  });
+  const [savingHomework, setSavingHomework] = useState(false);
+
+  const fetchHomework = React.useCallback(async () => {
+    setLoadingHomework(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/erp/academics/homework', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.homework)) {
+        setHomeworkList(data.homework);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load homework:', err.message);
+    } finally {
+      setLoadingHomework(false);
+    }
+  }, []);
+
+  const handleCreateHomework = async () => {
+    if (!newHomework.title.trim() || !newHomework.dueDate) {
+      onShowToast('warning', 'Incomplete', 'Title and due date are required.');
+      return;
+    }
+    setSavingHomework(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch('/api/erp/academics/homework', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ...newHomework,
+          teacherId: currentUser?.staffId || currentUser?.empId || profile.empId,
+          teacherName: profile.name,
+          assignedDate: new Date().toISOString().split('T')[0]
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast('success', 'Homework Created ✅', `"${newHomework.title}" assigned to ${newHomework.grade} ${newHomework.section}`);
+        setNewHomework({ title: '', description: '', subject: profile.department || 'Mathematics', grade: newHomework.grade, section: newHomework.section, dueDate: '' });
+        setShowNewHomework(false);
+        fetchHomework();
+      } else {
+        onShowToast('error', 'Failed', data.message || 'Could not create homework');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Network Error', err.message);
+    } finally {
+      setSavingHomework(false);
+    }
+  };
+
+  // ── Exams & Marks State (Real Backend) ──
+  const [examsList, setExamsList] = useState<any[]>([]);
+  const [loadingExams, setLoadingExams] = useState(false);
+  const [marksRoster, setMarksRoster] = useState<any[]>([]);
+  const [selectedExam, setSelectedExam] = useState<any>(null);
+  const [selectedExamSubject, setSelectedExamSubject] = useState<any>(null);
+  const [savingMarks, setSavingMarks] = useState(false);
+  const [marksMap, setMarksMap] = useState<Record<string, number>>({});
+
+  const fetchExams = React.useCallback(async () => {
+    setLoadingExams(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch('/api/erp/exams', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.exams)) {
+        setExamsList(data.exams);
+        if (data.exams.length > 0 && !selectedExam) {
+          setSelectedExam(data.exams[0]);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Failed to load exams:', err.message);
+    } finally {
+      setLoadingExams(false);
+    }
+  }, [selectedExam]);
+
+  const fetchMarksForExam = React.useCallback(async (examId: string, examSubjectId?: string) => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const subParam = examSubjectId ? `&examSubjectId=${encodeURIComponent(examSubjectId)}` : '';
+      const res = await fetch(`/api/erp/marks?examId=${encodeURIComponent(examId)}${subParam}`, { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.students)) {
+        setMarksRoster(data.students);
+        setSelectedExamSubject(data.examSubject);
+        const newMap: Record<string, number> = {};
+        data.students.forEach((s: any) => {
+          if (s.marksObtained !== null && s.marksObtained !== undefined) {
+            newMap[s.studentId] = s.marksObtained;
+          }
+        });
+        setMarksMap(newMap);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load marks:', err.message);
+    }
+  }, []);
+
+  const handleSubmitMarks = async () => {
+    if (!selectedExam) return;
+    const marksArray = Object.entries(marksMap).map(([studentId, obtained]) => ({
+      studentId,
+      marksObtained: Number(obtained),
+      status: 'present'
+    }));
+    if (marksArray.length === 0) {
+      onShowToast('warning', 'No Marks', 'Please enter marks before submitting.');
+      return;
+    }
+    setSavingMarks(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('dakshora_auth_token') : null;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      };
+      const res = await fetch('/api/erp/marks/bulk', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          examId: selectedExam.id || selectedExam.db_id,
+          examSubjectId: selectedExamSubject?.id || selectedExamSubject?.subjectId,
+          grade: selectedExam.grade || profile.assignedClass,
+          marks: marksArray
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast('success', 'Marks Saved ✅', `${data.savedCount || marksArray.length} marks uploaded to database`);
+      } else {
+        onShowToast('error', 'Failed', data.message || 'Could not save marks');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Network Error', err.message);
+    } finally {
+      setSavingMarks(false);
+    }
+  };
+
+  // Load data when tabs switch
+  useEffect(() => {
+    if (activeTab === 'timetable') fetchTeacherTimetable();
+    if (activeTab === 'journal') fetchJournalEntries();
+    if (activeTab === 'homework') fetchHomework();
+    if (activeTab === 'exams') fetchExams();
+  }, [activeTab, fetchTeacherTimetable, fetchJournalEntries, fetchHomework, fetchExams]);
+
+  useEffect(() => {
+    if (selectedExam?.id || selectedExam?.db_id) {
+      fetchMarksForExam(selectedExam.id || selectedExam.db_id);
+    }
+  }, [selectedExam, fetchMarksForExam]);
 
   // AI Co-Pilot State
   const [aiPrompt, setAiPrompt] = useState('');
@@ -2806,71 +3073,98 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                 </h2>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                >
+                <button type="button" onClick={() => setActiveTab('pulse')} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer">
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Dashboard</span>
                 </button>
+                <button type="button" disabled={loadingTimetable} onClick={() => fetchTeacherTimetable()} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingTimetable ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
                 <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  24 Periods / Week
+                  {timetableMeta?.weeklyPeriodsCount || timetableSlots.length || 0} Periods / Week
                 </span>
               </div>
             </div>
 
-            <div className="space-y-3">
-              {[
-                { period: 1, time: '08:30 AM - 09:15 AM', grade: 'Class 10-A', subject: 'Mathematics (Trigonometry)', room: 'Room 201', status: 'Completed' },
-                { period: 2, time: '09:20 AM - 10:05 AM', grade: 'Class 10-A', subject: 'Mathematics Problem Solving', room: 'Room 201', status: 'In Session' },
-                { period: 3, time: '10:10 AM - 10:55 AM', grade: 'Class 11 Science', subject: 'Advanced Calculus & Limits', room: 'Room 302', status: 'Upcoming' },
-                { period: 4, time: '11:15 AM - 12:00 PM', grade: 'Class 9-A (Substitution)', subject: 'General Science Proxy', room: 'Room 104', status: 'Arrangement Duty' },
-                { period: 5, time: '12:05 PM - 12:50 PM', grade: 'Faculty Research', subject: 'CBSE Math Olympiad Lab', room: 'Faculty Room', status: 'Planning' },
-                { period: 6, time: '01:30 PM - 02:15 PM', grade: 'Class 12 Science', subject: 'Probability & Vectors', room: 'Room 305', status: 'Upcoming' }
-              ].map((p) => (
-                <div
-                  key={p.period}
-                  className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                    p.status === 'In Session'
-                      ? 'bg-cyan-950/60 border-cyan-400 shadow-lg shadow-cyan-500/15'
-                      : p.status === 'Arrangement Duty'
-                      ? 'bg-rose-950/40 border-rose-500/40'
-                      : 'bg-slate-900 border-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-xl bg-slate-800 text-cyan-300 font-extrabold flex items-center justify-center text-sm">
-                      P{p.period}
-                    </span>
-                    <div>
-                      <div className="text-sm font-bold text-white flex items-center gap-2">
-                        <span>{p.subject}</span>
-                        <span className="text-xs text-slate-400">({p.grade})</span>
+            {loadingTimetable ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw className="w-6 h-6 text-cyan-400 animate-spin" />
+                <span className="ml-3 text-sm text-slate-400">Loading timetable from database…</span>
+              </div>
+            ) : timetableSlots.length === 0 ? (
+              <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-2">
+                <Calendar className="w-10 h-10 text-slate-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-400">No Timetable Assigned Yet</p>
+                <p className="text-xs text-slate-500">The school administrator needs to assign periods in the Timetable module.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {(() => {
+                  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                  const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+                  const currentDay = daysOfWeek[(istNow.getDay() + 6) % 7] || '';
+                  const currentMins = istNow.getHours() * 60 + istNow.getMinutes();
+                  return daysOfWeek.map(day => {
+                    const daySlots = timetableSlots.filter((s: any) => s.dayOfWeek === day).sort((a: any, b: any) => (a.periodNumber || 0) - (b.periodNumber || 0));
+                    if (daySlots.length === 0) return null;
+                    return (
+                      <div key={day}>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${day === currentDay ? 'text-cyan-400' : 'text-slate-500'}`}>
+                          {day === currentDay ? `📍 ${day} (Today)` : day}
+                        </p>
+                        {daySlots.map((s: any) => {
+                          const bell = timetableMeta?.bellSchedule?.find((b: any) => b.periodNumber === s.periodNumber);
+                          const startTime = bell?.startTime || s.startTime || '';
+                          const endTime = bell?.endTime || s.endTime || '';
+                          let status = 'Scheduled';
+                          if (day === currentDay && startTime && endTime) {
+                            const [sh, sm] = startTime.split(':').map(Number);
+                            const [eh, em] = endTime.split(':').map(Number);
+                            if (currentMins >= sh * 60 + sm && currentMins < eh * 60 + em) status = 'In Session';
+                            else if (currentMins >= eh * 60 + em) status = 'Completed';
+                            else status = 'Upcoming';
+                          }
+                          return (
+                            <div key={`${day}-${s.periodNumber}`} className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 ${status === 'In Session' ? 'bg-cyan-950/60 border-cyan-400 shadow-lg shadow-cyan-500/15' : 'bg-slate-900 border-slate-800'}`}>
+                              <div className="flex items-center gap-3">
+                                <span className="w-10 h-10 rounded-xl bg-slate-800 text-cyan-300 font-extrabold flex items-center justify-center text-sm">P{s.periodNumber}</span>
+                                <div>
+                                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                                    <span>{s.subjectName || s.subject || 'Period'}</span>
+                                    <span className="text-xs text-slate-400">({s.grade || s.className || ''} {s.section || ''})</span>
+                                  </div>
+                                  <div className="text-xs text-slate-400 mt-0.5">
+                                    {startTime && endTime ? `${startTime} - ${endTime}` : `Period ${s.periodNumber}`}
+                                    {s.roomNumber && <> • Room: <span className="text-cyan-300 font-semibold">{s.roomNumber}</span></>}
+                                  </div>
+                                </div>
+                              </div>
+                              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase self-start sm:self-auto ${status === 'In Session' ? 'bg-cyan-500 text-slate-950 font-black' : status === 'Completed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-300'}`}>{status}</span>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="text-xs text-slate-400 mt-0.5">
-                        {p.time} • Location: <span className="text-cyan-300 font-semibold">{p.room}</span>
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  }).filter(Boolean);
+                })()}
+              </div>
+            )}
 
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold uppercase self-start sm:self-auto ${
-                      p.status === 'In Session'
-                        ? 'bg-cyan-500 text-slate-950 font-black'
-                        : p.status === 'Arrangement Duty'
-                        ? 'bg-rose-500 text-white font-black'
-                        : 'bg-slate-800 text-slate-300'
-                    }`}
-                  >
-                    {p.status}
-                  </span>
+            {timetableMeta?.freePeriods && timetableMeta.freePeriods.length > 0 && (
+              <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-500/30">
+                <p className="text-xs font-bold text-emerald-300 mb-2">Free Periods This Week ({timetableMeta.freePeriods.length})</p>
+                <div className="flex flex-wrap gap-2">
+                  {timetableMeta.freePeriods.slice(0, 12).map((fp: any, i: number) => (
+                    <span key={i} className="px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 text-[10px] font-mono border border-emerald-500/20">
+                      {fp.dayOfWeek?.slice(0, 3)} P{fp.periodNumber}
+                    </span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
         )}
-
         {/* ========================================================================= */}
         {/* TAB 6: ARRANGEMENT / PROXY DUTY */}
         {/* ========================================================================= */}
@@ -2970,68 +3264,82 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
                 </h2>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                >
+                <button type="button" onClick={() => setActiveTab('pulse')} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer">
                   <ArrowLeft className="w-3.5 h-3.5" />
                   <span>Back to Dashboard</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onShowToast('success', 'Journal Saved', 'Teaching log synchronized with CBSE Academic Roster')}
-                  className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
-                >
-                  Save Daily Log
+                <button type="button" disabled={savingJournal} onClick={handleSaveJournal} className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+                  {savingJournal ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{savingJournal ? 'Saving…' : 'Save Daily Log'}</span>
                 </button>
               </div>
             </div>
 
             <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Date</label>
+                  <input type="date" value={journalEntry.date} onChange={(e) => setJournalEntry({ ...journalEntry, date: e.target.value })} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Class / Grade</label>
+                  <input type="text" value={journalEntry.grade} onChange={(e) => setJournalEntry({ ...journalEntry, grade: e.target.value })} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1 font-bold">Subject</label>
+                  <input type="text" value={journalEntry.subject} onChange={(e) => setJournalEntry({ ...journalEntry, subject: e.target.value })} className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold" />
+                </div>
+              </div>
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">Chapter & Topic</label>
-                <input
-                  type="text"
-                  value={journalEntry.chapter}
-                  onChange={(e) => setJournalEntry({ ...journalEntry, chapter: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold"
-                />
+                <input type="text" value={journalEntry.chapter} onChange={(e) => setJournalEntry({ ...journalEntry, chapter: e.target.value })} placeholder="e.g. Chapter 8: Introduction to Trigonometry" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold placeholder:text-slate-700" />
               </div>
-
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">Concepts Taught in Class Today</label>
-                <textarea
-                  rows={3}
-                  value={journalEntry.topicsCovered}
-                  onChange={(e) => setJournalEntry({ ...journalEntry, topicsCovered: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono leading-relaxed"
-                />
+                <textarea rows={3} value={journalEntry.topicsCovered} onChange={(e) => setJournalEntry({ ...journalEntry, topicsCovered: e.target.value })} placeholder="What was taught today…" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-mono leading-relaxed placeholder:text-slate-700" />
               </div>
-
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">Homework Assigned to Students</label>
-                <input
-                  type="text"
-                  value={journalEntry.homeworkAssigned}
-                  onChange={(e) => setJournalEntry({ ...journalEntry, homeworkAssigned: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white"
-                />
+                <input type="text" value={journalEntry.homeworkAssigned} onChange={(e) => setJournalEntry({ ...journalEntry, homeworkAssigned: e.target.value })} placeholder="e.g. Solve NCERT Ex 8.1 Q1-8" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-700" />
               </div>
-
               <div>
                 <label className="block text-slate-400 mb-1 font-bold">Pedagogical Outcome / Remarks</label>
-                <input
-                  type="text"
-                  value={journalEntry.learningOutcome}
-                  onChange={(e) => setJournalEntry({ ...journalEntry, learningOutcome: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300"
-                />
+                <input type="text" value={journalEntry.learningOutcome} onChange={(e) => setJournalEntry({ ...journalEntry, learningOutcome: e.target.value })} placeholder="e.g. 95% students mastered the concepts" className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 placeholder:text-slate-700" />
               </div>
+            </div>
+
+            {/* Previous Journal Entries from Database */}
+            <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden">
+              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs font-bold text-purple-300">Previous Journal Entries ({journalEntries.length})</span>
+                </div>
+                <button type="button" disabled={loadingJournal} onClick={fetchJournalEntries} className="text-xs text-purple-400 hover:underline font-bold cursor-pointer disabled:opacity-50">
+                  {loadingJournal ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+              {journalEntries.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  {loadingJournal ? 'Loading journal entries…' : 'No journal entries recorded yet. Fill the form above and click Save.'}
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-800 max-h-64 overflow-y-auto">
+                  {journalEntries.slice(0, 10).map((j: any) => (
+                    <div key={j.id} className="p-4 hover:bg-white/[0.02]">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-white">{j.topic || j.chapter || 'Untitled'}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">{j.date}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{j.grade} {j.section ? `Section ${j.section}` : ''} • {j.subject}</p>
+                      {j.what_taught && <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{j.what_taught}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
-
         {/* ========================================================================= */}
         {/* TAB 8: AI TEACHER CO-PILOT */}
         {/* ========================================================================= */}
@@ -3136,47 +3444,79 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
           <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300 font-mono">
             <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                  HOMEWORK DIARY DESK
-                </span>
-                <h2 className="text-lg font-black text-white mt-0.5">
-                  Daily Assignments for {profile.assignedClass}
-                </h2>
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">HOMEWORK DIARY DESK</span>
+                <h2 className="text-lg font-black text-white mt-0.5">Assignments for {profile.assignedClass}</h2>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                >
+                <button type="button" onClick={() => setActiveTab('pulse')} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer">
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Dashboard</span>
+                  <span>Back</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onShowToast('success', 'Homework Dispatched', 'Pushed to all 35 student & parent portals via WhatsApp/App')}
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
-                >
-                  + Dispatch Homework
+                <button type="button" disabled={loadingHomework} onClick={fetchHomework} className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50">
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingHomework ? 'animate-spin' : ''}`} />
+                </button>
+                <button type="button" onClick={() => setShowNewHomework(!showNewHomework)} className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{showNewHomework ? 'Cancel' : '+ New Homework'}</span>
                 </button>
               </div>
             </div>
 
-            <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-amber-300 font-bold">Computer Science • Due Tomorrow (08:30 AM)</span>
-                <span className="text-emerald-400">31/35 Submitted</span>
+            {showNewHomework && (
+              <div className="bg-slate-900 p-5 rounded-3xl border border-amber-500/40 space-y-3 text-xs">
+                <p className="text-amber-300 font-bold text-xs uppercase tracking-wider">Create New Homework Assignment</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <input type="text" placeholder="Grade (e.g. Class 10)" value={newHomework.grade} onChange={e => setNewHomework({...newHomework, grade: e.target.value})} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold placeholder:text-slate-600" />
+                  <input type="text" placeholder="Section (e.g. A)" value={newHomework.section} onChange={e => setNewHomework({...newHomework, section: e.target.value})} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold placeholder:text-slate-600" />
+                  <input type="text" placeholder="Subject" value={newHomework.subject} onChange={e => setNewHomework({...newHomework, subject: e.target.value})} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold placeholder:text-slate-600" />
+                </div>
+                <input type="text" placeholder="Homework Title *" value={newHomework.title} onChange={e => setNewHomework({...newHomework, title: e.target.value})} className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold placeholder:text-slate-600" />
+                <textarea rows={2} placeholder="Description / Instructions (optional)" value={newHomework.description} onChange={e => setNewHomework({...newHomework, description: e.target.value})} className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white placeholder:text-slate-600" />
+                <div className="flex items-center gap-3">
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-bold">Due Date *</label>
+                    <input type="date" value={newHomework.dueDate} onChange={e => setNewHomework({...newHomework, dueDate: e.target.value})} className="px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white font-bold" />
+                  </div>
+                  <button type="button" disabled={savingHomework} onClick={handleCreateHomework} className="mt-5 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+                    {savingHomework ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>{savingHomework ? 'Creating…' : 'Assign Homework'}</span>
+                  </button>
+                </div>
               </div>
-              <h3 className="text-sm font-bold text-white">
-                Python Stack Program Implementation (Push/Pop operations)
-              </h3>
-              <p className="text-xs text-slate-400">
-                Write a modular Python program to implement linear stack operations with underflow and overflow checks.
-              </p>
-            </div>
+            )}
+
+            {loadingHomework ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-6 h-6 text-amber-400 animate-spin" />
+                <span className="ml-3 text-sm text-slate-400">Loading homework from database…</span>
+              </div>
+            ) : homeworkList.length === 0 ? (
+              <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-2">
+                <BookOpen className="w-10 h-10 text-slate-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-400">No Homework Assigned Yet</p>
+                <p className="text-xs text-slate-500">Click "+ New Homework" to create your first assignment.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {homeworkList.map((hw: any) => (
+                  <div key={hw.id} className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-amber-300 font-bold">{hw.subject} • Due: {hw.dueDate}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${hw.status === 'submitted' || hw.status === 'completed' ? 'bg-emerald-500/20 text-emerald-300' : hw.status === 'overdue' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                        {hw.status?.toUpperCase() || 'ASSIGNED'}
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-bold text-white">{hw.title}</h3>
+                    {hw.description && <p className="text-xs text-slate-400">{hw.description}</p>}
+                    <div className="text-[11px] text-slate-500">
+                      {hw.grade} {hw.section} • Assigned: {hw.assignedDate || 'Today'} • By: {hw.teacherName || 'Faculty'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-
         {/* ========================================================================= */}
         {/* TAB 10: EXAMS & MARKS ENTRY */}
         {/* ========================================================================= */}
@@ -3184,57 +3524,80 @@ export const TeacherPortalHub: React.FC<TeacherPortalHubProps> = ({
           <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-5xl w-full mx-auto animate-in fade-in duration-300 font-mono">
             <div className="bg-slate-900/90 p-5 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">
-                  CBSE MARKS & ASSESSMENT DESK
-                </span>
+                <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">CBSE MARKS & ASSESSMENT DESK</span>
                 <h2 className="text-lg font-black text-white mt-0.5">
-                  Mid-Term Assessment Entry: {profile.assignedClass}
+                  {selectedExam ? `${selectedExam.name || selectedExam.examName || 'Exam'}: ${selectedExam.grade || profile.assignedClass}` : 'Exam & Marks Entry'}
                 </h2>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('pulse')}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                >
+                <button type="button" onClick={() => setActiveTab('pulse')} className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs border border-slate-700 flex items-center gap-1.5 cursor-pointer">
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Dashboard</span>
+                  <span>Back</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onShowToast('success', 'Marks Uploaded', 'Transcripts submitted to School Examination Cell')}
-                  className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs"
-                >
-                  Submit Score Ledger
+                <button type="button" disabled={savingMarks || !selectedExam} onClick={handleSubmitMarks} className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs cursor-pointer disabled:opacity-50 flex items-center gap-1.5">
+                  {savingMarks ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{savingMarks ? 'Saving…' : 'Submit Score Ledger'}</span>
                 </button>
               </div>
             </div>
 
-            <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden divide-y divide-slate-800">
-              {classRoster.map((st: any, i) => (
-                <div key={st.id} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 font-bold flex items-center justify-center text-xs">
-                      #{st.rollNo}
-                    </span>
-                    <div>
-                      <span className="text-sm font-bold text-white block">{st.name}</span>
-                      <span className="text-[11px] font-mono text-slate-400">Adm: {st.admissionNo || `DKS-2026-${String(st.rollNo).padStart(3, '0')}`}</span>
-                    </div>
-                  </div>
+            {/* Exam Selector */}
+            {examsList.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {examsList.map((ex: any) => (
+                  <button key={ex.id || ex.db_id} type="button" onClick={() => setSelectedExam(ex)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border cursor-pointer transition-all ${(selectedExam?.id || selectedExam?.db_id) === (ex.id || ex.db_id) ? 'bg-cyan-500 text-slate-950 border-cyan-400' : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'}`}>
+                    {ex.name || ex.examName || ex.id}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {loadingExams ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="w-6 h-6 text-cyan-400 animate-spin" />
+                <span className="ml-3 text-sm text-slate-400">Loading exams from database…</span>
+              </div>
+            ) : !selectedExam ? (
+              <div className="p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-2">
+                <Award className="w-10 h-10 text-slate-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-400">No Exams Available</p>
+                <p className="text-xs text-slate-500">The school admin needs to create exams in the Examination module first.</p>
+              </div>
+            ) : (
+              <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden">
+                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      defaultValue={85 + (i % 10)}
-                      max={100}
-                      min={0}
-                      className="w-16 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-center font-bold"
-                    />
-                    <span className="text-xs text-slate-400">/ 100</span>
+                    <Award className="w-4 h-4 text-cyan-400" />
+                    <span className="text-xs font-bold text-cyan-300">{selectedExamSubject?.subjectName || 'Subject'} — Max: {selectedExamSubject?.maxMarks || 100}</span>
                   </div>
+                  <span className="text-[10px] text-slate-500 font-mono">{marksRoster.length} Students</span>
                 </div>
-              ))}
-            </div>
+                {marksRoster.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-500">No students found for this exam & subject combination.</div>
+                ) : (
+                  <div className="divide-y divide-slate-800 max-h-[60vh] overflow-y-auto">
+                    {marksRoster.map((st: any) => (
+                      <div key={st.studentId} className="p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="w-8 h-8 rounded-xl bg-slate-800 text-slate-300 font-bold flex items-center justify-center text-xs">#{st.rollNo}</span>
+                          <div>
+                            <span className="text-sm font-bold text-white block">{st.studentName}</span>
+                            <span className="text-[11px] font-mono text-slate-400">Adm: {st.admissionNo || 'N/A'}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input type="number" value={marksMap[st.studentId] ?? (st.marksObtained !== null ? st.marksObtained : '')} onChange={e => setMarksMap(prev => ({...prev, [st.studentId]: Number(e.target.value)}))}
+                            max={selectedExamSubject?.maxMarks || 100} min={0} disabled={st.isLocked}
+                            className="w-16 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-center font-bold disabled:opacity-40" />
+                          <span className="text-xs text-slate-400">/ {selectedExamSubject?.maxMarks || 100}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </main>

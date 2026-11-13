@@ -573,6 +573,7 @@ export function App() {
                 <DakshoraSchoolApp
                   orgId={currentUser?.organization_id || currentUser?.org_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e"}
                   onShowToast={showToast}
+                  onNavigateSurface={handleSetSurface}
                 />
               </div>
             )}
