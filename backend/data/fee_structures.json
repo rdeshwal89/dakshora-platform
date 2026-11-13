@@ -1,6 +1,6 @@
 [
   {
-    "id": "struct-1793506255460",
+    "id": "struct-1794573551180",
     "academicSession": "2026-27",
     "grade": "Class 9",
     "feeHead": "Tuition Fee",
@@ -9,9 +9,9 @@
     "dueDay": 10,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:55.460Z",
-    "db_id": "a27ca58a-bb55-42a2-b386-561431e17576"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:11.180Z",
+    "db_id": "ffa952cd-c349-43db-ab39-9c02dd590f42"
   },
   {
     "id": "fc4f8cfb-e5a7-4c88-bb11-2adde9446c75",
@@ -98,7 +98,7 @@
     "feeHead": "Term 2 Composite Tuition Fee"
   },
   {
-    "id": "struct-3893cdf5-1",
+    "id": "struct-31fe1935-1",
     "academicSession": "2026-27",
     "grade": "Class 10",
     "feeHead": "Tuition Fee",
@@ -107,11 +107,11 @@
     "dueDay": 10,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   },
   {
-    "id": "struct-3893cdf5-2",
+    "id": "struct-31fe1935-2",
     "academicSession": "2026-27",
     "grade": "Class 10",
     "feeHead": "Annual Development Fee",
@@ -120,11 +120,11 @@
     "dueDay": 15,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   },
   {
-    "id": "struct-3893cdf5-3",
+    "id": "struct-31fe1935-3",
     "academicSession": "2026-27",
     "grade": "Class 10",
     "feeHead": "Examination Fee",
@@ -133,11 +133,11 @@
     "dueDay": 10,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   },
   {
-    "id": "struct-3893cdf5-4",
+    "id": "struct-31fe1935-4",
     "academicSession": "2026-27",
     "grade": "Class 10",
     "feeHead": "Transport Fee",
@@ -146,11 +146,11 @@
     "dueDay": 10,
     "isMandatory": false,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   },
   {
-    "id": "struct-3893cdf5-5",
+    "id": "struct-31fe1935-5",
     "academicSession": "2026-27",
     "grade": "Class 9",
     "feeHead": "Tuition Fee",
@@ -159,11 +159,11 @@
     "dueDay": 10,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   },
   {
-    "id": "struct-3893cdf5-6",
+    "id": "struct-31fe1935-6",
     "academicSession": "2026-27",
     "grade": "Class 1",
     "feeHead": "Tuition Fee",
@@ -172,7 +172,7 @@
     "dueDay": 10,
     "isMandatory": true,
     "status": "active",
-    "organization_id": "3893cdf5-06ba-461d-8f6c-4e0024eafbde",
-    "created_at": "2026-11-01T04:10:50.138Z"
+    "organization_id": "31fe1935-036e-43c2-922a-ec8a6c2eed8d",
+    "created_at": "2026-11-13T12:39:05.213Z"
   }
 ]
