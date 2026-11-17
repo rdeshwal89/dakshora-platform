@@ -16360,6 +16360,7 @@ app.get("/api/erp/staff", async (req, res) => {
           return {
             id: s.id,
             empId: s.employee_code || "FAC-01",
+            employee_code: s.employee_code,
             firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
             lastName: s.last_name || "",
             name: fullName,
@@ -16370,6 +16371,7 @@ app.get("/api/erp/staff", async (req, res) => {
             staffType: s.employment_type || "Teacher",
             department: s.department || "Academics",
             designation: s.designation || "Faculty",
+            photoUrl: s.photo_url || s.photoUrl || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
             joiningDate: s.joining_date || "2026-04-01",
             salaryINR: 50000,
             status: s.is_active ? "active" : "inactive",
@@ -16383,9 +16385,40 @@ app.get("/api/erp/staff", async (req, res) => {
     }
   }
 
-  // Fallback to ERP_STAFF in-memory cache if DB returned nothing
-  if (tenantStaff.length === 0 && orgId) {
-    tenantStaff = ERP_STAFF.filter(s => s.organization_id === orgId || s.org_id === orgId);
+  // Merge ERP_STAFF in-memory cache with database records so newly enrolled staff are always included
+  const existingStaffMap = new Map();
+  tenantStaff.forEach(s => {
+    existingStaffMap.set(String(s.id).toLowerCase(), s);
+    if (s.empId) existingStaffMap.set(String(s.empId).toLowerCase(), s);
+  });
+
+  const memoryStaff = orgId 
+    ? ERP_STAFF.filter(s => s.organization_id === orgId || s.org_id === orgId)
+    : ERP_STAFF;
+
+  memoryStaff.forEach(m => {
+    const keyId = String(m.id).toLowerCase();
+    const keyEmp = String(m.empId || m.employee_code || "").toLowerCase();
+    if (!existingStaffMap.has(keyId) && (!keyEmp || !existingStaffMap.has(keyEmp))) {
+      tenantStaff.unshift(m);
+      existingStaffMap.set(keyId, m);
+      if (keyEmp) existingStaffMap.set(keyEmp, m);
+    } else {
+      const match = existingStaffMap.get(keyId) || existingStaffMap.get(keyEmp);
+      if (match) {
+        if (!match.photoUrl && m.photoUrl) match.photoUrl = m.photoUrl;
+        if (!match.qualification && m.qualification) match.qualification = m.qualification;
+        if (!match.subjectSpecialization && m.subjectSpecialization) match.subjectSpecialization = m.subjectSpecialization;
+        if (!match.experienceYears && m.experienceYears) match.experienceYears = m.experienceYears;
+        if (!match.documents && m.documents) match.documents = m.documents;
+        if (!match.phone && m.phone) match.phone = m.phone;
+        if (!match.email && m.email) match.email = m.email;
+      }
+    }
+  });
+
+  if (tenantStaff.length === 0 && !orgId) {
+    tenantStaff = ERP_STAFF.slice(0, 50);
   }
 
   // Calculate live KPI summary metrics from database
@@ -16653,13 +16686,55 @@ app.get("/api/erp/staff/export", (req, res) => {
 });
 
 // GET /api/erp/staff/:id/profile - 360-degree Staff & Teacher Profile Dossier
-app.get("/api/erp/staff/:id/profile", (req, res) => {
+app.get("/api/erp/staff/:id/profile", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const staff = ERP_STAFF.find(s => 
-    (s.organization_id === orgId) && 
-    (s.id === id || s.empId === id)
+  let staff = ERP_STAFF.find(s => 
+    (!orgId || !s.organization_id || s.organization_id === orgId) && 
+    (s.id === id || s.empId === id || s.employee_code === id)
   );
+
+  if (!staff && supabase) {
+    try {
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${id},employee_code.eq.${id}`);
+      const { data: dbStf } = await query.maybeSingle();
+      if (dbStf) {
+        const fullName = [dbStf.first_name, dbStf.last_name].filter(Boolean).join(" ") || dbStf.employee_code || "Faculty";
+        staff = {
+          id: dbStf.id,
+          empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
+          firstName: dbStf.first_name || fullName.split(" ")[0] || "Faculty",
+          lastName: dbStf.last_name || "",
+          name: fullName,
+          email: dbStf.email || "staff@school.internal",
+          phone: dbStf.phone || "—",
+          gender: dbStf.gender || "Other",
+          dob: dbStf.dob || "1988-01-01",
+          role: (dbStf.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+          staffType: dbStf.employment_type || "Teacher",
+          department: dbStf.department || "Academics",
+          designation: dbStf.designation || "Faculty",
+          photoUrl: dbStf.photo_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
+          joiningDate: dbStf.joining_date || "2026-04-01",
+          salaryINR: 50000,
+          status: dbStf.is_active ? "active" : "inactive",
+          qualification: dbStf.qualification || "Post Graduate / B.Ed",
+          subjectSpecialization: dbStf.subject_specialization || "General Academics",
+          experienceYears: dbStf.experience_years || 5,
+          organization_id: dbStf.organization_id || orgId,
+          documents: []
+        };
+        ERP_STAFF.push(staff);
+      }
+    } catch (_) {}
+  }
+
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === id || s.empId === id || s.employee_code === id);
+  }
 
   if (!staff) {
     return res.status(404).json({ success: false, message: `Staff member '${id}' not found in this organization` });
@@ -16667,15 +16742,21 @@ app.get("/api/erp/staff/:id/profile", (req, res) => {
 
   // Teacher academic assignments
   const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => 
-    (a.organization_id === orgId) && 
-    a.staffId === staff.id
+    (!orgId || !a.organization_id || a.organization_id === orgId) && 
+    (a.staffId === staff.id || a.staffId === staff.empId)
+  );
+
+  // Responsibilities
+  const responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r =>
+    (!orgId || !r.organization_id || r.organization_id === orgId) &&
+    (r.staff_id === staff.id || r.staff_id === staff.empId)
   );
 
   // Attendance statistics
   const today = new Date().toISOString().split("T")[0];
   const todayAtt = ERP_STAFF_ATTENDANCE.find(a => 
-    (a.organization_id === orgId) && 
-    a.staffId === staff.id && 
+    (!orgId || !a.organization_id || a.organization_id === orgId) && 
+    (a.staffId === staff.id || a.staffId === staff.empId) && 
     a.attendanceDate === today
   );
   const statusToday = todayAtt ? todayAtt.status : (staff.status === "on_leave" ? "on_leave" : "present");
@@ -16695,6 +16776,7 @@ app.get("/api/erp/staff/:id/profile", (req, res) => {
   res.json({
     success: true,
     staff,
+    responsibilities,
     assignments,
     attendance: {
       statusToday,
@@ -16709,21 +16791,47 @@ app.get("/api/erp/staff/:id/profile", (req, res) => {
 });
 
 // GET /api/erp/staff/:id/assignments - Teacher Academic Assignments
-app.get("/api/erp/staff/:id/assignments", (req, res) => {
+app.get("/api/erp/staff/:id/assignments", async (req, res) => {
   const orgId = resolveTenantOrgId(req);
   const { id } = req.params;
-  const staff = ERP_STAFF.find(s => 
-    (s.organization_id === orgId) && 
-    (s.id === id || s.empId === id)
+  let staff = ERP_STAFF.find(s => 
+    (!orgId || !s.organization_id || s.organization_id === orgId) && 
+    (s.id === id || s.empId === id || s.employee_code === id)
   );
+
+  if (!staff && supabase) {
+    try {
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${id},employee_code.eq.${id}`);
+      const { data: dbStf } = await query.maybeSingle();
+      if (dbStf) {
+        const fullName = [dbStf.first_name, dbStf.last_name].filter(Boolean).join(" ") || dbStf.employee_code || "Faculty";
+        staff = {
+          id: dbStf.id,
+          name: fullName,
+          empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
+          designation: dbStf.designation || "Faculty",
+          department: dbStf.department || "Academics",
+          organization_id: dbStf.organization_id || orgId
+        };
+        ERP_STAFF.push(staff);
+      }
+    } catch (_) {}
+  }
+
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === id || s.empId === id || s.employee_code === id);
+  }
 
   if (!staff) {
     return res.status(404).json({ success: false, message: `Staff member '${id}' not found` });
   }
 
   const assignments = ERP_TEACHER_ASSIGNMENTS.filter(a => 
-    (a.organization_id === orgId) && 
-    a.staffId === staff.id
+    (!orgId || !a.organization_id || a.organization_id === orgId) && 
+    (a.staffId === staff.id || a.staffId === staff.empId)
   );
 
   res.json({ success: true, staffId: staff.id, staffName: staff.name, assignments });
@@ -16735,10 +16843,36 @@ app.post("/api/erp/staff/:id/assignments", async (req, res) => {
   const { id } = req.params;
   const { academicSession = "2026-27", grade, section, subject } = req.body || {};
 
-  const staff = ERP_STAFF.find(s => 
-    (s.organization_id === orgId) && 
-    (s.id === id || s.empId === id)
+  let staff = ERP_STAFF.find(s => 
+    (!orgId || !s.organization_id || s.organization_id === orgId) && 
+    (s.id === id || s.empId === id || s.employee_code === id)
   );
+
+  if (!staff && supabase) {
+    try {
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${id},employee_code.eq.${id}`);
+      const { data: dbStf } = await query.maybeSingle();
+      if (dbStf) {
+        const fullName = [dbStf.first_name, dbStf.last_name].filter(Boolean).join(" ") || dbStf.employee_code || "Faculty";
+        staff = {
+          id: dbStf.id,
+          name: fullName,
+          empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
+          designation: dbStf.designation || "Faculty",
+          department: dbStf.department || "Academics",
+          organization_id: dbStf.organization_id || orgId
+        };
+        ERP_STAFF.push(staff);
+      }
+    } catch (_) {}
+  }
+
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === id || s.empId === id || s.employee_code === id);
+  }
 
   if (!staff) {
     return res.status(404).json({ success: false, message: `Staff member '${id}' not found` });
@@ -16942,14 +17076,56 @@ app.get("/api/erp/staff/:id/teacher-profile", requireAuth, async (req, res) => {
 
 
 // GET /api/erp/staff/:id - Single staff record
-app.get("/api/erp/staff/:id", (req, res, next) => {
+app.get("/api/erp/staff/:id", async (req, res, next) => {
   const { id } = req.params;
   if (id === "import-template" || id === "template" || id === "export") return next();
   const orgId = resolveTenantOrgId(req);
-  const staff = ERP_STAFF.find(s => 
-    (s.organization_id === orgId) && 
-    (s.id === id || s.empId === id)
+  let staff = ERP_STAFF.find(s => 
+    (!orgId || !s.organization_id || s.organization_id === orgId) && 
+    (s.id === id || s.empId === id || s.employee_code === id)
   );
+
+  if (!staff && supabase) {
+    try {
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${id},employee_code.eq.${id}`);
+      const { data: dbStf } = await query.maybeSingle();
+      if (dbStf) {
+        const fullName = [dbStf.first_name, dbStf.last_name].filter(Boolean).join(" ") || dbStf.employee_code || "Faculty";
+        staff = {
+          id: dbStf.id,
+          empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
+          firstName: dbStf.first_name || fullName.split(" ")[0] || "Faculty",
+          lastName: dbStf.last_name || "",
+          name: fullName,
+          email: dbStf.email || "staff@school.internal",
+          phone: dbStf.phone || "—",
+          gender: dbStf.gender || "Other",
+          dob: dbStf.dob || "1988-01-01",
+          role: (dbStf.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+          staffType: dbStf.employment_type || "Teacher",
+          department: dbStf.department || "Academics",
+          designation: dbStf.designation || "Faculty",
+          photoUrl: dbStf.photo_url || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
+          joiningDate: dbStf.joining_date || "2026-04-01",
+          salaryINR: 50000,
+          status: dbStf.is_active ? "active" : "inactive",
+          qualification: dbStf.qualification || "Post Graduate / B.Ed",
+          subjectSpecialization: dbStf.subject_specialization || "General Academics",
+          experienceYears: dbStf.experience_years || 5,
+          organization_id: dbStf.organization_id || orgId,
+          documents: []
+        };
+        ERP_STAFF.push(staff);
+      }
+    } catch (_) {}
+  }
+
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === id || s.empId === id || s.employee_code === id);
+  }
 
   if (!staff) {
     return res.status(404).json({ success: false, message: `Staff member '${id}' not found in this organization` });
@@ -17655,23 +17831,33 @@ app.get("/api/erp/staff-responsibilities/all", async (req, res) => {
   const { session, category, search } = req.query;
 
   // Ensure staff for this tenant are loaded into ERP_STAFF
-  if (supabase && orgId && !ERP_STAFF.some(st => st.organization_id === orgId)) {
+  if (supabase && orgId) {
     try {
       const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
       if (dbStaff && dbStaff.length > 0) {
         dbStaff.forEach(s => {
-          if (!ERP_STAFF.some(existing => existing.id === s.id)) {
-            const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
-            ERP_STAFF.push({
-              ...s,
-              name: fullName,
-              firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
-              lastName: s.last_name || "",
-              empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
-              organization_id: s.organization_id || orgId,
-              role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
-              status: s.is_active ? "active" : "inactive"
-            });
+          const matchIndex = ERP_STAFF.findIndex(existing => existing.id === s.id || (s.employee_code && existing.empId === s.employee_code));
+          const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+          const staffObj = {
+            ...s,
+            name: fullName,
+            firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+            lastName: s.last_name || "",
+            empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
+            employee_code: s.employee_code,
+            organization_id: s.organization_id || orgId,
+            role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+            designation: s.designation || "Faculty",
+            department: s.department || "Academics",
+            phone: s.phone || "—",
+            email: s.email || "—",
+            photoUrl: s.photo_url || s.photoUrl || null,
+            status: s.is_active ? "active" : "inactive"
+          };
+          if (matchIndex === -1) {
+            ERP_STAFF.push(staffObj);
+          } else {
+            ERP_STAFF[matchIndex] = { ...ERP_STAFF[matchIndex], ...staffObj };
           }
         });
       }
@@ -21101,23 +21287,33 @@ app.get("/api/erp/academics/sections", async (req, res) => {
   const { grade } = req.query;
 
   // Ensure staff for this tenant are loaded into ERP_STAFF
-  if (supabase && orgId && !ERP_STAFF.some(st => st.organization_id === orgId)) {
+  if (supabase && orgId) {
     try {
       const { data: dbStaff } = await supabase.from("staff").select("*").eq("organization_id", orgId);
       if (dbStaff && dbStaff.length > 0) {
         dbStaff.forEach(s => {
-          if (!ERP_STAFF.some(existing => existing.id === s.id)) {
-            const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
-            ERP_STAFF.push({
-              ...s,
-              name: fullName,
-              firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
-              lastName: s.last_name || "",
-              empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
-              organization_id: s.organization_id || orgId,
-              role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
-              status: s.is_active ? "active" : "inactive"
-            });
+          const matchIndex = ERP_STAFF.findIndex(existing => existing.id === s.id || (s.employee_code && existing.empId === s.employee_code));
+          const fullName = [s.first_name, s.last_name].filter(Boolean).join(" ") || s.employee_code || "Faculty";
+          const staffObj = {
+            ...s,
+            name: fullName,
+            firstName: s.first_name || fullName.split(" ")[0] || "Faculty",
+            lastName: s.last_name || "",
+            empId: s.employee_code || s.emp_id || s.empId || "FAC-01",
+            employee_code: s.employee_code,
+            organization_id: s.organization_id || orgId,
+            role: (s.designation || "teacher").toLowerCase().includes("principal") ? "principal" : "teacher",
+            designation: s.designation || "Faculty",
+            department: s.department || "Academics",
+            phone: s.phone || "—",
+            email: s.email || "—",
+            photoUrl: s.photo_url || s.photoUrl || null,
+            status: s.is_active ? "active" : "inactive"
+          };
+          if (matchIndex === -1) {
+            ERP_STAFF.push(staffObj);
+          } else {
+            ERP_STAFF[matchIndex] = { ...ERP_STAFF[matchIndex], ...staffObj };
           }
         });
       }
@@ -44731,28 +44927,37 @@ app.get("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   const { staffId } = req.params;
   const { session } = req.query;
 
-  let staff = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
-  if (!staff && supabase && orgId) {
+  let staff = ERP_STAFF.find(s => (!orgId || !s.organization_id || s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
+  if (!staff && supabase) {
     try {
-      const { data: dbStf } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${staffId},employee_code.eq.${staffId}`).maybeSingle();
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${staffId},employee_code.eq.${staffId}`);
+      const { data: dbStf } = await query.maybeSingle();
       if (dbStf) {
         staff = {
           id: dbStf.id,
           name: `${dbStf.first_name || ""} ${dbStf.last_name || ""}`.trim() || "Staff",
           empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
           designation: dbStf.designation || "Faculty",
           department: dbStf.department || "Academics",
-          organization_id: orgId
+          organization_id: dbStf.organization_id || orgId
         };
+        ERP_STAFF.push(staff);
       }
     } catch (_) {}
+  }
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === staffId || s.employee_code === staffId || s.empId === staffId);
   }
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found." });
   }
 
   let responsibilities = ERP_STAFF_RESPONSIBILITIES.filter(r => 
-    (r.organization_id === orgId) && (r.staff_id === staffId || r.staff_id === staff.id)
+    (!orgId || !r.organization_id || r.organization_id === orgId) && 
+    (r.staff_id === staffId || r.staff_id === staff.id || r.staff_id === staff.empId)
   );
 
   if (session && session !== "all") {
@@ -44777,21 +44982,29 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   }
 
   const { staffId } = req.params;
-  let staff = ERP_STAFF.find(s => (s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
-  if (!staff && supabase && orgId) {
+  let staff = ERP_STAFF.find(s => (!orgId || !s.organization_id || s.organization_id === orgId) && (s.id === staffId || s.employee_code === staffId || s.empId === staffId));
+  if (!staff && supabase) {
     try {
-      const { data: dbStf } = await supabase.from("staff").select("*").eq("organization_id", orgId).or(`id.eq.${staffId},employee_code.eq.${staffId}`).maybeSingle();
+      let query = supabase.from("staff").select("*");
+      if (orgId) query = query.eq("organization_id", orgId);
+      query = query.or(`id.eq.${staffId},employee_code.eq.${staffId}`);
+      const { data: dbStf } = await query.maybeSingle();
       if (dbStf) {
         staff = {
           id: dbStf.id,
           name: `${dbStf.first_name || ""} ${dbStf.last_name || ""}`.trim() || "Staff",
           empId: dbStf.employee_code || "FAC-01",
+          employee_code: dbStf.employee_code,
           designation: dbStf.designation || "Faculty",
           department: dbStf.department || "Academics",
-          organization_id: orgId
+          organization_id: dbStf.organization_id || orgId
         };
+        ERP_STAFF.push(staff);
       }
     } catch (_) {}
+  }
+  if (!staff) {
+    staff = ERP_STAFF.find(s => s.id === staffId || s.employee_code === staffId || s.empId === staffId);
   }
   if (!staff) {
     return res.status(404).json({ success: false, message: "Staff member not found in tenant organization." });
@@ -44800,7 +45013,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
   const {
     responsibility_type_id,
     responsibility_code,
-    scope_type = "SECTION",
+    scope_type = "SCHOOL",
     scope_id,
     scope_name,
     academic_session_id = "2026-27",
@@ -44810,7 +45023,10 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
     notes
   } = req.body || {};
 
-  if ((!responsibility_code && !responsibility_type_id) || !scope_id) {
+  const cleanScopeId = (scope_id || scope_name || req.body.scope_target || "INSTITUTIONAL_CHARGE").trim();
+  const cleanScopeName = (scope_name || cleanScopeId || "Institutional Charge").trim();
+
+  if ((!responsibility_code && !responsibility_type_id) || !cleanScopeId) {
     return res.status(400).json({ success: false, message: "Responsibility type and Scope target are required." });
   }
 
@@ -44849,10 +45065,10 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
 
   // Conflict detection: Same staff, same responsibility, same scope, same session
   const existingActive = ERP_STAFF_RESPONSIBILITIES.find(r =>
-    (r.organization_id === orgId) &&
-    r.staff_id === staff.id &&
+    (!orgId || !r.organization_id || r.organization_id === orgId) &&
+    (r.staff_id === staff.id || r.staff_id === staff.empId) &&
     r.responsibility_code === cleanCode &&
-    r.scope_id.toLowerCase() === scope_id.trim().toLowerCase() &&
+    r.scope_id.toLowerCase() === cleanScopeId.toLowerCase() &&
     r.academic_session_id === academic_session_id &&
     r.status === "active"
   );
@@ -44860,14 +45076,14 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
     return res.status(400).json({
       success: false,
       code: "DUPLICATE_ACTIVE_ASSIGNMENT",
-      message: `Staff ${staff.name} is already actively assigned as ${respType.name} for ${scope_id} in session ${academic_session_id}.`
+      message: `Staff ${staff.name} is already actively assigned as ${respType.name} for ${cleanScopeId} in session ${academic_session_id}.`
     });
   }
 
   // If set to primary, clear existing primary for this staff in this session
   if (is_primary) {
     ERP_STAFF_RESPONSIBILITIES.forEach(r => {
-      if (r.staff_id === staff.id && r.academic_session_id === academic_session_id && r.is_primary) {
+      if ((r.staff_id === staff.id || r.staff_id === staff.empId) && r.academic_session_id === academic_session_id && r.is_primary) {
         r.is_primary = false;
       }
     });
@@ -44875,7 +45091,7 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
 
   const newAssignment = {
     id: `sresp-${Date.now().toString().slice(-4)}`,
-    organization_id: orgId,
+    organization_id: orgId || staff.organization_id || "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
     school_id: "sch-main",
     campus_id: req.body.campus_id || "main-campus",
     staff_id: staff.id,
@@ -44883,9 +45099,9 @@ app.post("/api/erp/staff/:staffId/responsibilities", async (req, res) => {
     responsibility_type_id: respType.id,
     responsibility_code: cleanCode,
     responsibility_name: respType.name,
-    scope_type: scope_type.toUpperCase(),
-    scope_id: scope_id.trim(),
-    scope_name: scope_name ? scope_name.trim() : scope_id.trim(),
+    scope_type: (scope_type || "SCHOOL").toUpperCase(),
+    scope_id: cleanScopeId,
+    scope_name: cleanScopeName,
     academic_session_id,
     is_primary: !!is_primary,
     start_date: effStartDate,

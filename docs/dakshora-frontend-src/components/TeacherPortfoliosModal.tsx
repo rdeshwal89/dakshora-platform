@@ -492,7 +492,7 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
       const [dutiesRes, typesRes, staffRes] = await Promise.all([
         fetchInstitutionalDuties({ session: activeSession || '2026-27' }),
         fetchResponsibilityTypes({ active: 'true' }),
-        fetchErpStaff({ limit: 200 })
+        fetchErpStaff({ limit: 200, organization_id: effectiveOrgId })
       ]);
 
       const staff = staffRes?.data?.staff || [];
@@ -527,21 +527,24 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
             tenure
           };
         });
-        setPortfolios(mapped);
-      } else if (isDemoSchool) {
-        setPortfolios(MASTER_TEACHER_PORTFOLIOS);
+
+        // Retain unassigned master portfolios so standard institutional templates remain accessible
+        const existingPortfolioNames = new Set(mapped.map((m) => m.portfolioName.toLowerCase()));
+        const unassignedMasters = MASTER_TEACHER_PORTFOLIOS.filter(
+          (m) => !existingPortfolioNames.has(m.portfolioName.toLowerCase())
+        );
+
+        setPortfolios([...mapped, ...unassignedMasters]);
       } else {
-        setPortfolios([]);
+        setPortfolios(MASTER_TEACHER_PORTFOLIOS);
       }
     } catch (err: any) {
       console.warn('[TeacherPortfoliosModal] Error loading real duties:', err?.message);
-      if (isDemoSchool) {
-        setPortfolios(MASTER_TEACHER_PORTFOLIOS);
-      }
+      setPortfolios(MASTER_TEACHER_PORTFOLIOS);
     } finally {
       setLoading(false);
     }
-  }, [activeSession, effectiveOrgId, isDemoSchool]);
+  }, [activeSession, effectiveOrgId]);
 
   useEffect(() => {
     if (isOpen) {
@@ -571,10 +574,12 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      const scopeTarget = assignScopeName?.trim() || 'INSTITUTIONAL_CHARGE';
       const res = await assignStaffResponsibility(assignStaffId, {
         responsibility_type_id: assignRespTypeId,
         scope_type: assignScopeType,
-        scope_name: assignScopeName || 'Institutional Charge',
+        scope_id: scopeTarget,
+        scope_name: assignScopeName?.trim() || 'Institutional Charge',
         academic_session_id: activeSession || '2026-27',
         is_primary: false,
         notes: assignNotes || undefined
