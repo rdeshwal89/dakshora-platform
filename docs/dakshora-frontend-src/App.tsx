@@ -583,8 +583,9 @@ export function App() {
               currentUser?.role === 'superadmin' ? (
                 <div className="space-y-6 animate-in fade-in duration-300">
                   {/* Active Module Content View */}
-                  {(adminTab === 'superadmin' || adminTab === 'dashboard') && (
+                  {(adminTab === 'superadmin' || adminTab === 'dashboard' || adminTab === 'organizations') && (
                     <SuperAdminHub
+                      initialTab={adminTab === 'organizations' ? 'organizations' : undefined}
                       onShowToast={showToast}
                       onNavigateToTab={(tab) => handleSetAdminTab(tab as any)}
                       onSwitchToSchool={handleSwitchToSchool}
@@ -597,13 +598,6 @@ export function App() {
                         }
                         handleSetSurface(surf as any);
                       }}
-                    />
-                  )}
-                  {adminTab === 'organizations' && (
-                    <OrganizationsHub
-                      onShowToast={showToast}
-                      onLaunchOnboarding={handleLaunchWizard}
-                      onNavigateToErp={() => handleSetSurface('school_erp')}
                     />
                   )}
                   {adminTab === 'websites' && <CmsWebsitesHub onShowToast={showToast} />}

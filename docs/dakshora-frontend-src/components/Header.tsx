@@ -106,16 +106,6 @@ export const Header: React.FC<HeaderProps> = ({
       badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
     },
     {
-      id: 'organizations',
-      label: 'Organizations',
-      icon: Building2,
-      tag: 'Multi-Tenant',
-      activeGradient: 'from-purple-600 via-fuchsia-600 to-pink-500',
-      activeShadow: 'shadow-purple-500/25',
-      iconColor: 'text-purple-500',
-      badgeColor: 'bg-purple-100 text-purple-800 border-purple-200',
-    },
-    {
       id: 'websites',
       label: 'CMS & Sites',
       icon: Globe,

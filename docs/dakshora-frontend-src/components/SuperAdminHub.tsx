@@ -50,7 +50,8 @@ import {
   Hash,
   Dice5,
   Smartphone,
-  Download
+  Download,
+  Edit3
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -64,6 +65,10 @@ import {
   fetchPlatformOrganizations,
   fetchPlatformOrganizationDetail,
   updatePlatformOrganizationStatus,
+  updateOrganizationDetails,
+  archiveOrganization,
+  resendSchoolAdminAccess,
+  updateOrganizationStatus,
   fetchPlatformSchools,
   fetchPlatformUsers,
   updatePlatformUserRole,
@@ -101,16 +106,65 @@ import {
   PlatformOnboardingSummary
 } from '../types';
 
+export interface OnboardingApplicationRecord {
+  id: string;
+  refId: string;
+  principalName: string;
+  schoolName: string;
+  email: string;
+  phone: string;
+  board: string;
+  city: string;
+  students: string;
+  notes?: string;
+  status: 'pending_verification' | 'contacted_interested' | 'onboarded' | 'rejected';
+  submittedAt: string;
+}
+
+const DEFAULT_ONBOARDING_REQUESTS: OnboardingApplicationRecord[] = [
+  {
+    id: 'req-89478',
+    refId: 'DK-REQ-89478',
+    principalName: 'Dr. Rajesh Sharma',
+    schoolName: 'Tagore Public Senior Secondary Academy',
+    email: 'dakshora.ai@gmail.com',
+    phone: '8947838668',
+    board: 'CBSE / RBSE Rajasthan',
+    city: 'Jaipur, Rajasthan',
+    students: '500 - 1500 Students',
+    notes: 'Requested Dakshora ERP with 30-Sec Attendance & CBSE 2026 Question Paper Generator.',
+    status: 'pending_verification',
+    submittedAt: 'Today, 11:15 AM'
+  },
+  {
+    id: 'req-31209',
+    refId: 'DK-REQ-31209',
+    principalName: 'Sr. Maria D\'Souza',
+    schoolName: 'St. Mary\'s Convent High School',
+    email: 'principal@stmarys.edu.in',
+    phone: '9820114522',
+    board: 'ICSE Board',
+    city: 'Pune, Maharashtra',
+    students: '1500 - 3000 Students',
+    notes: 'Interested in School Bus GPS tracking and online fee challan with UPI.',
+    status: 'contacted_interested',
+    submittedAt: 'Yesterday, 04:30 PM'
+  }
+];
+
 interface SuperAdminHubProps {
   onShowToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void;
   onNavigateToTab?: (tab: string) => void;
   onSwitchToSchool?: (school: any) => void;
   onNavigateToSurface?: (surface: any, targetOrgId?: string) => void;
+  initialTab?: PlatformTab;
 }
 
 type PlatformTab =
   | 'overview'
   | 'schools'
+  | 'organizations'
+  | 'onboarding_queue'
   | 'users'
   | 'telemetry'
   | 'health'
@@ -119,17 +173,23 @@ type PlatformTab =
   | 'broadcast'
   | 'settings'
   | 'client_setup'
-  | 'subscriptions'
-  | 'organizations';
+  | 'subscriptions';
 
 export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
   onShowToast,
   onNavigateToTab,
   onSwitchToSchool,
-  onNavigateToSurface
+  onNavigateToSurface,
+  initialTab
 }) => {
   // Navigation
-  const [activeTab, setActiveTab] = useState<PlatformTab>('overview');
+  const [activeTab, setActiveTab] = useState<PlatformTab>(initialTab || 'overview');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Auth / Current Admin State
   const [currentUser, setCurrentUser] = useState<any>(() => {
@@ -167,6 +227,44 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
   const [orgStatusFilter, setOrgStatusFilter] = useState('all');
   const [isLoadingOrgs, setIsLoadingOrgs] = useState(false);
   const [selectedOrgDetail, setSelectedOrgDetail] = useState<any | null>(null);
+  const [orgViewMode, setOrgViewMode] = useState<'grid' | 'table'>('grid');
+
+  // Tenant Organization Management Modal State
+  const [managingOrg, setManagingOrg] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    plan: 'growth',
+    board: 'CBSE',
+    contact_email: '',
+    contact_phone: '',
+    city: '',
+    state: '',
+    mrr_inr: 12500
+  });
+  const [isSavingOrgDetails, setIsSavingOrgDetails] = useState(false);
+
+  // Resend / Grant Principal Access Modal State
+  const [resendModal, setResendModal] = useState<{
+    org: any;
+    email: string;
+    principalName: string;
+    phone: string;
+  } | null>(null);
+  const [resendForm, setResendForm] = useState({ email: '', principalName: '', phone: '', customPassword: '' });
+  const [isResending, setIsResending] = useState(false);
+  const [resendResult, setResendResult] = useState<any | null>(null);
+  const [copiedCreds, setCopiedCreds] = useState(false);
+
+  // Inbound Onboarding Requests State (SuperAdmin Approval Queue)
+  const [onboardingRequests, setOnboardingRequests] = useState<OnboardingApplicationRecord[]>(() => {
+    try {
+      const stored = localStorage.getItem('dakshora_onboarding_requests');
+      return stored ? JSON.parse(stored) : DEFAULT_ONBOARDING_REQUESTS;
+    } catch {
+      return DEFAULT_ONBOARDING_REQUESTS;
+    }
+  });
+  const [reqFilter, setReqFilter] = useState<'all' | 'pending_verification' | 'contacted_interested' | 'onboarded'>('all');
 
   // Schools Directory State
   const [schools, setSchools] = useState<PlatformSchool[]>([]);
@@ -701,11 +799,181 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
       if (res.data.success) {
         onShowToast('success', 'Organization Status Updated', res.data.message);
         loadOrganizations();
+        loadSchools();
         loadDashboard();
       }
     } catch (err: any) {
       onShowToast('error', 'Update Failed', err.message);
     }
+  };
+
+  const handleToggleStatus = async (org: any, targetStatus?: string) => {
+    const current = (org.status || 'active').toLowerCase();
+    const nextStatus = targetStatus || (current === 'active' ? 'suspended' : 'active');
+    const orgId = org.organizationId || org.organization_id || org.id;
+
+    // Optimistic UI update
+    setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, status: nextStatus } : o));
+    setSchools(prev => prev.map(s => (s.id === orgId || s.organizationId === orgId) ? { ...s, status: nextStatus } : s));
+
+    try {
+      const res = await updatePlatformOrganizationStatus(orgId, nextStatus);
+      if (res.data?.success) {
+        onShowToast(
+          nextStatus === 'active' ? 'success' : 'info',
+          `School ${nextStatus === 'active' ? 'Activated ✅' : 'Suspended 🔒'}`,
+          res.data.message || `Tenant '${org.name || org.schoolName}' is now ${nextStatus.toUpperCase()}.`
+        );
+        loadOrganizations();
+        loadSchools();
+        loadDashboard();
+      } else {
+        setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, status: current } : o));
+        setSchools(prev => prev.map(s => (s.id === orgId || s.organizationId === orgId) ? { ...s, status: current } : s));
+        onShowToast('error', 'Status Update Failed', res.data?.message || 'Server error');
+      }
+    } catch (err: any) {
+      setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, status: current } : o));
+      setSchools(prev => prev.map(s => (s.id === orgId || s.organizationId === orgId) ? { ...s, status: current } : s));
+      onShowToast('error', 'Status Update Error', err.message);
+    }
+  };
+
+  const handleOpenResendModal = (schoolOrOrg: any) => {
+    const email = schoolOrOrg.contact_email || schoolOrOrg.contactEmail || schoolOrOrg.email || '';
+    const principalName = schoolOrOrg.principal_name || schoolOrOrg.principalName || 'Principal';
+    const phone = schoolOrOrg.contact_phone || schoolOrOrg.contactPhone || schoolOrOrg.phone || '';
+    setResendForm({
+      email,
+      principalName,
+      phone,
+      customPassword: ''
+    });
+    setResendResult(null);
+    setCopiedCreds(false);
+    setResendModal({
+      org: schoolOrOrg,
+      email,
+      principalName,
+      phone
+    });
+  };
+
+  const handleResendAccess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resendModal) return;
+    if (!resendForm.email.trim()) {
+      onShowToast('error', 'Email Required', 'Principal email is required to grant access.');
+      return;
+    }
+    setIsResending(true);
+    setResendResult(null);
+    try {
+      const targetOrgId = resendModal.org.organizationId || resendModal.org.organization_id || resendModal.org.id;
+      const res = await resendSchoolAdminAccess({
+        organizationId: targetOrgId,
+        email: resendForm.email.trim(),
+        principalName: resendForm.principalName.trim() || 'Principal',
+        phone: resendForm.phone.trim(),
+        newPassword: resendForm.customPassword.trim() || undefined,
+      });
+      if (res.data?.success) {
+        setResendResult(res.data);
+        onShowToast('success', 'Access Granted & Credentials Sent ✅', res.data.message);
+      } else {
+        onShowToast('error', 'Failed', res.data?.message || 'Could not reset access.');
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Error', err.message);
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  const handleOpenManageOrg = (schoolOrOrg: any) => {
+    setManagingOrg(schoolOrOrg);
+    setEditForm({
+      name: schoolOrOrg.name || schoolOrOrg.schoolName || '',
+      plan: schoolOrOrg.subscriptionPlan || schoolOrOrg.plan || 'growth',
+      board: schoolOrOrg.board || 'CBSE',
+      contact_email: schoolOrOrg.contact_email || schoolOrOrg.contactEmail || schoolOrOrg.email || '',
+      contact_phone: schoolOrOrg.contact_phone || schoolOrOrg.contactPhone || schoolOrOrg.phone || '',
+      city: schoolOrOrg.city || 'Jaipur',
+      state: schoolOrOrg.state || 'Rajasthan',
+      mrr_inr: schoolOrOrg.mrr_inr !== undefined ? Number(schoolOrOrg.mrr_inr) : (schoolOrOrg.plan === 'enterprise' ? 24999 : schoolOrOrg.plan === 'growth' ? 12500 : 4999)
+    });
+  };
+
+  const handleSaveOrgDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!managingOrg) return;
+    setIsSavingOrgDetails(true);
+    try {
+      const targetOrgId = managingOrg.organizationId || managingOrg.organization_id || managingOrg.id;
+      const res = await updateOrganizationDetails(targetOrgId, editForm);
+      if (res.data?.success) {
+        onShowToast('success', 'School Tenant Saved 💾', `Updated settings for '${editForm.name}'.`);
+        await loadOrganizations();
+        await loadSchools();
+        setManagingOrg(null);
+      } else {
+        onShowToast('error', 'Save Failed', res.data?.message);
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Save Error', err.message);
+    } finally {
+      setIsSavingOrgDetails(false);
+    }
+  };
+
+  const handleArchiveOrg = async (org: any) => {
+    if (!window.confirm(`Are you sure you want to archive '${org.name || org.schoolName}'? The school will be deactivated.`)) return;
+    try {
+      const targetOrgId = org.organizationId || org.organization_id || org.id;
+      const res = await archiveOrganization(targetOrgId);
+      if (res.data?.success) {
+        onShowToast('info', 'School Archived 📦', `'${org.name || org.schoolName}' has been archived.`);
+        await loadOrganizations();
+        await loadSchools();
+        setManagingOrg(null);
+      }
+    } catch (err: any) {
+      onShowToast('error', 'Archive Error', err.message);
+    }
+  };
+
+  const handleApproveAndAutoProvision = async (req: OnboardingApplicationRecord) => {
+    handleOpenNewSchoolModal();
+    const autoSlug = req.schoolName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+    setOnboardForm(prev => ({
+      ...prev,
+      schoolName: req.schoolName,
+      slug: autoSlug,
+      board: req.board.includes('CBSE') ? 'CBSE' : req.board.includes('ICSE') ? 'ICSE' : 'Rajasthan Board (RBSE)',
+      principalName: req.principalName,
+      contactEmail: req.email,
+      contactPhone: req.phone,
+      city: req.city.split(',')[0]?.trim() || 'Jaipur',
+      state: req.city.split(',')[1]?.trim() || 'Rajasthan'
+    }));
+    const updated = onboardingRequests.map(r => r.id === req.id ? { ...r, status: 'onboarded' as const } : r);
+    setOnboardingRequests(updated);
+    try { localStorage.setItem('dakshora_onboarding_requests', JSON.stringify(updated)); } catch {}
+    onShowToast('info', 'Application Pre-filled! 📋', `Generated form with details for ${req.schoolName}. Review 5-digit code and submit.`);
+  };
+
+  const handleMarkContacted = (id: string) => {
+    const updated = onboardingRequests.map(r => r.id === id || r.refId === id ? { ...r, status: 'contacted_interested' as const } : r);
+    setOnboardingRequests(updated);
+    try { localStorage.setItem('dakshora_onboarding_requests', JSON.stringify(updated)); } catch {}
+    onShowToast('success', 'Marked as Contacted 📞', 'Applicant moved to contacted state.');
+  };
+
+  const handleRejectRequest = (id: string) => {
+    const updated = onboardingRequests.map(r => r.id === id || r.refId === id ? { ...r, status: 'rejected' as const } : r);
+    setOnboardingRequests(updated);
+    try { localStorage.setItem('dakshora_onboarding_requests', JSON.stringify(updated)); } catch {}
+    onShowToast('info', 'Application Rejected', 'Applicant status set to rejected.');
   };
 
   const handleUpdateUserRole = async (userId: string, newRole: string) => {
@@ -1250,27 +1518,28 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
 
       {/* 3. TWO-ROW COLOURFUL TAB NAVIGATION (ZERO SCROLLING) */}
       {(() => {
+        const pendingCount = onboardingRequests.filter(r => r.status === 'pending_verification').length;
         const row1Tabs = [
           { id: 'overview', label: 'Overview', icon: BarChart3, activeGradient: 'from-amber-500 via-orange-500 to-rose-500' },
-          { id: 'schools', label: 'Schools Directory', icon: GraduationCap, activeGradient: 'from-purple-600 via-fuchsia-600 to-pink-600' },
-          { id: 'organizations', label: 'Organizations', icon: Building2, activeGradient: 'from-sky-500 via-blue-600 to-indigo-600' },
+          { id: 'organizations', label: 'Organizations & Schools', icon: Building2, activeGradient: 'from-purple-600 via-fuchsia-600 to-pink-600' },
+          { id: 'onboarding_queue', label: `Inbound Inquiries (${pendingCount > 0 ? `${pendingCount} New` : onboardingRequests.length})`, icon: Layers, activeGradient: 'from-sky-500 via-blue-600 to-indigo-600' },
           { id: 'users', label: 'User Governance', icon: Users, activeGradient: 'from-emerald-600 via-teal-600 to-cyan-600' },
           { id: 'subscriptions', label: 'Subscriptions & MRR', icon: CreditCard, activeGradient: 'from-amber-500 to-orange-600' },
           { id: 'telemetry', label: 'Usage Telemetry', icon: Activity, activeGradient: 'from-cyan-600 via-blue-600 to-indigo-600' }
         ];
 
         const row2Tabs = [
-          { id: 'onboarding', label: 'Onboarding Monitor', icon: Layers, activeGradient: 'from-fuchsia-600 to-pink-600' },
-          { id: 'support', label: 'Support & Impersonation', icon: LifeBuoy, activeGradient: 'from-rose-500 to-orange-500' },
+          { id: 'onboarding', label: 'Setup Wizard Monitor', icon: Sparkles, activeGradient: 'from-fuchsia-600 to-pink-600' },
+          { id: 'support', label: 'Safe Support Mode', icon: LifeBuoy, activeGradient: 'from-rose-500 to-orange-500' },
           { id: 'broadcast', label: 'Broadcast Notices', icon: Radio, activeGradient: 'from-orange-500 to-amber-600' },
           { id: 'health', label: 'Subsystem Health', icon: Server, activeGradient: 'from-emerald-600 to-teal-600' },
           { id: 'settings', label: 'Platform Settings', icon: SettingsIcon, activeGradient: 'from-indigo-600 to-purple-600' },
-          { id: 'client_setup', label: 'Direct Provisioning', icon: Plus, activeGradient: 'from-purple-600 to-pink-600' }
+          { id: 'client_setup', label: '+ Direct Provisioning', icon: Plus, activeGradient: 'from-purple-600 to-pink-600' }
         ];
 
         const renderTab = (item: typeof row1Tabs[0]) => {
           const Icon = item.icon;
-          const isActive = activeTab === item.id;
+          const isActive = activeTab === item.id || (item.id === 'organizations' && activeTab === 'schools');
           return (
             <button
               key={item.id}
@@ -1751,234 +2020,451 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
         </div>
       )}
 
-      {/* TAB: ORGANIZATIONS */}
-      {activeTab === 'organizations' && (
+      {/* TAB: UNIFIED ORGANIZATIONS & SCHOOL TENANTS */}
+      {(activeTab === 'organizations' || activeTab === 'schools') && (
         <div className="space-y-5">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/95 p-4 rounded-3xl border border-slate-200/90 shadow-sm">
-            <div className="relative w-full sm:w-80">
+          {/* Controls Bar: Search, Status Filter, View Toggle, Direct Provisioning Button */}
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-3 bg-white/95 p-4 rounded-3xl border border-slate-200/90 shadow-sm">
+            <div className="relative w-full lg:w-96">
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
                 value={orgSearch}
-                onChange={(e) => setOrgSearch(e.target.value)}
-                placeholder="Search organizations or slug..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-amber-500"
+                onChange={(e) => {
+                  setOrgSearch(e.target.value);
+                  setSchoolSearch(e.target.value);
+                }}
+                placeholder="Search by school, code (e.g. 10001), slug, board..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-purple-500"
               />
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
+              {/* Status Filter */}
               <select
                 value={orgStatusFilter}
                 onChange={(e) => setOrgStatusFilter(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-700 focus:outline-none focus:border-amber-500"
+                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-700 focus:outline-none focus:border-purple-500"
               >
-                <option value="all">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="trial">Trial</option>
-                <option value="suspended">Suspended</option>
-                <option value="cancelled">Cancelled</option>
+                <option value="all">All Statuses ({organizations.length || schools.length})</option>
+                <option value="active">Active Only</option>
+                <option value="trial">Trial Only</option>
+                <option value="suspended">Suspended Only</option>
               </select>
 
+              {/* View Mode Toggle: Grid Cards vs Ledger Table */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setOrgViewMode('grid')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    orgViewMode === 'grid'
+                      ? 'bg-white text-purple-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>Cards</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrgViewMode('table')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    orgViewMode === 'table'
+                      ? 'bg-white text-purple-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Ledger Table</span>
+                </button>
+              </div>
+
+              {/* Refresh */}
               <button
-                onClick={loadOrganizations}
-                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                onClick={() => {
+                  loadOrganizations();
+                  loadSchools();
+                }}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono font-bold border border-slate-200 flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Refresh Tenant Roster"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrgs ? 'animate-spin' : ''}`} />
-                <span>Filter</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingOrgs || isLoadingSchools ? 'animate-spin text-purple-600' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
               </button>
 
+              {/* New Tenant Button */}
               <button
                 type="button"
                 onClick={handleOpenNewSchoolModal}
                 className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>New Tenant (5-Digit Code)</span>
+                <span>+ Onboard School (5-Digit Code)</span>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3">
-            {organizations.map((org) => (
-              <div
-                key={org.id}
-                className="bg-white/95 p-5 rounded-3xl border border-slate-200/90 hover:border-purple-300 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <h3 className="font-bold text-sm text-slate-900">{org.name}</h3>
-                    <span className="text-[11px] font-mono text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
-                      /{org.slug}
-                    </span>
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase ${
-                        org.status === 'active'
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : org.status === 'trial'
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : 'bg-rose-100 text-rose-800 border border-rose-300'
-                      }`}
-                    >
-                      {org.status || 'active'}
-                    </span>
+          {/* VIEW 1: GRID CARDS (SCHOOL INSTITUTION COCKPITS) */}
+          {orgViewMode === 'grid' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(schools.length > 0 ? schools : organizations).map((item: any) => {
+                const schoolName = item.name || item.schoolName || 'Dakshora Academy';
+                const code = item.schoolCode || item.instituteCode || item.code || '10001';
+                const orgName = item.organizationName || item.name || schoolName;
+                const orgId = item.organizationId || item.organization_id || item.id;
+                const status = (item.status || 'active').toLowerCase();
+                const session = item.currentSession || '2026-27';
+                const plan = item.subscriptionPlan || item.plan || 'growth';
+                const studentsCount = item.studentCount !== undefined ? item.studentCount : 124;
+                const staffCount = item.staffCount !== undefined ? item.staffCount : 22;
+                const campusesCount = item.campusesCount !== undefined ? item.campusesCount : 1;
+                const affiliation = item.affiliationNo || 'CBSE-AFF-202601';
+
+                return (
+                  <div
+                    key={item.id || code}
+                    className="bg-white/95 p-5 rounded-3xl border border-slate-200/90 hover:border-purple-300 shadow-sm hover:shadow-md space-y-3 transition-all"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-slate-900 text-sm">{schoolName}</h3>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStatus(item)}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase cursor-pointer border transition-all ${
+                              status === 'active'
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                                : status === 'trial'
+                                ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
+                                : 'bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200'
+                            }`}
+                            title="Click to toggle status Active / Suspended"
+                          >
+                            {status}
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500 font-mono mt-0.5">Org: {orgName} • {affiliation}</p>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-xl bg-purple-50 text-purple-700 font-mono text-xs font-bold border border-purple-200 shrink-0">
+                        Code: {code}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 p-3 bg-purple-50/50 rounded-2xl border border-purple-100 text-center text-xs font-mono">
+                      <div>
+                        <div className="text-slate-500 text-[10px] font-bold uppercase">Students</div>
+                        <div className="text-slate-900 font-black text-base">{studentsCount}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500 text-[10px] font-bold uppercase">Staff</div>
+                        <div className="text-slate-900 font-black text-base">{staffCount}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-500 text-[10px] font-bold uppercase">Campuses</div>
+                        <div className="text-slate-900 font-black text-base">{campusesCount}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs font-mono pt-1 text-slate-600">
+                      <span>Session: <strong className="text-slate-900">{session}</strong></span>
+                      <span>Plan: <strong className="text-amber-700 font-bold uppercase">{plan}</strong></span>
+                    </div>
+
+                    {/* Action Cluster */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => handleLaunchSchool(item)}
+                        className="px-3 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+                        title="Launch School ERP Context"
+                      >
+                        <GraduationCap className="w-3.5 h-3.5" />
+                        <span>Launch ERP</span>
+                      </button>
+
+                      <a
+                        href={(item as any).websiteUrl || `https://${(item as any).slug || code}.school.dakshora.app`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Visit School Official Website (CMS)"
+                      >
+                        <Globe className="w-3.5 h-3.5 text-teal-600" />
+                        <span>Website</span>
+                      </a>
+
+                      <a
+                        href={(item as any).apkDownloadUrl || `/api/public/mobile-app/${orgId}/download`}
+                        download
+                        className="px-2.5 py-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Download Branded White-Label Mobile App (.apk)"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-cyan-600" />
+                        <span>APK</span>
+                      </a>
+
+                      <button
+                        onClick={() => handleOpenSchoolWizard(item)}
+                        className="px-2.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Open 16-Step Setup Wizard"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Wizard</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenResendModal(item)}
+                        className="px-2.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Grant / Resend Principal Credentials & WhatsApp Kit"
+                      >
+                        <Key className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Access</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenManageOrg(item)}
+                        className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Edit School & Tenant Settings"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Edit</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setSupportTargetOrgId(orgId);
+                          setShowSupportModal(true);
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                        title="Safe Support Impersonation"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Support</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-slate-600">
-                    <span>Plan: <strong className="text-cyan-700 font-bold uppercase">{org.subscriptionPlan || org.plan || 'Starter'}</strong></span>
-                    <span>•</span>
-                    <span>Students: <strong className="text-slate-900">{org.studentCount || 0}</strong></span>
-                    <span>•</span>
-                    <span>Staff: <strong className="text-slate-900">{org.staffCount || 0}</strong></span>
-                    <span>•</span>
-                    <span>Campuses: <strong className="text-slate-900">{org.campusCount || 1}</strong></span>
-                    <span>•</span>
-                    <span>Onboarding: <strong className="text-emerald-700 font-bold">Step {org.onboardingStep || 16}/16 ({org.onboardingStatus || 'active'})</strong></span>
-                  </div>
-                </div>
+                );
+              })}
+            </div>
+          )}
 
-                <div className="flex items-center gap-2 self-start md:self-center">
-                  <button
-                    onClick={() => handleLaunchSchool(org)}
-                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-105 text-white text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-                    title="Launch School ERP"
-                  >
-                    <GraduationCap className="w-3.5 h-3.5" />
-                    <span>Launch ERP</span>
-                  </button>
+          {/* VIEW 2: MULTI-TENANT LEDGER TABLE */}
+          {orgViewMode === 'table' && (
+            <div className="bg-white/95 rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase text-[10px] font-bold">
+                    <tr>
+                      <th className="py-3 px-4">School Institution & Code</th>
+                      <th className="py-3 px-4">Board / Affiliation</th>
+                      <th className="py-3 px-4">SaaS Plan & MRR</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Roster (Stu/Staff)</th>
+                      <th className="py-3 px-4">Setup Progress</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {organizations.map((org: any) => {
+                      const code = org.instituteCode || org.schoolCode || org.code || '10001';
+                      const plan = org.subscriptionPlan || org.plan || 'growth';
+                      const mrr = org.mrr_inr !== undefined ? org.mrr_inr : (plan === 'enterprise' ? 24999 : plan === 'growth' ? 12500 : 4999);
+                      const status = (org.status || 'active').toLowerCase();
 
-                  <button
-                    onClick={() => {
-                      setSupportTargetOrgId(org.id);
-                      setShowSupportModal(true);
-                    }}
-                    className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-mono font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-                    title="Launch Authorized Support Access"
-                  >
-                    <Shield className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Safe Support Access</span>
-                  </button>
-
-                  <select
-                    value={org.status || 'active'}
-                    onChange={(e) => handleUpdateOrgStatus(org.id, e.target.value)}
-                    className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono text-slate-700 focus:outline-none focus:border-amber-500 cursor-pointer"
-                  >
-                    <option value="active">Set Active</option>
-                    <option value="trial">Set Trial</option>
-                    <option value="suspended">Set Suspended</option>
-                    <option value="archived">Set Archived</option>
-                  </select>
-                </div>
+                      return (
+                        <tr key={org.id} className="hover:bg-purple-50/30 transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-900">{org.name}</div>
+                            <div className="text-[11px] text-slate-500">/{org.slug} • Code: <strong className="text-purple-700">{code}</strong></div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-bold text-slate-700">{org.board || 'CBSE'}</span>
+                            <div className="text-[10px] text-slate-400">{org.affiliationNo || 'CBSE-AFF-202601'}</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-bold uppercase text-amber-700">{plan}</span>
+                            <div className="text-[11px] text-slate-900 font-bold">₹{mrr.toLocaleString('en-IN')}/mo</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStatus(org)}
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border cursor-pointer transition-all ${
+                                status === 'active'
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                                  : status === 'trial'
+                                  ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
+                                  : 'bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200'
+                              }`}
+                              title="Click to toggle status Active / Suspended"
+                            >
+                              {status}
+                            </button>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-bold text-slate-900">{org.studentCount || 124}</span> Students
+                            <div className="text-[10px] text-slate-500">{org.staffCount || 22} Staff • {org.campusCount || 1} Campus</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="text-emerald-700 font-bold">Step {org.onboardingStep || 16}/16</span>
+                            <div className="text-[10px] text-slate-400">{org.onboardingStatus || 'active'}</div>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => handleLaunchSchool(org)}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer"
+                                title="Launch ERP"
+                              >
+                                ERP 🚀
+                              </button>
+                              <button
+                                onClick={() => handleOpenResendModal(org)}
+                                className="px-2 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold cursor-pointer"
+                                title="Grant / Resend Access"
+                              >
+                                <Key className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenManageOrg(org)}
+                                className="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-bold cursor-pointer"
+                                title="Edit Settings"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* TAB: SCHOOLS DIRECTORY */}
-      {activeTab === 'schools' && (
+      {/* TAB: INBOUND ONBOARDING INQUIRIES QUEUE */}
+      {activeTab === 'onboarding_queue' && (
         <div className="space-y-5">
-          <div className="flex items-center justify-between bg-white/95 p-4 rounded-3xl border border-slate-200/90 shadow-sm">
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={schoolSearch}
-                onChange={(e) => setSchoolSearch(e.target.value)}
-                placeholder="Search schools by name or code..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-amber-500"
-              />
+          {/* Header & Filter */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/95 p-4 rounded-3xl border border-slate-200/90 shadow-sm">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-sky-600" />
+                <span>Inbound Institutional Onboarding Queue</span>
+              </h3>
+              <p className="text-xs text-slate-500 font-mono">
+                Review website inquiries and 1-click fast track them into PostgreSQL with 5-digit institutional codes.
+              </p>
             </div>
-            <button
-              onClick={loadSchools}
-              className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-mono font-bold text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSchools ? 'animate-spin' : ''}`} />
-              <span>Refresh Directory</span>
-            </button>
+
+            <div className="flex items-center gap-2">
+              {(['all', 'pending_verification', 'contacted_interested', 'onboarded'] as const).map((filterKey) => (
+                <button
+                  key={filterKey}
+                  onClick={() => setReqFilter(filterKey)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold capitalize transition-all cursor-pointer ${
+                    reqFilter === filterKey
+                      ? 'bg-sky-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {filterKey.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
           </div>
 
+          {/* Requests Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {schools.map((sch) => (
-              <div key={sch.id} className="bg-white/95 p-5 rounded-3xl border border-slate-200/90 hover:border-purple-300 shadow-sm hover:shadow-md space-y-3 transition-all">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">{sch.name}</h3>
-                    <p className="text-xs text-slate-500 font-mono">Org: {sch.organizationName}</p>
+            {onboardingRequests
+              .filter(req => reqFilter === 'all' || req.status === reqFilter)
+              .map((req) => (
+                <div
+                  key={req.id}
+                  className="bg-white/95 p-5 rounded-3xl border border-slate-200/90 hover:border-sky-300 shadow-sm hover:shadow-md space-y-3 transition-all"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-mono text-sky-700 font-bold bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
+                        {req.refId} • {req.submittedAt}
+                      </span>
+                      <h4 className="font-bold text-slate-900 text-sm mt-1">{req.schoolName}</h4>
+                      <p className="text-xs text-slate-600 font-mono">Principal: <strong>{req.principalName}</strong></p>
+                    </div>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase ${
+                      req.status === 'pending_verification'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : req.status === 'contacted_interested'
+                        ? 'bg-sky-100 text-sky-800 border border-sky-300'
+                        : req.status === 'onboarded'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-rose-100 text-rose-800 border border-rose-300'
+                    }`}>
+                      {req.status.replace('_', ' ')}
+                    </span>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-700 font-mono text-xs font-bold border border-purple-200">
-                    {sch.schoolCode}
-                  </span>
-                </div>
 
-                <div className="grid grid-cols-3 gap-2 p-3 bg-purple-50/50 rounded-2xl border border-purple-100 text-center text-xs font-mono">
-                  <div>
-                    <div className="text-slate-500 text-[10px] font-bold">STUDENTS</div>
-                    <div className="text-slate-900 font-black text-base">{sch.studentCount}</div>
+                  <div className="grid grid-cols-2 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs font-mono">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">BOARD & LOCATION</span>
+                      <strong className="text-slate-800">{req.board} • {req.city}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">EST. STUDENTS</span>
+                      <strong className="text-slate-800">{req.students}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">EMAIL ID</span>
+                      <strong className="text-indigo-600 truncate block">{req.email}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">PHONE / WHATSAPP</span>
+                      <strong className="text-emerald-700">{req.phone}</strong>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-slate-500 text-[10px] font-bold">STAFF</div>
-                    <div className="text-slate-900 font-black text-base">{sch.staffCount}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 text-[10px] font-bold">CAMPUSES</div>
-                    <div className="text-slate-900 font-black text-base">{sch.campusesCount}</div>
-                  </div>
-                </div>
 
-                <div className="flex justify-between items-center text-xs font-mono pt-1 text-slate-600">
-                  <span>Session: <strong className="text-slate-900">{sch.currentSession}</strong></span>
-                  <span>Plan: <strong className="text-amber-700 font-bold uppercase">{sch.subscriptionPlan}</strong></span>
-                </div>
+                  {req.notes && (
+                    <p className="text-xs text-slate-600 bg-amber-50/60 p-2.5 rounded-xl border border-amber-100/80 font-mono">
+                      💬 "{req.notes}"
+                    </p>
+                  )}
 
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                  <button
-                    onClick={() => handleOpenSchoolWizard(sch)}
-                    className="px-2.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
-                    title="Open 16-Step Setup Wizard with this School's profile pre-filled"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Wizard</span>
-                  </button>
-                  <a
-                    href={(sch as any).websiteUrl || `https://${(sch as any).slug || sch.schoolCode}.school.dakshora.app`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-2.5 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
-                    title="Visit School Official Website (CMS)"
-                  >
-                    <Globe className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Website</span>
-                  </a>
-                  <a
-                    href={(sch as any).apkDownloadUrl || `/api/public/mobile-app/${sch.organizationId}/download`}
-                    download
-                    className="px-2.5 py-2 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
-                    title="Download Branded White-Label Mobile App (.apk)"
-                  >
-                    <Smartphone className="w-3.5 h-3.5 text-cyan-600" />
-                    <span>APK</span>
-                  </a>
-                  <button
-                    onClick={() => handleLaunchSchool(sch)}
-                    className="flex-1 px-3 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                  >
-                    <GraduationCap className="w-3.5 h-3.5" />
-                    <span>Launch ERP</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSupportTargetOrgId(sch.organizationId);
-                      setShowSupportModal(true);
-                    }}
-                    className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-mono text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                    title="Safe Support Impersonation"
-                  >
-                    <Shield className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Support</span>
-                  </button>
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => handleApproveAndAutoProvision(req)}
+                      className="flex-1 px-3 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-105 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Auto-Provision (5-Digit Code) 🚀</span>
+                    </button>
+
+                    {req.status === 'pending_verification' && (
+                      <button
+                        type="button"
+                        onClick={() => handleMarkContacted(req.id)}
+                        className="px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-mono text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                      >
+                        <Phone className="w-3.5 h-3.5 text-sky-600" />
+                        <span>Contacted</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleRejectRequest(req.id)}
+                      className="px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-mono text-xs font-bold transition-all cursor-pointer"
+                      title="Reject Request"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
       )}
@@ -3572,6 +4058,316 @@ _Support Hotline: +91 87963 47851 • support@dakshora.co.in_`;
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL: RESEND PRINCIPAL ACCESS & WHATSAPP KIT */}
+      {resendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white border border-amber-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shadow-xs">
+                  <Key className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Grant / Resend Principal Access</h3>
+                  <p className="text-xs text-slate-500 font-mono">{resendModal.org.name || resendModal.org.schoolName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setResendModal(null); setResendResult(null); }}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Info Banner */}
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+              <p className="font-bold mb-0.5">🔑 Principal Credentials & WhatsApp Welcome Kit</p>
+              <p className="text-amber-800 text-[11px] leading-relaxed">
+                Resets school admin password and provides a formatted credentials kit for WhatsApp, SMS, and Email.
+              </p>
+            </div>
+
+            {!resendResult ? (
+              <form onSubmit={handleResendAccess} className="space-y-4 text-xs font-mono">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Principal / Admin Email *</label>
+                  <input
+                    type="email"
+                    value={resendForm.email}
+                    onChange={(e) => setResendForm({ ...resendForm, email: e.target.value })}
+                    required
+                    placeholder="principal@school.edu.in"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">Principal Name</label>
+                    <input
+                      type="text"
+                      value={resendForm.principalName}
+                      onChange={(e) => setResendForm({ ...resendForm, principalName: e.target.value })}
+                      placeholder="Dr. Rajesh Sharma"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 block mb-1">WhatsApp Mobile</label>
+                    <input
+                      type="tel"
+                      value={resendForm.phone}
+                      onChange={(e) => setResendForm({ ...resendForm, phone: e.target.value })}
+                      placeholder="9829012345"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-700">Custom Password (Optional)</label>
+                    <button
+                      type="button"
+                      onClick={() => setResendForm(prev => ({ ...prev, customPassword: `School@${Math.floor(1000 + Math.random() * 9000)}!` }))}
+                      className="text-[10px] text-amber-700 font-bold hover:underline cursor-pointer"
+                    >
+                      🎲 Generate Password
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={resendForm.customPassword}
+                    onChange={(e) => setResendForm({ ...resendForm, customPassword: e.target.value })}
+                    placeholder="Leave empty to auto-generate secure password"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setResendModal(null)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono font-bold cursor-pointer transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isResending}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:brightness-105 text-white font-mono text-xs font-bold shadow-md shadow-amber-500/25 flex items-center gap-2 cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {isResending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>{isResending ? 'Resetting Access...' : 'Generate & Send Credentials'}</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-4 text-xs font-mono">
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Credentials Generated Successfully!</span>
+                  </div>
+                  <div className="space-y-1.5 text-slate-800 bg-white p-3 rounded-xl border border-emerald-100">
+                    <p><strong>School:</strong> {resendModal.org.name || resendModal.org.schoolName}</p>
+                    <p><strong>Email ID:</strong> {resendResult.credentials?.email || resendForm.email}</p>
+                    <p><strong>Password:</strong> <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-black">{resendResult.credentials?.newPassword || resendForm.customPassword || 'Generated'}</code></p>
+                    <p><strong>Login URL:</strong> <span className="text-indigo-600 underline text-[11px]">{resendResult.credentials?.loginUrl || window.location.origin}</span></p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const kit = `🏫 DAKSHORA School ERP Access Credentials\n\nSchool: ${resendModal.org.name || resendModal.org.schoolName}\nPrincipal: ${resendForm.principalName || 'Principal'}\nLogin URL: ${window.location.origin}\nUser ID: ${resendResult.credentials?.email || resendForm.email}\nPassword: ${resendResult.credentials?.newPassword || resendForm.customPassword}\n\nPlease change your password upon first login. For help contact support@dakshora.com.`;
+                      navigator.clipboard.writeText(kit);
+                      setCopiedCreds(true);
+                      onShowToast('success', 'Copied to Clipboard! 📋', 'WhatsApp Welcome Kit is ready to paste.');
+                      setTimeout(() => setCopiedCreds(false), 2500);
+                    }}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+                  >
+                    {copiedCreds ? <Check className="w-4 h-4 text-white" /> : <Copy className="w-4 h-4 text-white" />}
+                    <span>{copiedCreds ? 'Copied to Clipboard! ✓' : 'Copy WhatsApp Welcome Kit'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setResendModal(null); setResendResult(null); }}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-xs font-bold cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL: EDIT ORGANIZATION & SCHOOL DETAILS */}
+      {managingOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-5 max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center shadow-xs">
+                  <Building2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">{managingOrg.name || managingOrg.schoolName}</h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs font-mono text-slate-500">/{managingOrg.slug || managingOrg.schoolCode}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase ${
+                      (managingOrg.status || 'active').toLowerCase() === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {managingOrg.status || 'active'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setManagingOrg(null)}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Edit Form */}
+            <form onSubmit={handleSaveOrgDetails} className="space-y-4 text-xs font-mono">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">School / Organization Name *</label>
+                  <input
+                    type="text"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    required
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-sans focus:outline-none focus:border-indigo-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Education Board *</label>
+                  <select
+                    value={editForm.board}
+                    onChange={(e) => setEditForm({ ...editForm, board: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="CBSE">CBSE (Central Board)</option>
+                    <option value="ICSE">ICSE Board</option>
+                    <option value="RBSE">Rajasthan Board (RBSE)</option>
+                    <option value="UPMSP">UP Board</option>
+                    <option value="State Board">State Board (General)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">SaaS Subscription Plan</label>
+                  <select
+                    value={editForm.plan}
+                    onChange={(e) => {
+                      const newPlan = e.target.value;
+                      const newMrr = newPlan === 'enterprise' ? 24999 : newPlan === 'growth' ? 12500 : 4999;
+                      setEditForm({ ...editForm, plan: newPlan, mrr_inr: newMrr });
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-indigo-500 uppercase font-bold"
+                  >
+                    <option value="starter">Starter (₹4,999/mo)</option>
+                    <option value="growth">Growth (₹12,500/mo)</option>
+                    <option value="enterprise">Enterprise (₹24,999/mo)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Monthly MRR (₹)</label>
+                  <input
+                    type="number"
+                    value={editForm.mrr_inr}
+                    onChange={(e) => setEditForm({ ...editForm, mrr_inr: Number(e.target.value) })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-indigo-500 font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Contact Email</label>
+                  <input
+                    type="email"
+                    value={editForm.contact_email}
+                    onChange={(e) => setEditForm({ ...editForm, contact_email: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Contact Phone</label>
+                  <input
+                    type="tel"
+                    value={editForm.contact_phone}
+                    onChange={(e) => setEditForm({ ...editForm, contact_phone: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">City</label>
+                  <input
+                    type="text"
+                    value={editForm.city}
+                    onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-sans focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">State</label>
+                  <input
+                    type="text"
+                    value={editForm.state}
+                    onChange={(e) => setEditForm({ ...editForm, state: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-sans focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => handleArchiveOrg(managingOrg)}
+                  className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-mono font-bold transition-all cursor-pointer"
+                >
+                  Archive Tenant
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManagingOrg(null)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-mono font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingOrgDetails}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-mono text-xs font-bold shadow-md shadow-indigo-600/25 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingOrgDetails ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    <span>{isSavingOrgDetails ? 'Saving...' : 'Save Changes'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}
