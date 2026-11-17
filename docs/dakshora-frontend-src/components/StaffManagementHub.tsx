@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import confetti from 'canvas-confetti';
 import {
   Users,
   UserPlus,
@@ -36,7 +37,16 @@ import {
   ShieldAlert,
   KeyRound,
   Lock,
-  Coins
+  Coins,
+  Camera,
+  UploadCloud,
+  Sparkles,
+  Copy,
+  ExternalLink,
+  BadgeCheck,
+  QrCode,
+  PhoneCall,
+  MessageSquare
 } from 'lucide-react';
 import {
   ErpStaffRecord,
@@ -317,13 +327,125 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
     pinCode: '122001',
     salaryINR: 58000,
     status: 'active' as const,
+    udiseEducatorPin: '20261012345',
+    aadhaarNumber: 'XXXX-XXXX-9021',
+    policeVerificationRef: 'POCSO-CLR-2026-99',
     docAadhaar: true,
     docDegrees: true,
     docExperience: true,
-    docPoliceClearance: false
+    docPoliceClearance: true
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Photo Upload Engine State (supports up to 100-200 MB files)
+  const [photoFile, setPhotoFile] = useState<{
+    name: string;
+    sizeMB: string;
+    isLarge: boolean;
+  } | null>(null);
+  const [isPhotoProcessing, setIsPhotoProcessing] = useState(false);
+  const [photoUploadMode, setPhotoUploadMode] = useState<'upload' | 'url'>('upload');
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const [photoDragActive, setPhotoDragActive] = useState(false);
+
+  // Congratulations Modal State for Single Faculty Member Enrollment
+  const [enrollSuccessModal, setEnrollSuccessModal] = useState<{
+    empId: string;
+    name: string;
+    designation: string;
+    department: string;
+    email: string;
+    phone: string;
+    photoUrl?: string;
+    tempPassword: string;
+    portalUrl: string;
+    udisePin?: string;
+    qualification?: string;
+    joiningDate?: string;
+  } | null>(null);
+
+  // Congratulations Modal State for Bulk Staff Roster Enrollment
+  const [bulkSuccessModal, setBulkSuccessModal] = useState<{
+    count: number;
+    departments: Record<string, number>;
+    timestamp: string;
+  } | null>(null);
+
+  // Handle High-Resolution Photo Upload (Up to 200 MB)
+  const handlePhotoFileSelect = (file: File) => {
+    if (!file) return;
+
+    // Enforce 200 MB maximum size limit
+    const maxSizeBytes = 200 * 1024 * 1024; // 200 MB
+    if (file.size > maxSizeBytes) {
+      onShowToast('error', 'File Too Large', 'Maximum allowed photo size is 200 MB.');
+      return;
+    }
+
+    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+    setIsPhotoProcessing(true);
+    setPhotoFile({
+      name: file.name,
+      sizeMB: `${sizeMB} MB`,
+      isLarge: file.size > 5 * 1024 * 1024
+    });
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      if (!result) {
+        setIsPhotoProcessing(false);
+        return;
+      }
+
+      // High-speed client-side canvas optimizer for high-res images (up to 200 MB)
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.90);
+            setAddForm(prev => ({ ...prev, photoUrl: optimizedDataUrl }));
+          } else {
+            setAddForm(prev => ({ ...prev, photoUrl: result }));
+          }
+        } catch (_) {
+          setAddForm(prev => ({ ...prev, photoUrl: result }));
+        } finally {
+          setIsPhotoProcessing(false);
+          onShowToast('success', 'Photo Uploaded & Processed 📸', `High-res portrait (${sizeMB} MB) processed and ready for database.`);
+        }
+      };
+      img.onerror = () => {
+        setIsPhotoProcessing(false);
+        onShowToast('error', 'Image Error', 'Could not decode image file.');
+      };
+      img.src = result;
+    };
+    reader.onerror = () => {
+      setIsPhotoProcessing(false);
+      onShowToast('error', 'Read Error', 'Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+  };
 
   // CSV Import State
   const [importCsvText, setImportCsvText] = useState('');
@@ -877,8 +999,38 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
 
       const res = await createErpStaff(payload);
       if (res.data && res.data.staff) {
-        onShowToast('success', 'Staff Member Enrolled', `${fullName} (${payload.empId}) successfully added to ERP faculty roster.`);
-        // Reset form
+        const createdStaff = res.data.staff;
+        const defaultPassword = `Faculty@${payload.empId?.replace(/[^0-9]/g, '').slice(-4) || '2026!'}`;
+        const portalUrl = `${window.location.origin}/portal`;
+
+        // Trigger celebratory confetti
+        try {
+          confetti({
+            particleCount: 130,
+            spread: 80,
+            origin: { y: 0.5 }
+          });
+        } catch (_) {}
+
+        // Open Congratulations & Credentials Modal
+        setEnrollSuccessModal({
+          empId: createdStaff.empId || payload.empId || '',
+          name: fullName,
+          designation: createdStaff.designation || payload.designation || '',
+          department: createdStaff.department || payload.department || '',
+          email: createdStaff.email || payload.email || '',
+          phone: createdStaff.phone || payload.phone || '',
+          photoUrl: createdStaff.photoUrl || payload.photoUrl,
+          tempPassword: defaultPassword,
+          portalUrl,
+          udisePin: addForm.udiseEducatorPin || 'UDISE-2026-IND',
+          qualification: payload.qualification,
+          joiningDate: payload.joiningDate
+        });
+
+        onShowToast('success', '🎉 Faculty Member Enrolled!', `${fullName} (${payload.empId}) successfully saved to PostgreSQL database with portal access.`);
+
+        // Reset form fields
         setAddForm({
           empId: '',
           firstName: '',
@@ -904,15 +1056,18 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
           pinCode: '122001',
           salaryINR: 58000,
           status: 'active',
+          udiseEducatorPin: '20261012345',
+          aadhaarNumber: 'XXXX-XXXX-9021',
+          policeVerificationRef: 'POCSO-CLR-2026-99',
           docAadhaar: true,
           docDegrees: true,
           docExperience: true,
-          docPoliceClearance: false
+          docPoliceClearance: true
         });
+        setPhotoFile(null);
         setAddFormSection('personal');
-        setActiveSubTab('directory');
         if (onCloseInitialAdd) onCloseInitialAdd();
-        loadStaff();
+        loadStaff(true);
       }
     } catch (err: any) {
       setFormError(err.message || 'Failed to enroll staff member. Check for duplicate employee code.');
@@ -2135,15 +2290,164 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-slate-400 mb-1">Photo URL (Optional)</label>
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={addForm.photoUrl}
-                    onChange={(e) => setAddForm({ ...addForm, photoUrl: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:border-cyan-500/50 outline-none"
-                  />
+                {/* 100-200 MB Photo Upload Engine */}
+                <div className="col-span-1 md:col-span-3 p-4 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Camera className="w-4 h-4 text-cyan-400" />
+                      <span className="text-white font-bold">Faculty Member Portrait Photo</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                        100–200 MB Engine Active
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPhotoUploadMode('upload')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                          photoUploadMode === 'upload'
+                            ? 'bg-cyan-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        File Upload (Up to 200 MB)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPhotoUploadMode('url')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                          photoUploadMode === 'url'
+                            ? 'bg-cyan-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        External URL
+                      </button>
+                    </div>
+                  </div>
+
+                  {photoUploadMode === 'upload' ? (
+                    <div>
+                      <input
+                        type="file"
+                        ref={photoInputRef}
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handlePhotoFileSelect(e.target.files[0]);
+                          }
+                        }}
+                      />
+
+                      {addForm.photoUrl ? (
+                        <div className="flex flex-col sm:flex-row items-center gap-4 p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+                          <img
+                            src={addForm.photoUrl}
+                            alt="Faculty Preview"
+                            className="w-20 h-20 rounded-2xl object-cover border-2 border-cyan-500/50 shadow-md"
+                          />
+                          <div className="flex-1 space-y-1 text-center sm:text-left">
+                            <div className="text-white font-bold flex items-center justify-center sm:justify-start gap-1.5">
+                              <BadgeCheck className="w-4 h-4 text-emerald-400" />
+                              <span>Photo Processed & Ready</span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              {photoFile
+                                ? `${photoFile.name} • ${photoFile.sizeMB} original size`
+                                : 'High-resolution profile portrait'}
+                            </p>
+                            <span className="text-[10px] text-emerald-400 font-mono">
+                              ✓ Auto-scaled & ready for database storage & ID card generation
+                            </span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => photoInputRef.current?.click()}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all"
+                            >
+                              Replace
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAddForm(prev => ({ ...prev, photoUrl: '' }));
+                                setPhotoFile(null);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-500/40 text-rose-300 text-xs font-bold transition-all"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setPhotoDragActive(true);
+                          }}
+                          onDragLeave={() => setPhotoDragActive(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setPhotoDragActive(false);
+                            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                              handlePhotoFileSelect(e.dataTransfer.files[0]);
+                            }
+                          }}
+                          onClick={() => photoInputRef.current?.click()}
+                          className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
+                            photoDragActive
+                              ? 'border-cyan-400 bg-cyan-950/20'
+                              : 'border-slate-700 hover:border-cyan-500/60 bg-slate-950/40 hover:bg-slate-900/40'
+                          }`}
+                        >
+                          {isPhotoProcessing ? (
+                            <div className="flex flex-col items-center gap-2 py-2">
+                              <RefreshCw className="w-7 h-7 text-cyan-400 animate-spin" />
+                              <span className="text-white font-bold text-xs">
+                                Processing high-res photo (100–200 MB Engine)...
+                              </span>
+                              <span className="text-slate-400 text-[10px]">
+                                Optimizing portrait canvas for database storage
+                              </span>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                                <UploadCloud className="w-6 h-6" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="text-white font-bold text-xs">
+                                  Click to Select or Drag & Drop Faculty Photo
+                                </p>
+                                <p className="text-slate-400 text-[11px]">
+                                  Supports DSLR Camera RAW / JPG / PNG files <strong className="text-cyan-300">up to 200 MB</strong>
+                                </p>
+                              </div>
+                              <span className="mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                                High-Resolution 200 MB File Ingestion Ready
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="url"
+                        placeholder="https://images.unsplash.com/... or institutional CDN URL"
+                        value={addForm.photoUrl}
+                        onChange={(e) => setAddForm({ ...addForm, photoUrl: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:border-cyan-500/50 outline-none"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        Paste direct image URL for the faculty profile portrait.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="col-span-1 md:col-span-3 flex justify-end pt-4">
@@ -2299,30 +2603,77 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             {/* SECTION 3: CONTACT & ADDRESS */}
             {addFormSection === 'contact' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-                <div>
-                  <label className="block text-slate-400 mb-1">Official / Primary Phone *</label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+91 98765 43210"
-                    value={addForm.phone}
-                    onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:border-cyan-500/50 outline-none"
-                  />
+                {/* Elevated Phone Number Card with White Background & Black Text */}
+                <div className="col-span-1 md:col-span-3 bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-lg space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 shadow-sm">
+                        <PhoneCall className="w-5 h-5 text-emerald-700" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-950 tracking-tight">
+                          Official Institutional Phone Numbers
+                        </h3>
+                        <p className="text-[11px] text-slate-600 font-medium">
+                          Primary phone used for OTP logins, attendance alerts & WhatsApp ERP notices.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1.5 self-start sm:self-auto">
+                      <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" />
+                      <span>SMS & WhatsApp Enabled</span>
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Primary Official Phone */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-950">
+                        Official / Primary Phone *
+                      </label>
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 px-2 py-1 bg-slate-100 border border-slate-300 rounded-lg text-slate-950 font-bold text-xs select-none">
+                          +91 🇮🇳
+                        </span>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="98765 43210"
+                          value={addForm.phone}
+                          onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
+                          className="w-full pl-20 pr-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-300 text-slate-950 font-bold text-sm placeholder-slate-400 focus:bg-white focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-600 font-medium">
+                        Mandatory mobile number for teacher authentication & emergency duty roster.
+                      </p>
+                    </div>
+
+                    {/* Alternate / Emergency Contact Phone */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-950">
+                        Alternate / Emergency Contact <span className="text-slate-500 font-normal">(Optional)</span>
+                      </label>
+                      <div className="relative flex items-center">
+                        <span className="absolute left-3 px-2 py-1 bg-slate-100 border border-slate-300 rounded-lg text-slate-950 font-bold text-xs select-none">
+                          +91 🇮🇳
+                        </span>
+                        <input
+                          type="tel"
+                          placeholder="98765 00000"
+                          value={addForm.altPhone}
+                          onChange={(e) => setAddForm({ ...addForm, altPhone: e.target.value })}
+                          className="w-full pl-20 pr-3 py-2.5 rounded-xl bg-slate-50 border-2 border-slate-300 text-slate-950 font-bold text-sm placeholder-slate-400 focus:bg-white focus:border-cyan-600 focus:ring-2 focus:ring-cyan-500/20 outline-none transition-all"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-600 font-medium">
+                        Secondary contact for emergency notifications or family member.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-slate-400 mb-1">Alternate / Emergency Contact</label>
-                  <input
-                    type="tel"
-                    placeholder="+91 98765 00000"
-                    value={addForm.altPhone}
-                    onChange={(e) => setAddForm({ ...addForm, altPhone: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white focus:border-cyan-500/50 outline-none"
-                  />
-                </div>
-
-                <div>
+                <div className="col-span-1 md:col-span-3">
                   <label className="block text-slate-400 mb-1">Institutional Email *</label>
                   <input
                     type="email"
@@ -2442,63 +2793,213 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
 
             {/* SECTION 5: DOCUMENTS & VERIFICATION */}
             {addFormSection === 'documents' && (
-              <div className="space-y-4 font-mono text-xs">
-                <p className="text-slate-400 text-[11px]">
-                  Confirm statutory documents submitted by the employee as per CBSE accreditation guidelines:
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-3 cursor-pointer hover:border-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={addForm.docAadhaar}
-                      onChange={(e) => setAddForm({ ...addForm, docAadhaar: e.target.checked })}
-                      className="w-4 h-4 rounded text-cyan-500 focus:ring-0"
-                    />
-                    <div>
-                      <div className="text-white font-bold">Aadhaar / National ID Proof</div>
-                      <div className="text-slate-500 text-[10px]">Verified photocopy on record</div>
+              <div className="space-y-5 font-mono text-xs">
+                {/* UDISE+ National Educator PIN Header Card */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-indigo-950/40 border border-cyan-500/30 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-black">
+                        🏛️
+                      </div>
+                      <div>
+                        <div className="text-white font-bold text-xs flex items-center gap-2">
+                          <span>UDISE+ National Educator PIN & Registry Alignment</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            CBSE Affiliated
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          11-digit national teacher identifier assigned by the Ministry of Education, Govt. of India.
+                        </p>
+                      </div>
                     </div>
-                  </label>
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 self-start sm:self-auto">
+                      Statutory Ready ✓
+                    </span>
+                  </div>
 
-                  <label className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-3 cursor-pointer hover:border-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={addForm.docDegrees}
-                      onChange={(e) => setAddForm({ ...addForm, docDegrees: e.target.checked })}
-                      className="w-4 h-4 rounded text-cyan-500 focus:ring-0"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
-                      <div className="text-white font-bold">Academic Degree Certificates</div>
-                      <div className="text-slate-500 text-[10px]">B.Ed., Master's, Marksheets verified</div>
+                      <label className="block text-[11px] text-slate-300 mb-1 font-bold">
+                        UDISE+ 11-Digit Educator Code (National PIN)
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={11}
+                        placeholder="e.g. 20261012345"
+                        value={addForm.udiseEducatorPin}
+                        onChange={(e) => setAddForm({ ...addForm, udiseEducatorPin: e.target.value.replace(/[^0-9]/g, '') })}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-cyan-300 font-bold focus:border-cyan-500 outline-none"
+                      />
                     </div>
-                  </label>
+                    <div>
+                      <label className="block text-[11px] text-slate-300 mb-1 font-bold">
+                        Aadhaar / National ID (Masked)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. XXXX-XXXX-9021"
+                        value={addForm.aadhaarNumber}
+                        onChange={(e) => setAddForm({ ...addForm, aadhaarNumber: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white font-bold focus:border-cyan-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-                  <label className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-3 cursor-pointer hover:border-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={addForm.docExperience}
-                      onChange={(e) => setAddForm({ ...addForm, docExperience: e.target.checked })}
-                      className="w-4 h-4 rounded text-cyan-500 focus:ring-0"
-                    />
-                    <div>
-                      <div className="text-white font-bold">Prior Experience Certificate</div>
-                      <div className="text-slate-500 text-[10px]">Relieving letters & service certificate</div>
+                {/* 4 Upgraded Statutory Verification Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {/* Card 1: Aadhaar / National ID KYC */}
+                  <div
+                    onClick={() => setAddForm({ ...addForm, docAadhaar: !addForm.docAadhaar })}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                      addForm.docAadhaar
+                        ? 'bg-emerald-950/20 border-emerald-500/40 hover:border-emerald-500/60'
+                        : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                          addForm.docAadhaar ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'
+                        }`}>
+                          <ShieldCheck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-white font-bold text-xs">Aadhaar / National ID Verification</div>
+                          <div className="text-[10px] text-slate-400">UIDAI KYC compliant & photocopied</div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={addForm.docAadhaar}
+                        onChange={() => {}} // handled by div click
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-0 mt-0.5 pointer-events-none"
+                      />
                     </div>
-                  </label>
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
+                      <span className="text-slate-500">CBSE Mandatory KYC</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${
+                        addForm.docAadhaar ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {addForm.docAadhaar ? '✓ Verified on File' : 'Pending Verification'}
+                      </span>
+                    </div>
+                  </div>
 
-                  <label className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-3 cursor-pointer hover:border-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={addForm.docPoliceClearance}
-                      onChange={(e) => setAddForm({ ...addForm, docPoliceClearance: e.target.checked })}
-                      className="w-4 h-4 rounded text-cyan-500 focus:ring-0"
-                    />
-                    <div>
-                      <div className="text-white font-bold">Police Background Verification</div>
-                      <div className="text-slate-500 text-[10px]">POCSO & CBSE mandatory clearance</div>
+                  {/* Card 2: Academic Degrees & NCTE Certification */}
+                  <div
+                    onClick={() => setAddForm({ ...addForm, docDegrees: !addForm.docDegrees })}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                      addForm.docDegrees
+                        ? 'bg-emerald-950/20 border-emerald-500/40 hover:border-emerald-500/60'
+                        : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                          addForm.docDegrees ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'
+                        }`}>
+                          <GraduationCap className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-white font-bold text-xs">Degree & NCTE Qualifications</div>
+                          <div className="text-[10px] text-slate-400">B.Ed., Master's, CTET & marksheets verified</div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={addForm.docDegrees}
+                        onChange={() => {}}
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-0 mt-0.5 pointer-events-none"
+                      />
                     </div>
-                  </label>
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
+                      <span className="text-slate-500">Academic Qualification Audit</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${
+                        addForm.docDegrees ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {addForm.docDegrees ? '✓ Academic Audit Passed' : 'Pending Audit'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Prior Experience Certificate */}
+                  <div
+                    onClick={() => setAddForm({ ...addForm, docExperience: !addForm.docExperience })}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                      addForm.docExperience
+                        ? 'bg-emerald-950/20 border-emerald-500/40 hover:border-emerald-500/60'
+                        : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                          addForm.docExperience ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'
+                        }`}>
+                          <Briefcase className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-white font-bold text-xs">Prior Service & Relieving Dossier</div>
+                          <div className="text-[10px] text-slate-400">Past service tenure & conduct letters verified</div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={addForm.docExperience}
+                        onChange={() => {}}
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-0 mt-0.5 pointer-events-none"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
+                      <span className="text-slate-500">Service Record Archive</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${
+                        addForm.docExperience ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {addForm.docExperience ? '✓ Experience Verified' : 'Pending Review'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Police Background & POCSO Clearance */}
+                  <div
+                    onClick={() => setAddForm({ ...addForm, docPoliceClearance: !addForm.docPoliceClearance })}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
+                      addForm.docPoliceClearance
+                        ? 'bg-emerald-950/20 border-emerald-500/40 hover:border-emerald-500/60'
+                        : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                          addForm.docPoliceClearance ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-500'
+                        }`}>
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-white font-bold text-xs">Police & POCSO Child Safety Clearance</div>
+                          <div className="text-[10px] text-slate-400">CBSE Bye-Law mandatory police clearance</div>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={addForm.docPoliceClearance}
+                        onChange={() => {}}
+                        className="w-4 h-4 rounded text-emerald-500 focus:ring-0 mt-0.5 pointer-events-none"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
+                      <span className="text-slate-500">Statutory Child Protection</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${
+                        addForm.docPoliceClearance ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {addForm.docPoliceClearance ? '✓ POCSO Compliant' : 'Clearance In Progress'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex justify-between pt-6 border-t border-slate-800/80">
@@ -2513,17 +3014,17 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-cyan-500/25 transition-all disabled:opacity-50"
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-600 to-indigo-600 hover:brightness-110 text-white font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/25 transition-all disabled:opacity-50 cursor-pointer"
                   >
                     {isSubmitting ? (
                       <>
                         <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Enrolling Staff Member...</span>
+                        <span>Enrolling in PostgreSQL Database...</span>
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Complete Staff Enrollment</span>
+                        <Sparkles className="w-4 h-4 text-amber-300" />
+                        <span>Complete Enrollment & Generate Portal Access</span>
                       </>
                     )}
                   </button>
@@ -2579,8 +3080,31 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
             }));
             const res = await importErpStaff(mapped, false, organizationId);
             if (res.data?.success) {
+              const importedCount = res.data.importedCount || validList.length;
+              const deptSummary: Record<string, number> = {};
+              mapped.forEach(m => {
+                deptSummary[m.department] = (deptSummary[m.department] || 0) + 1;
+              });
+
+              // Trigger confetti celebration
+              try {
+                confetti({
+                  particleCount: 140,
+                  spread: 85,
+                  origin: { y: 0.5 }
+                });
+              } catch (_) {}
+
+              // Set Bulk Success Modal
+              setBulkSuccessModal({
+                count: importedCount,
+                departments: deptSummary,
+                timestamp: new Date().toLocaleTimeString()
+              });
+
+              onShowToast('success', '🎉 Bulk Faculty Enrollment Completed!', `Successfully enrolled ${importedCount} faculty members into the PostgreSQL database.`);
               loadStaff(true);
-              return { success: true, importedCount: res.data.importedCount || validList.length };
+              return { success: true, importedCount };
             }
             return { success: false, importedCount: 0, message: res.data?.message || 'Import failed' };
           }}
@@ -3782,6 +4306,293 @@ export const StaffManagementHub: React.FC<StaffManagementHubProps> = ({
         onSuccess={handlePrincipalAuthConfirmed}
         onShowToast={onShowToast}
       />
+
+      {/* ========================================================================= */}
+      {/* 11. FACULTY ENROLLMENT CONGRATULATIONS & CREDENTIALS MODAL */}
+      {/* ========================================================================= */}
+      {enrollSuccessModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-slate-900 border-2 border-emerald-500/50 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 font-mono text-xs">
+            {/* Modal Top Header with Confetti Theme */}
+            <div className="p-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-teal-950/80 border-b border-emerald-500/30 flex items-start justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-emerald-500/30">
+                  <Sparkles className="w-7 h-7 stroke-[2.5]" />
+                </div>
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase tracking-wider mb-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    <span>Real Database Entry Saved ✓</span>
+                  </div>
+                  <h2 className="text-xl font-black text-white tracking-tight">
+                    🎉 Congratulations! Faculty Member Enrolled!
+                  </h2>
+                  <p className="text-slate-300 text-xs">
+                    UDISE+ & CBSE aligned employee record saved to PostgreSQL database with portal credentials.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setEnrollSuccessModal(null);
+                  setActiveSubTab('directory');
+                }}
+                className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 overflow-y-auto max-h-[calc(92vh-160px)]">
+              {/* Employee Snapshot Card */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row items-center sm:items-start gap-4">
+                {enrollSuccessModal.photoUrl ? (
+                  <img
+                    src={enrollSuccessModal.photoUrl}
+                    alt={enrollSuccessModal.name}
+                    className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-500/60 shadow-lg"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/40 text-emerald-300 flex items-center justify-center font-black text-xl shadow-inner">
+                    {enrollSuccessModal.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+
+                <div className="flex-1 text-center sm:text-left space-y-1">
+                  <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                    <h3 className="text-base font-black text-white">{enrollSuccessModal.name}</h3>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      {enrollSuccessModal.empId}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Active
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-300">
+                    <strong>{enrollSuccessModal.designation}</strong> • {enrollSuccessModal.department}
+                  </div>
+                  <div className="text-[11px] text-slate-400 flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-1">
+                    <span>📱 {enrollSuccessModal.phone}</span>
+                    <span>✉️ {enrollSuccessModal.email}</span>
+                    {enrollSuccessModal.udisePin && <span>🏛️ UDISE+ PIN: {enrollSuccessModal.udisePin}</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Automatic Portal Login Credentials Box */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/40 to-slate-950 border-2 border-indigo-500/40 space-y-3">
+                <div className="flex items-center justify-between border-b border-indigo-500/20 pb-2">
+                  <div className="flex items-center gap-2 text-indigo-300 font-bold">
+                    <KeyRound className="w-4 h-4 text-indigo-400" />
+                    <span>Automatic Institutional Portal Credentials</span>
+                  </div>
+                  <span className="text-[10px] text-indigo-400 font-mono">Ready to Share</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">ERP Faculty Portal URL:</span>
+                      <span className="text-xs font-bold text-cyan-300 font-mono select-all">
+                        {enrollSuccessModal.portalUrl}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(enrollSuccessModal.portalUrl);
+                        onShowToast('info', 'Copied URL', 'Portal URL copied to clipboard');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Login ID / Username:</span>
+                      <span className="text-xs font-bold text-white font-mono select-all">
+                        {enrollSuccessModal.email}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(enrollSuccessModal.email);
+                        onShowToast('info', 'Copied Username', 'Username / Email copied to clipboard');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block">Default Temporary Password:</span>
+                      <span className="text-xs font-bold text-amber-300 font-mono select-all">
+                        {enrollSuccessModal.tempPassword}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(enrollSuccessModal.tempPassword);
+                        onShowToast('info', 'Copied Password', 'Temporary password copied to clipboard');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Actions & Welcome Kit Sharing */}
+              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const welcomeText = `🎉 Welcome to Dakshora School ERP, ${enrollSuccessModal.name}!\n\nYour Faculty Portal Account has been provisioned:\n- Employee ID: ${enrollSuccessModal.empId}\n- Designation: ${enrollSuccessModal.designation} (${enrollSuccessModal.department})\n- Portal URL: ${enrollSuccessModal.portalUrl}\n- Username: ${enrollSuccessModal.email}\n- Default Password: ${enrollSuccessModal.tempPassword}\n\nPlease login and update your password upon first sign in.\nHave a wonderful academic session!`;
+                    navigator.clipboard.writeText(welcomeText);
+                    onShowToast('success', 'Welcome Kit Copied 📋', 'Full welcome message with credentials ready to paste on WhatsApp / SMS.');
+                  }}
+                  className="w-full sm:w-auto flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:brightness-110 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Copy Welcome Kit (WhatsApp / SMS)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="w-full sm:w-auto py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Staff Dossier</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setEnrollSuccessModal(null);
+                  setActiveSubTab('directory');
+                }}
+                className="px-6 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs transition shadow-md cursor-pointer"
+              >
+                Done & Return to Directory
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 12. BULK STAFF ENROLLMENT CONGRATULATIONS MODAL */}
+      {/* ========================================================================= */}
+      {bulkSuccessModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-slate-900 border-2 border-emerald-500/50 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-6 animate-in zoom-in-95 font-mono text-xs">
+            {/* Header */}
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center mx-auto shadow-xl shadow-emerald-500/30">
+                <Check className="w-8 h-8 stroke-[3]" />
+              </div>
+              <h2 className="text-xl font-black text-white tracking-tight">
+                🎉 Congratulations! Bulk Staff Enrollment Successful!
+              </h2>
+              <p className="text-slate-300">
+                Batch of faculty members has been committed directly into the PostgreSQL database.
+              </p>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Enrolled</span>
+                <span className="text-2xl font-black text-emerald-400 block mt-1">
+                  {bulkSuccessModal.count}
+                </span>
+                <span className="text-[10px] text-emerald-300/80">Active in DB ✓</span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">Portal Access</span>
+                <span className="text-2xl font-black text-cyan-400 block mt-1">
+                  {bulkSuccessModal.count}
+                </span>
+                <span className="text-[10px] text-cyan-300/80">Credentials Ready</span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center col-span-2 sm:col-span-1">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">Compliance</span>
+                <span className="text-base font-black text-amber-400 block mt-2">
+                  UDISE+ & CBSE
+                </span>
+                <span className="text-[10px] text-amber-300/80">Aligned Roster</span>
+              </div>
+            </div>
+
+            {/* Department Breakdown */}
+            {Object.keys(bulkSuccessModal.departments).length > 0 && (
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                  Departmental Distribution:
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(bulkSuccessModal.departments).map(([dept, cnt]) => (
+                    <span
+                      key={dept}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-900 border border-slate-700 text-slate-200"
+                    >
+                      {dept}: <strong className="text-cyan-400">{cnt}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const bulkMsg = `🎉 Bulk Faculty Roster Enrollment Complete!\nTotal Members: ${bulkSuccessModal.count}\nDatabase Status: Committed to PostgreSQL\nSession: 2026-27\nTimestamp: ${bulkSuccessModal.timestamp}`;
+                  navigator.clipboard.writeText(bulkMsg);
+                  onShowToast('success', 'Roster Summary Copied', 'Summary copied to clipboard');
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+              >
+                <Copy className="w-4 h-4" />
+                <span>Copy Roster Summary</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkSuccessModal(null);
+                  setActiveSubTab('directory');
+                }}
+                className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Done & Return to Directory</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

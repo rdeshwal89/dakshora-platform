@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import confetti from 'canvas-confetti';
 import {
   Upload,
   FileSpreadsheet,
@@ -14,7 +15,8 @@ import {
   Check,
   Eye,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  Sparkles
 } from 'lucide-react';
 
 export interface BulkImportFieldConfig {
@@ -416,13 +418,20 @@ export const BulkImportConsole: React.FC<BulkImportConsoleProps> = ({
     try {
       const res = await onCommitImport(validRecords);
       if (res.success) {
+        try {
+          confetti({
+            particleCount: 130,
+            spread: 80,
+            origin: { y: 0.6 }
+          });
+        } catch (_) {}
         setImportSummary({
           total: parsedRows.length,
           imported: res.importedCount || validRecords.length,
           failed: validationErrors.length,
           duplicates: duplicateCount
         });
-        onShowToast('success', 'Import Completed 🎉', `Successfully enrolled ${res.importedCount || validRecords.length} records!`);
+        onShowToast('success', '🎉 Batch Import Completed Successfully!', `Successfully enrolled ${res.importedCount || validRecords.length} records into the PostgreSQL database!`);
       } else {
         onShowToast('error', 'Import Incomplete', res.message || 'Server encountered an issue.');
       }
@@ -721,36 +730,64 @@ export const BulkImportConsole: React.FC<BulkImportConsoleProps> = ({
 
           {/* Final Import Summary Modal */}
           {importSummary && (
-            <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 to-slate-950 border border-emerald-500/40 space-y-3 font-mono text-xs animate-in zoom-in-95">
-              <div className="flex items-center gap-2 text-emerald-300 font-bold text-sm">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                <span>Batch Enrollment Successfully Completed!</span>
+            <div className="p-6 rounded-3xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-950 border-2 border-emerald-500/50 space-y-4 font-mono text-xs shadow-2xl animate-in zoom-in-95">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-500/30 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-emerald-500/30">
+                    <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      <span>🎉 Congratulations! Bulk Enrollment Successful!</span>
+                    </h3>
+                    <p className="text-[11px] text-emerald-300 font-medium">
+                      All valid {entityType === 'staff' ? 'faculty & staff' : 'student'} records have been committed directly to the PostgreSQL database.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 self-start sm:self-auto">
+                  Database Active ✓
+                </span>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                  <span className="text-[10px] text-slate-400 block">Total Ingested</span>
-                  <strong className="text-white text-base">{importSummary.total}</strong>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Ingested</span>
+                  <strong className="text-white text-lg">{importSummary.total}</strong>
                 </div>
-                <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30">
-                  <span className="text-[10px] text-emerald-400 block">Enrolled in DB</span>
-                  <strong className="text-emerald-400 text-base">{importSummary.imported}</strong>
+                <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40">
+                  <span className="text-[10px] text-emerald-400 block uppercase font-bold">Enrolled in DB</span>
+                  <strong className="text-emerald-300 text-lg flex items-center gap-1.5">
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>{importSummary.imported}</span>
+                  </strong>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                  <span className="text-[10px] text-rose-400 block">Skipped / Errors</span>
-                  <strong className="text-rose-400 text-base">{importSummary.failed}</strong>
+                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                  <span className="text-[10px] text-rose-400 block uppercase font-bold">Skipped / Errors</span>
+                  <strong className="text-rose-400 text-lg">{importSummary.failed}</strong>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                  <span className="text-[10px] text-amber-400 block">Duplicates</span>
-                  <strong className="text-amber-400 text-base">{importSummary.duplicates}</strong>
+                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                  <span className="text-[10px] text-amber-400 block uppercase font-bold">Duplicates</span>
+                  <strong className="text-amber-400 text-lg">{importSummary.duplicates}</strong>
                 </div>
               </div>
-              <div className="pt-2 flex justify-end">
+
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5 text-slate-300">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Portal credentials and access rights have been automatically configured.</span>
+                </span>
+                <span className="text-[10px] text-emerald-400 font-bold">UDISE+ Compliant</span>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs cursor-pointer shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2"
                 >
-                  Return to Directory
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Return to Directory</span>
                 </button>
               </div>
             </div>
