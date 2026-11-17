@@ -49,8 +49,10 @@ import {
   activateAcademicSession,
   fetchAcademicClasses,
   createAcademicClass,
+  deleteAcademicClass,
   fetchAcademicSections,
   createAcademicSection,
+  deleteAcademicSection,
   assignClassTeacher,
   fetchAcademicSubjects,
   createAcademicSubject,
@@ -177,12 +179,18 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
   // Action Modals
   const [showAddSessionModal, setShowAddSessionModal] = useState<boolean>(false);
   const [showAddClassModal, setShowAddClassModal] = useState<boolean>(false);
+  const [showDeleteClassModal, setShowDeleteClassModal] = useState<boolean>(false);
   const [showAddSectionModal, setShowAddSectionModal] = useState<boolean>(false);
+  const [showDeleteSectionModal, setShowDeleteSectionModal] = useState<boolean>(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState<boolean>(false);
   const [showMapSubjectModal, setShowMapSubjectModal] = useState<boolean>(false);
   const [showAddHomeworkModal, setShowAddHomeworkModal] = useState<boolean>(false);
   const [assignTeacherSection, setAssignTeacherSection] = useState<AcademicSectionRecord | null>(null);
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [selectedClassToDelete, setSelectedClassToDelete] = useState<string>('');
+  const [selectedSectionToDelete, setSelectedSectionToDelete] = useState<string>('');
+  const [isDeletingClass, setIsDeletingClass] = useState<boolean>(false);
+  const [isDeletingSection, setIsDeletingSection] = useState<boolean>(false);
 
   // Form States
   const [sessionForm, setSessionForm] = useState({
@@ -414,6 +422,55 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
       }
     } catch (err: any) {
       onShowToast?.('error', 'Request Error', err.message || 'Failed to create section');
+    }
+  };
+
+  const handleDeleteClass = async (classIdOrGrade: string, gradeName?: string) => {
+    const targetName = gradeName || classIdOrGrade;
+    const confirmMsg = `Are you sure you want to delete "${targetName}"?\n\nWarning: All associated sections and academic mapping for ${targetName} will be removed.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsDeletingClass(true);
+    try {
+      const res = await deleteAcademicClass(classIdOrGrade);
+      if (res.data?.success) {
+        onShowToast?.('success', 'Class Deleted', res.data.message || `${targetName} deleted successfully`);
+        setShowDeleteClassModal(false);
+        setSelectedClassToDelete('');
+        loadAcademicsData(true);
+      } else {
+        onShowToast?.('error', 'Delete Failed', res.data?.message || 'Could not delete class');
+      }
+    } catch (err: any) {
+      onShowToast?.('error', 'Request Error', err.message || 'Failed to delete class');
+    } finally {
+      setIsDeletingClass(false);
+    }
+  };
+
+  const handleDeleteSection = async (sectionId: string, sectionDisplayName?: string) => {
+    const targetName = sectionDisplayName || 'this section';
+    const confirmMsg = `Are you sure you want to delete "${targetName}"?\n\nStudents assigned to this section will need to be reallocated.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsDeletingSection(true);
+    try {
+      const res = await deleteAcademicSection(sectionId);
+      if (res.data?.success) {
+        onShowToast?.('success', 'Section Deleted', res.data.message || `${targetName} deleted successfully`);
+        setShowDeleteSectionModal(false);
+        setSelectedSectionToDelete('');
+        if (dossierSection?.id === sectionId) {
+          setDossierSection(null);
+        }
+        loadAcademicsData(true);
+      } else {
+        onShowToast?.('error', 'Delete Failed', res.data?.message || 'Could not delete section');
+      }
+    } catch (err: any) {
+      onShowToast?.('error', 'Request Error', err.message || 'Failed to delete section');
+    } finally {
+      setIsDeletingSection(false);
     }
   };
 
@@ -660,6 +717,28 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Section</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (classes.length > 0) setSelectedClassToDelete(classes[0].id || classes[0].grade);
+                  setShowDeleteClassModal(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold flex items-center gap-1.5 transition shadow-xs"
+                title="Delete academic class"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Delete Class</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (sections.length > 0) setSelectedSectionToDelete(sections[0].id);
+                  setShowDeleteSectionModal(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold flex items-center gap-1.5 transition shadow-xs"
+                title="Delete academic section"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Delete Sec</span>
               </button>
             </>
           )}
@@ -1029,6 +1108,85 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
       {/* ========================================================================= */}
       {activeTab === 'classes_sections' && (
         <div className="space-y-6">
+          {/* Registered Classes & Grades Directory */}
+          <div className="glass-panel p-5 rounded-3xl border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-cyan-400" />
+                  <span>Affiliated Classes & Grades Directory ({classes.length})</span>
+                </h3>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                  Academic levels with affiliated sections, curricular stages, and deletion governance.
+                </p>
+              </div>
+              {isAdmin && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowAddClassModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-mono font-bold flex items-center gap-1.5 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Add Class</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (classes.length > 0) setSelectedClassToDelete(classes[0].id || classes[0].grade);
+                      setShowDeleteClassModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Delete Class</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+              {classes.map((cls) => {
+                const secCount = sections.filter((s) => s.grade === cls.grade).length;
+                const studentCount = sections
+                  .filter((s) => s.grade === cls.grade)
+                  .reduce((sum, s) => sum + (s.studentCount || 0), 0);
+                return (
+                  <div
+                    key={cls.id || cls.grade}
+                    className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-750 flex flex-col justify-between group transition relative"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white text-sm group-hover:text-cyan-300 transition">
+                          {cls.grade}
+                        </span>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClass(cls.id || cls.grade, cls.grade);
+                            }}
+                            className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/40 transition cursor-pointer"
+                            title={`Delete ${cls.grade}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                        {cls.wing || 'Academic Wing'}
+                      </div>
+                    </div>
+                    <div className="pt-2 mt-2 border-t border-slate-900 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                      <span className="text-cyan-400 font-bold">{secCount} Sec</span>
+                      <span>{studentCount} Students</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Filter and Search Bar */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="relative w-full sm:w-72">
@@ -1060,12 +1218,35 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
           {/* Sections Table */}
           <div className="glass-panel rounded-3xl border border-slate-800 overflow-hidden">
             <div className="p-4 border-b border-slate-800/80 bg-slate-950/40 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-white font-mono uppercase tracking-wider">
-                Academic Sections Directory ({filteredSections.length})
-              </h3>
-              <span className="text-[11px] font-mono text-slate-400">
-                Primary Class Teacher and Room Allocation
-              </span>
+              <div>
+                <h3 className="text-xs font-bold text-white font-mono uppercase tracking-wider">
+                  Academic Sections Directory ({filteredSections.length})
+                </h3>
+                <span className="text-[11px] font-mono text-slate-400">
+                  Primary Class Teacher, Capacity, and Section Actions
+                </span>
+              </div>
+              {isAdmin && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowAddSectionModal(true)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-mono font-bold flex items-center gap-1.5 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Section</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (sections.length > 0) setSelectedSectionToDelete(sections[0].id);
+                      setShowDeleteSectionModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Delete Sec</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="overflow-x-auto">
@@ -1123,7 +1304,7 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
                           {sec.subjectsCount || 0} Subjects
                         </span>
                       </td>
-                      <td className="p-3 pr-4 text-right space-x-2">
+                      <td className="p-3 pr-4 text-right space-x-1.5 whitespace-nowrap">
                         {isAdmin && (
                           <button
                             onClick={() => {
@@ -1145,6 +1326,16 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
                           <span>Dossier</span>
                           <ChevronRight className="w-3 h-3" />
                         </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleDeleteSection(sec.id, `${sec.grade} - Section ${sec.section}`)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 hover:text-white border border-rose-500/30 text-[11px] transition inline-flex items-center gap-1 cursor-pointer"
+                            title={`Delete Section ${sec.section}`}
+                          >
+                            <Trash2 className="w-3 h-3 text-rose-400" />
+                            <span>Delete</span>
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1567,12 +1758,24 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
                 </div>
               </div>
 
-              <button
-                onClick={() => setDossierSection(null)}
-                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDeleteSection(dossierSection.id, `${dossierSection.grade} - Section ${dossierSection.section}`)}
+                    className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer"
+                    title="Delete this section"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span className="hidden sm:inline">Delete Section</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setDossierSection(null)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Dossier Subtabs */}
@@ -2292,6 +2495,168 @@ export const AcademicsManagementHub: React.FC<AcademicsManagementHubProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 9: DELETE CLASS */}
+      {/* ========================================================================= */}
+      {showDeleteClassModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-950 border border-slate-800 rounded-3xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-bold text-white font-mono">Delete Academic Class</h3>
+              </div>
+              <button onClick={() => setShowDeleteClassModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 font-mono text-xs">
+              <div className="p-3 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-rose-300 text-[11px] space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Warning: Irreversible Academic Action
+                </p>
+                <p className="text-slate-400">
+                  Deleting a class will also purge all associated sections, subject mappings, and timetable links for this grade.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">Select Class / Grade to Delete</label>
+                <select
+                  value={selectedClassToDelete}
+                  onChange={(e) => setSelectedClassToDelete(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white"
+                >
+                  <option value="">-- Choose Class --</option>
+                  {classes.map((c) => (
+                    <option key={c.id || c.grade} value={c.id || c.grade}>
+                      {c.grade} ({c.wing || 'Academic Wing'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedClassToDelete && (
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-300">
+                  <span>Sections linked to this class: </span>
+                  <strong className="text-cyan-400">
+                    {sections.filter((s) => s.grade === selectedClassToDelete || s.grade === classes.find(c => c.id === selectedClassToDelete)?.grade).map(s => `Sec ${s.section}`).join(', ') || 'None'}
+                  </strong>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-850">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteClassModal(false)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedClassToDelete || isDeletingClass}
+                  onClick={() => {
+                    const cls = classes.find(c => c.id === selectedClassToDelete || c.grade === selectedClassToDelete);
+                    handleDeleteClass(selectedClassToDelete, cls?.grade);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeletingClass ? 'Deleting...' : 'Delete Class'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 10: DELETE SECTION */}
+      {/* ========================================================================= */}
+      {showDeleteSectionModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-950 border border-slate-800 rounded-3xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-bold text-white font-mono">Delete Class Section</h3>
+              </div>
+              <button onClick={() => setShowDeleteSectionModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 font-mono text-xs">
+              <div className="p-3 rounded-2xl bg-rose-950/30 border border-rose-500/30 text-rose-300 text-[11px] space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Warning: Section Removal
+                </p>
+                <p className="text-slate-400">
+                  Students enrolled in this section will need to be reallocated to another section.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">Select Section to Delete</label>
+                <select
+                  value={selectedSectionToDelete}
+                  onChange={(e) => setSelectedSectionToDelete(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white"
+                >
+                  <option value="">-- Choose Section --</option>
+                  {sections.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.grade} - Section {s.section} ({s.studentCount || 0} students)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedSectionToDelete && (() => {
+                const sec = sections.find(s => s.id === selectedSectionToDelete);
+                if (!sec) return null;
+                return (
+                  <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+                    <div>Class Teacher: <strong className="text-white">{sec.classTeacherName || 'Unassigned'}</strong></div>
+                    <div>Room: <strong className="text-white">{sec.roomNumber || 'None'}</strong> | Enrolled: <strong className="text-cyan-400">{sec.studentCount || 0} students</strong></div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-850">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteSectionModal(false)}
+                  className="px-3.5 py-2 rounded-xl bg-slate-900 text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedSectionToDelete || isDeletingSection}
+                  onClick={() => {
+                    const sec = sections.find(s => s.id === selectedSectionToDelete);
+                    handleDeleteSection(selectedSectionToDelete, sec ? `${sec.grade} - Section ${sec.section}` : undefined);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>{isDeletingSection ? 'Deleting...' : 'Delete Section'}</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

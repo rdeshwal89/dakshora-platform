@@ -1455,6 +1455,12 @@ export async function updateAcademicClass(id: string, data: Partial<AcademicClas
   });
 }
 
+export async function deleteAcademicClass(id: string) {
+  return makeApiCall<{ success: boolean; message: string }>(`/api/erp/academics/classes/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function fetchAcademicSections(grade?: string, organization_id?: string) {
   const q = new URLSearchParams();
   if (grade && grade !== 'all') q.append('grade', grade);
@@ -1480,6 +1486,12 @@ export async function updateAcademicSection(id: string, data: Partial<AcademicSe
   return makeApiCall<{ success: boolean; message: string; section: AcademicSectionRecord }>(`/api/erp/academics/sections/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAcademicSection(id: string) {
+  return makeApiCall<{ success: boolean; message: string }>(`/api/erp/academics/sections/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }
 

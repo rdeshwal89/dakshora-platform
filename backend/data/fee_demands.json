@@ -1,5 +1,25 @@
 [
   {
+    "id": "004b6e4c-167f-4281-b3c0-2028bf048e47",
+    "db_id": "004b6e4c-167f-4281-b3c0-2028bf048e47",
+    "organization_id": "1594a625-3eb4-4b38-8409-3d21ae548841",
+    "studentId": "da3be156-0143-4922-9835-92aaab605b82",
+    "studentName": "Aarav Sharma",
+    "admissionNo": "DPS-0852",
+    "grade": "Class 9",
+    "section": "A",
+    "feeHead": "Tuition Fee",
+    "netAmount": 12000,
+    "paidAmount": 5000,
+    "balanceAmount": 7000,
+    "invoiceNo": "INV-004b6e4c",
+    "status": "partially_paid",
+    "paidAt": "2026-11-17",
+    "paymentMethod": "UPI",
+    "receiptNo": "REC/2026-27/0001",
+    "amountINR": 12000
+  },
+  {
     "id": "9964e547-3ca4-41b0-99b8-a01951ef9d15",
     "db_id": "9964e547-3ca4-41b0-99b8-a01951ef9d15",
     "organization_id": "41baf0c2-f3b4-4d5b-83b5-37ad8fcb83ef",

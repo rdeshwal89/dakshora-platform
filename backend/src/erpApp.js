@@ -21228,15 +21228,33 @@ app.patch(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (req
 
 app.delete(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { id } = req.params;
+  const rawId = req.params.id;
+  const decodedId = decodeURIComponent(rawId);
   if (supabase && orgId) {
     try {
-      await supabase.from("classes").delete().eq("organization_id", orgId).or(`id.eq.${id},name.eq.${id}`);
+      await supabase.from("classes").delete().eq("organization_id", orgId).or(`id.eq.${rawId},id.eq.${decodedId},name.eq.${rawId},name.eq.${decodedId}`);
     } catch (_) {}
   }
-  const idx = ERP_CLASSES.findIndex(c => (c.organization_id === orgId) && (c.id === id || c.grade === id));
+  const idx = ERP_CLASSES.findIndex(c => (!orgId || !c.organization_id || c.organization_id === orgId) && (c.id === rawId || c.id === decodedId || c.grade === rawId || c.grade === decodedId));
   if (idx !== -1) ERP_CLASSES.splice(idx, 1);
-  res.json({ success: true, message: "Class deleted successfully" });
+
+  // Clean up any sections under this class
+  const sectionsToRemove = ERP_SECTIONS.filter(s => (!orgId || !s.organization_id || s.organization_id === orgId) && (s.grade === rawId || s.grade === decodedId));
+  if (sectionsToRemove.length > 0) {
+    if (supabase && orgId) {
+      try {
+        const secIds = sectionsToRemove.map(s => s.id);
+        await supabase.from("sections").delete().eq("organization_id", orgId).in("id", secIds);
+      } catch (_) {}
+    }
+    for (const sec of sectionsToRemove) {
+      const sIdx = ERP_SECTIONS.findIndex(s => s.id === sec.id);
+      if (sIdx !== -1) ERP_SECTIONS.splice(sIdx, 1);
+    }
+  }
+
+  await recordAuditLog("erp.class_deleted", req.user?.email || "admin", "academic_class", rawId, req);
+  res.json({ success: true, message: `Class '${decodedId}' deleted successfully` });
 });
 
 // Persistent File Storage for Section Class Teacher Assignments
@@ -21509,16 +21527,18 @@ app.patch("/api/erp/academics/sections/:id", async (req, res) => {
   res.json({ success: true, message: "Section updated successfully", section: sec });
 });
 
-app.delete("/api/erp/academics/sections/:id", async (req, res) => {
+app.delete(["/api/erp/academics/sections/:id", "/api/erp/sections/:id"], async (req, res) => {
   const orgId = resolveTenantOrgId(req);
-  const { id } = req.params;
+  const rawId = req.params.id;
+  const decodedId = decodeURIComponent(rawId);
   if (supabase && orgId) {
     try {
-      await supabase.from("sections").delete().eq("organization_id", orgId).eq("id", id);
+      await supabase.from("sections").delete().eq("organization_id", orgId).or(`id.eq.${rawId},id.eq.${decodedId}`);
     } catch (_) {}
   }
-  const idx = ERP_SECTIONS.findIndex(s => (s.organization_id === orgId) && s.id === id);
+  const idx = ERP_SECTIONS.findIndex(s => (!orgId || !s.organization_id || s.organization_id === orgId) && (s.id === rawId || s.id === decodedId));
   if (idx !== -1) ERP_SECTIONS.splice(idx, 1);
+  await recordAuditLog("erp.section_deleted", req.user?.email || "admin", "academic_section", rawId, req);
   res.json({ success: true, message: "Section deleted successfully" });
 });
 
