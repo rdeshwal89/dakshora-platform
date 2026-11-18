@@ -237,6 +237,8 @@ export function App() {
     };
     try {
       localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+      localStorage.setItem('dakshora_active_org_id', orgId);
+      localStorage.setItem('dakshora_onboarding_org_id', orgId);
     } catch {}
 
     const updatedUser = {

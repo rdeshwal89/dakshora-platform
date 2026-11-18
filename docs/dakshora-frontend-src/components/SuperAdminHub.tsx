@@ -689,6 +689,8 @@ export const SuperAdminHub: React.FC<SuperAdminHubProps> = ({
     };
     try {
       localStorage.setItem('dakshora_school_brand', JSON.stringify(brand));
+      localStorage.setItem('dakshora_active_org_id', orgId);
+      localStorage.setItem('dakshora_onboarding_org_id', orgId);
       const savedUser = localStorage.getItem('dakshora_superadmin_user');
       if (savedUser) {
         const u = JSON.parse(savedUser);

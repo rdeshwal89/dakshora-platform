@@ -3631,6 +3631,7 @@ export async function fetchStaffResponsibilities(staffId: string) {
 
 export async function assignStaffResponsibility(staffId: string, payload: {
   responsibility_type_id: string;
+  responsibility_code?: string;
   scope_type?: ResponsibilityScopeType;
   scope_id?: string;
   scope_name?: string;

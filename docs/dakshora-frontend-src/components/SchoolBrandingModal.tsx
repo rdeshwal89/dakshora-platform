@@ -42,6 +42,19 @@ export const PRESET_SCHOOLS: Record<string, SchoolBrandProfile> = {
     contactPhone: '+91 11 2612 3456',
     address: 'Institutional Area, Vasant Kunj, New Delhi - 110070'
   },
+  bharatpur: {
+    schoolName: 'Dakshora Senior Secondary School No 1 Bharatpur',
+    shortName: 'DSS No 1 Bharatpur',
+    board: 'CBSE (Central Board of Secondary Education)',
+    affiliationNo: 'CBSE-AFF-2026-BHT',
+    schoolCode: '10002',
+    motto: 'Excellence, Character, Wisdom',
+    themeColor: 'indigo',
+    principalName: 'Dr. Ranjeet Deshwal',
+    contactEmail: 'rdeshwal89@gmail.com',
+    contactPhone: '+91 94140 00001',
+    address: 'Near Government Hospital, Bharatpur, Rajasthan - 321001'
+  },
   nirmal: {
     schoolName: 'Nirmal Happy Senior Secondary School',
     shortName: 'Nirmal Happy',
@@ -155,7 +168,14 @@ export const SchoolBrandingModal: React.FC<SchoolBrandingModalProps> = ({
       onShowToast('warning', 'Missing School Name', 'Please provide a valid school name.');
       return;
     }
-    localStorage.setItem('dakshora_school_brand', JSON.stringify(form));
+    const targetOrgId = form.schoolName.toLowerCase().includes('bharatpur')
+      ? 'f71ee7b3-e7cb-4685-973a-dc7b9c84f67d'
+      : (form as any).organization_id || 'b17780e5-3832-4ac6-9aeb-33fd80c5cb0e';
+    try {
+      localStorage.setItem('dakshora_active_org_id', targetOrgId);
+      localStorage.setItem('dakshora_onboarding_org_id', targetOrgId);
+      localStorage.setItem('dakshora_school_brand', JSON.stringify({ ...form, organization_id: targetOrgId }));
+    } catch {}
     onApplyBrand(form);
     onShowToast('success', 'School Identity Morphed! 🎨', `The app is now customized for ${form.schoolName}`);
     onClose();

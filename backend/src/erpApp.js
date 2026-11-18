@@ -156,10 +156,50 @@ let IN_MEMORY_ORGANIZATIONS = [
     plan: "enterprise",
     status: "active",
     created_at: new Date().toISOString()
+  },
+  {
+    id: "f71ee7b3-e7cb-4685-973a-dc7b9c84f67d",
+    name: "Dakshora Senior Secondary School No 1 Bharatpur",
+    slug: "dssno1bharatpur",
+    tenant_code: "10002",
+    institute_code: "10002",
+    school_code: "10002",
+    plan: "growth",
+    status: "active",
+    city: "Bharatpur",
+    state: "Rajasthan",
+    board: "CBSE",
+    affiliationNo: "CBSE-AFF-2026-BHT",
+    created_at: "2026-11-17T15:00:00.000Z"
   }
 ];
 
-let ERP_SCHOOLS = [];
+let ERP_SCHOOLS = [
+  {
+    id: "sch-main",
+    organization_id: "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e",
+    name: "Dakshora Academy, New Delhi",
+    short_name: "Dakshora Academy",
+    school_code: "10001",
+    city: "New Delhi",
+    state: "Delhi",
+    board: "CBSE",
+    affiliation_no: "CBSE-AFF-202601",
+    status: "active"
+  },
+  {
+    id: "e25e11ce-a915-413f-9b90-6aacdf2aab24",
+    organization_id: "f71ee7b3-e7cb-4685-973a-dc7b9c84f67d",
+    name: "Dakshora Senior Secondary School No 1 Bharatpur",
+    short_name: "DSS No 1 Bharatpur",
+    school_code: "10002",
+    city: "Bharatpur",
+    state: "Rajasthan",
+    board: "CBSE",
+    affiliation_no: "CBSE-AFF-2026-BHT",
+    status: "active"
+  }
+];
 
 let IN_MEMORY_LEADS = [
   {
@@ -7430,6 +7470,23 @@ let SAAS_SUBSCRIPTIONS = [
     cancel_at_period_end: false,
     canceled_at: null,
     created_at: "2026-06-01T00:00:00.000Z",
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: "sub-org-bharatpur",
+    organization_id: "f71ee7b3-e7cb-4685-973a-dc7b9c84f67d",
+    plan_id: "growth",
+    status: "active",
+    billing_interval: "month",
+    amountINR: 6499,
+    currency: "INR",
+    trial_start: null,
+    trial_end: null,
+    current_period_start: "2026-11-01T00:00:00.000Z",
+    current_period_end: "2026-12-01T00:00:00.000Z",
+    cancel_at_period_end: false,
+    canceled_at: null,
+    created_at: "2026-11-17T15:00:00.000Z",
     updated_at: new Date().toISOString()
   }
 ];
@@ -15388,16 +15445,13 @@ app.post("/api/erp/students", async (req, res) => {
   };
 
   ERP_STUDENTS.unshift(newStd);
+  saveStudentsRegistryToFile(ERP_STUDENTS);
   await recordAuditLog("erp.student_enrolled", req.user?.email || "admin", "student", newStd.id, req);
 
   // Persist to Supabase PostgreSQL students table
   if (supabase) {
     try {
-      const dbGender = (newStd.gender || "").toLowerCase().includes("female")
-        ? "female"
-        : (newStd.gender || "").toLowerCase().includes("male")
-        ? "male"
-        : "other";
+      const dbGender = sanitizeDbGender(newStd.gender);
 
       const { data: dbStudent, error: dbErr } = await supabase
         .from("students")
@@ -16186,6 +16240,7 @@ const handleStudentBulkImport = async (req, res) => {
 
   // Update in-memory registry & audit log
   validRecords.forEach(rec => ERP_STUDENTS.unshift(rec));
+  saveStudentsRegistryToFile(ERP_STUDENTS);
   await recordAuditLog("erp.students_imported", req.user?.email || "admin", "student_batch", `${validRecords.length}_records`, req);
 
   res.json({
@@ -21258,21 +21313,78 @@ app.delete(["/api/erp/academics/classes/:id", "/api/erp/classes/:id"], async (re
 });
 
 // Persistent File Storage for Section Class Teacher Assignments
-const SECTION_CLASS_TEACHERS_FILE = path.join(process.cwd(), "data", "section_class_teachers.json");
+const CANONICAL_BACKEND_DATA_DIR = path.join(__dirname, "../data");
+const CANONICAL_ROOT_DATA_DIR = path.join(process.cwd(), "data");
+
+function resolveSectionClassTeachersFilePath() {
+  const p1 = path.join(CANONICAL_BACKEND_DATA_DIR, "section_class_teachers.json");
+  if (fs.existsSync(p1)) return p1;
+  const p2 = path.join(CANONICAL_ROOT_DATA_DIR, "section_class_teachers.json");
+  if (fs.existsSync(p2)) return p2;
+  return p1;
+}
+
 function loadSectionClassTeachersFromFile() {
   try {
-    if (fs.existsSync(SECTION_CLASS_TEACHERS_FILE)) {
-      return JSON.parse(fs.readFileSync(SECTION_CLASS_TEACHERS_FILE, "utf-8")) || {};
+    const fPath = resolveSectionClassTeachersFilePath();
+    if (fs.existsSync(fPath)) {
+      return JSON.parse(fs.readFileSync(fPath, "utf-8")) || {};
     }
   } catch (_) {}
   return {};
 }
+
 function saveSectionClassTeachersToFile(mapping) {
   try {
-    const parentDir = path.dirname(SECTION_CLASS_TEACHERS_FILE);
-    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
-    fs.writeFileSync(SECTION_CLASS_TEACHERS_FILE, JSON.stringify(mapping, null, 2), "utf-8");
+    if (!fs.existsSync(CANONICAL_BACKEND_DATA_DIR)) fs.mkdirSync(CANONICAL_BACKEND_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_BACKEND_DATA_DIR, "section_class_teachers.json"), JSON.stringify(mapping, null, 2), "utf-8");
   } catch (_) {}
+  try {
+    if (!fs.existsSync(CANONICAL_ROOT_DATA_DIR)) fs.mkdirSync(CANONICAL_ROOT_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_ROOT_DATA_DIR, "section_class_teachers.json"), JSON.stringify(mapping, null, 2), "utf-8");
+  } catch (_) {}
+}
+
+// Persistent File Storage for Enrolled Students Registry across Server Restarts
+function resolveStudentsRegistryFilePath() {
+  const p1 = path.join(CANONICAL_BACKEND_DATA_DIR, "students_registry.json");
+  if (fs.existsSync(p1)) return p1;
+  const p2 = path.join(CANONICAL_ROOT_DATA_DIR, "students_registry.json");
+  if (fs.existsSync(p2)) return p2;
+  return p1;
+}
+
+function loadStudentsRegistryFromFile() {
+  try {
+    const fPath = resolveStudentsRegistryFilePath();
+    if (fs.existsSync(fPath)) {
+      const raw = fs.readFileSync(fPath, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return list;
+    }
+  } catch (_) {}
+  return [];
+}
+
+function saveStudentsRegistryToFile(studentsList) {
+  try {
+    if (!fs.existsSync(CANONICAL_BACKEND_DATA_DIR)) fs.mkdirSync(CANONICAL_BACKEND_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_BACKEND_DATA_DIR, "students_registry.json"), JSON.stringify(studentsList, null, 2), "utf-8");
+  } catch (_) {}
+  try {
+    if (!fs.existsSync(CANONICAL_ROOT_DATA_DIR)) fs.mkdirSync(CANONICAL_ROOT_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_ROOT_DATA_DIR, "students_registry.json"), JSON.stringify(studentsList, null, 2), "utf-8");
+  } catch (_) {}
+}
+
+// Universal PostgreSQL enum gender_type normalizer
+function sanitizeDbGender(rawGender) {
+  if (!rawGender) return "other";
+  const g = String(rawGender).trim().toLowerCase();
+  if (g === "male" || g === "m" || g === "boy") return "male";
+  if (g === "female" || g === "f" || g === "girl") return "female";
+  if (g === "prefer_not_to_say") return "prefer_not_to_say";
+  return "other";
 }
 
 // Helper to determine NEP 2020 Curricular Stage
@@ -41789,6 +41901,7 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
               }
             }
           });
+          saveStudentsRegistryToFile(ERP_STUDENTS);
 
           if (supabase) {
             try {
@@ -41801,12 +41914,13 @@ app.patch("/api/erp/onboarding/step/:step", async (req, res) => {
                   const parts = rawName.split(" ");
                   const firstName = parts[0] || "Student";
                   const lastName = parts.slice(1).join(" ") || "";
+                  const dbGender = sanitizeDbGender(std.gender);
                   await supabase.from("students").upsert([{
                     organization_id: orgId,
                     admission_no: rollNo,
                     first_name: firstName,
                     last_name: lastName,
-                    gender: std.gender || "other",
+                    gender: dbGender,
                     phone: std.parentPhone || std.phone || "+91 98000 00000",
                     email: std.parentEmail || std.email || "parent@example.com",
                     admission_status: "admitted"
@@ -44414,16 +44528,27 @@ let ERP_STAFF_RESPONSIBILITIES = [
 ];
 
 // Persistent File Storage for Staff Responsibilities across Server Restarts
-const STAFF_RESPONSIBILITIES_PERSISTENCE_FILE = path.join(process.cwd(), "data", "staff_responsibilities.json");
+function resolveStaffResponsibilitiesFilePath() {
+  const p1 = path.join(CANONICAL_BACKEND_DATA_DIR, "staff_responsibilities.json");
+  if (fs.existsSync(p1)) return p1;
+  const p2 = path.join(CANONICAL_ROOT_DATA_DIR, "staff_responsibilities.json");
+  if (fs.existsSync(p2)) return p2;
+  return p1;
+}
+
 function loadStaffResponsibilitiesFromFile() {
   try {
-    if (fs.existsSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE)) {
-      const raw = fs.readFileSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE, "utf-8");
+    const fPath = resolveStaffResponsibilitiesFilePath();
+    if (fs.existsSync(fPath)) {
+      const raw = fs.readFileSync(fPath, "utf-8");
       const list = JSON.parse(raw);
       if (Array.isArray(list) && list.length > 0) {
         list.forEach(item => {
-          if (!ERP_STAFF_RESPONSIBILITIES.some(r => r.id === item.id)) {
+          const idx = ERP_STAFF_RESPONSIBILITIES.findIndex(r => r.id === item.id);
+          if (idx === -1) {
             ERP_STAFF_RESPONSIBILITIES.push(item);
+          } else {
+            ERP_STAFF_RESPONSIBILITIES[idx] = { ...ERP_STAFF_RESPONSIBILITIES[idx], ...item };
           }
         });
       }
@@ -44432,14 +44557,16 @@ function loadStaffResponsibilitiesFromFile() {
     console.warn("[Staff Responsibilities] File load notice:", err.message);
   }
 }
+
 function saveStaffResponsibilitiesToFile() {
   try {
-    const parentDir = path.dirname(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE);
-    if (!fs.existsSync(parentDir)) fs.mkdirSync(parentDir, { recursive: true });
-    fs.writeFileSync(STAFF_RESPONSIBILITIES_PERSISTENCE_FILE, JSON.stringify(ERP_STAFF_RESPONSIBILITIES, null, 2), "utf-8");
-  } catch (err) {
-    console.warn("[Staff Responsibilities] File save notice:", err.message);
-  }
+    if (!fs.existsSync(CANONICAL_BACKEND_DATA_DIR)) fs.mkdirSync(CANONICAL_BACKEND_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_BACKEND_DATA_DIR, "staff_responsibilities.json"), JSON.stringify(ERP_STAFF_RESPONSIBILITIES, null, 2), "utf-8");
+  } catch (_) {}
+  try {
+    if (!fs.existsSync(CANONICAL_ROOT_DATA_DIR)) fs.mkdirSync(CANONICAL_ROOT_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(CANONICAL_ROOT_DATA_DIR, "staff_responsibilities.json"), JSON.stringify(ERP_STAFF_RESPONSIBILITIES, null, 2), "utf-8");
+  } catch (_) {}
 }
 loadStaffResponsibilitiesFromFile();
 
@@ -46490,6 +46617,26 @@ async function syncFromDatabase() {
       console.log(`[SyncDB] Loaded ${students.length} students with mapped enrollments`);
     }
 
+    // Merge persistent students registry from file (ensures zero data loss across restarts)
+    try {
+      const persistedRegistry = loadStudentsRegistryFromFile();
+      if (Array.isArray(persistedRegistry) && persistedRegistry.length > 0) {
+        const studentMap = new Map();
+        ERP_STUDENTS.forEach(s => studentMap.set(s.id, s));
+        persistedRegistry.forEach(s => {
+          if (!studentMap.has(s.id)) {
+            studentMap.set(s.id, s);
+          } else {
+            studentMap.set(s.id, { ...studentMap.get(s.id), ...s });
+          }
+        });
+        ERP_STUDENTS = Array.from(studentMap.values());
+        console.log(`[SyncDB] Merged ${persistedRegistry.length} students from persistent registry (total active: ${ERP_STUDENTS.length})`);
+      }
+    } catch (e) {
+      console.warn("[SyncDB] Students registry file hydration note:", e.message);
+    }
+
     // 3. Academic sessions
     const { data: sessions } = await supabase.from("academic_sessions").select("*");
     if (sessions && sessions.length) {
@@ -46511,20 +46658,25 @@ async function syncFromDatabase() {
       console.log(`[SyncDB] Loaded ${classes.length} classes`);
     }
 
-    // 5. Sections (resolve grade from matched class)
+    // 5. Sections (resolve grade from matched class & class teacher)
     const { data: sections } = await supabase.from("sections").select("*");
     if (sections && sections.length) {
+      const persistedClassTeachers = loadSectionClassTeachersFromFile();
       ERP_SECTIONS = sections.map((s) => {
         const matchedClass = ERP_CLASSES.find((c) => c.id === s.class_id);
+        const teacherId = persistedClassTeachers[s.id] || s.class_teacher_member_id || s.classTeacherId || null;
+        const teacher = teacherId ? ERP_STAFF.find(st => st.id === teacherId || st.employee_code === teacherId || st.empId === teacherId) : null;
         return {
           ...s,
           grade: matchedClass?.grade || matchedClass?.name || s.grade || "",
           section: s.name || s.section || "A",
           roomNumber: s.room_no || s.roomNumber || "R101",
           status: s.status || "active",
+          classTeacherId: teacherId,
+          classTeacherName: teacher ? (teacher.name || `${teacher.firstName || teacher.first_name || ""} ${teacher.lastName || teacher.last_name || ""}`.trim()) : (s.classTeacherName || null)
         };
       });
-      console.log(`[SyncDB] Loaded ${sections.length} sections`);
+      console.log(`[SyncDB] Loaded ${sections.length} sections with class teachers`);
     }
 
     // 6. Subjects
@@ -46681,6 +46833,21 @@ async function syncFromDatabase() {
         });
         console.log(`[SyncDB] Auto-mapped ${ERP_SECTION_SUBJECTS.filter(m => m.organization_id === org.id).length} section-subject allocations for ${org.schoolName || org.name}`);
       }
+    }
+
+    // 15. Staff Responsibilities (Hydrate persistent institutional duties & class teachers)
+    try {
+      const persistedResponsibilities = loadStaffResponsibilitiesFromFile();
+      if (Array.isArray(persistedResponsibilities) && persistedResponsibilities.length > 0) {
+        const demoResps = ERP_STAFF_RESPONSIBILITIES.filter(r => r.organization_id === "b17780e5-3832-4ac6-9aeb-33fd80c5cb0e");
+        const respMap = new Map();
+        demoResps.forEach(r => respMap.set(r.id, r));
+        persistedResponsibilities.forEach(r => respMap.set(r.id, r));
+        ERP_STAFF_RESPONSIBILITIES = Array.from(respMap.values());
+        console.log(`[SyncDB] Loaded ${persistedResponsibilities.length} staff responsibilities from persistent store (total active: ${ERP_STAFF_RESPONSIBILITIES.length})`);
+      }
+    } catch (e) {
+      console.warn("[SyncDB] Staff responsibilities file hydration note:", e.message);
     }
 
     console.log("[SyncDB] ✅ Startup database sync complete.");

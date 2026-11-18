@@ -575,8 +575,10 @@ export const TeacherPortfoliosModal: React.FC<TeacherPortfoliosModalProps> = ({
     setIsSubmitting(true);
     try {
       const scopeTarget = assignScopeName?.trim() || 'INSTITUTIONAL_CHARGE';
+      const selectedResp = responsibilityTypes.find((t) => t.id === assignRespTypeId);
       const res = await assignStaffResponsibility(assignStaffId, {
         responsibility_type_id: assignRespTypeId,
+        responsibility_code: selectedResp?.code,
         scope_type: assignScopeType,
         scope_id: scopeTarget,
         scope_name: assignScopeName?.trim() || 'Institutional Charge',
